@@ -1,0 +1,220 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Validation schema for PackRepo pack index and format",
+  "properties": {
+    "budget_info": {
+      "properties": {
+        "actual_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_budget": {
+          "minimum": 1000,
+          "type": "integer"
+        },
+        "underflow_allowed": {
+          "maximum": 0.005,
+          "type": "number"
+        },
+        "utilization": {
+          "maximum": 1.005,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "target_budget",
+        "actual_tokens",
+        "utilization"
+      ],
+      "type": "object"
+    },
+    "chunks": {
+      "items": {
+        "properties": {
+          "chunk_type": {
+            "enum": [
+              "code",
+              "markdown",
+              "text",
+              "binary"
+            ],
+            "type": "string"
+          },
+          "content_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "end_line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "importance_score": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "language": {
+            "type": "string"
+          },
+          "start_line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tokens": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "file_path",
+          "start_line",
+          "end_line",
+          "tokens",
+          "content_hash"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "manifest_digest": {
+      "description": "SHA256 digest of body spans for integrity verification",
+      "maxLength": 64,
+      "minLength": 64,
+      "type": "string"
+    },
+    "body_spans": {
+      "description": "Body span metadata for manifest verification",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chunk_id", "file_path", "start_line", "end_line"],
+        "properties": {
+          "chunk_id": {"type": "string"},
+          "file_path": {"type": "string"},
+          "start_line": {"type": "integer", "minimum": 1},
+          "end_line": {"type": "integer", "minimum": 1},
+          "selected_mode": {"type": "string"},
+          "selected_tokens": {"type": "integer", "minimum": 0},
+          "content_hash": {"type": "string"}
+        }
+      }
+    },
+    "metadata": {
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "repo_info": {
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "commit": {
+              "maxLength": 40,
+              "minLength": 40,
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "remote": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "commit"
+          ],
+          "type": "object"
+        },
+        "version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "created_at",
+        "repo_info"
+      ],
+      "type": "object"
+    },
+    "statistics": {
+      "properties": {
+        "duplicates_removed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ignored_files": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "language_distribution": {
+          "type": "object"
+        },
+        "total_chunks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_files": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_files",
+        "total_chunks",
+        "total_tokens"
+      ],
+      "type": "object"
+    },
+    "tokenizer_info": {
+      "properties": {
+        "name": {
+          "enum": [
+            "cl100k",
+            "o200k",
+            "gpt2"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "vocab_size": {
+          "minimum": 1000,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "metadata",
+    "tokenizer_info", 
+    "budget_info",
+    "chunks",
+    "statistics"
+  ],
+  "additionalProperties": false,
+  "title": "PackRepo Pack Format Schema",
+  "type": "object"
+}

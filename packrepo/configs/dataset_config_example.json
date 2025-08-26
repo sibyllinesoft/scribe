@@ -1,0 +1,116 @@
+{
+  "build_configuration": {
+    "min_questions": 300,
+    "min_repositories": 5,
+    "min_kappa_threshold": 0.6,
+    "annotation_sample_size": 50,
+    "questions_per_repo": 60,
+    
+    "difficulty_distribution": {
+      "easy": 0.20,
+      "medium": 0.50,
+      "hard": 0.30
+    },
+    
+    "category_balance_threshold": 0.4,
+    
+    "quality_thresholds": {
+      "min_validation_pass_rate": 0.85,
+      "min_confidence_score": 0.7,
+      "min_consistency_score": 0.8
+    },
+    
+    "dataset_filename": "qa_dataset.jsonl"
+  },
+  
+  "repository_curation_criteria": {
+    "min_stars": 50,
+    "min_commits": 30,
+    "min_contributors": 2,
+    "max_age_years": 5,
+    "min_size_loc": 1000,
+    "max_size_loc": 100000,
+    
+    "required_files": ["README.md", "README.rst", "README.txt"],
+    
+    "forbidden_patterns": [
+      "node_modules", "vendor", "generated", ".git",
+      "__pycache__", "build", "dist", "target"
+    ],
+    
+    "license_allowlist": [
+      "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", 
+      "ISC", "Unlicense", "0BSD"
+    ]
+  },
+  
+  "question_generation": {
+    "code_level_categories": [
+      "function_behavior",
+      "api_usage", 
+      "algorithm_impl",
+      "class_design",
+      "error_handling"
+    ],
+    
+    "repository_level_categories": [
+      "architecture",
+      "design_decisions",
+      "integration",
+      "deployment",
+      "testing"
+    ],
+    
+    "evaluation_types": {
+      "easy_questions": ["exact_match", "regex_match"],
+      "medium_questions": ["semantic", "rubric_based"],
+      "hard_questions": ["rubric_based", "semantic"]
+    }
+  },
+  
+  "quality_assurance": {
+    "inter_annotator_agreement": {
+      "min_sample_size": 50,
+      "min_annotators": 2,
+      "target_kappa": 0.6
+    },
+    
+    "validation_requirements": {
+      "min_pass_rate": 0.85,
+      "min_confidence": 0.7
+    },
+    
+    "consistency_checks": {
+      "max_duplicate_similarity": 0.8,
+      "concept_overlap_threshold": 0.6,
+      "min_questions_per_repo": 3,
+      "max_questions_per_repo": 100
+    }
+  },
+  
+  "expected_languages": [
+    "Python",
+    "TypeScript", 
+    "JavaScript",
+    "Go",
+    "Rust",
+    "Java"
+  ],
+  
+  "expected_domains": [
+    "web_development",
+    "machine_learning",
+    "systems",
+    "database",
+    "algorithms",
+    "tools",
+    "library"
+  ],
+  
+  "notes": [
+    "Configuration for creating high-quality QA datasets",
+    "All values align with TODO.md requirements",
+    "Adjust thresholds based on specific evaluation needs",
+    "Repository criteria should match target evaluation scope"
+  ]
+}

@@ -1,0 +1,291 @@
+# Research-Grade FastPath Acceptance Gates Configuration
+# Publication-ready validation thresholds and requirements
+
+# Core Research Thresholds
+research_thresholds:
+  # Statistical validation requirements
+  mutation_score_threshold: 0.80      # 80% mutation score minimum
+  property_coverage_threshold: 0.70    # 70% property-based test coverage
+  fuzz_duration_minutes: 30            # 30+ minutes fuzzing required
+  confidence_level: 0.95               # 95% confidence intervals
+  statistical_power: 0.80              # 80% statistical power
+  effect_size_threshold: 0.13          # 13% minimum improvement
+  budget_tolerance: 0.05               # ±5% budget parity tolerance
+  
+  # Performance regression limits
+  performance_regression_limits:
+    p50_latency: 0.10                  # 10% max P50 latency regression
+    p95_latency: 0.10                  # 10% max P95 latency regression
+    memory_increase: 0.10              # 10% max memory increase
+  
+  # Quality assurance targets
+  qa_improvement_targets:
+    50k_budget: 0.13                   # 13% improvement at 50k budget
+    120k_budget: 0.13                  # 13% improvement at 120k budget
+    200k_budget: 0.13                  # 13% improvement at 200k budget
+  
+  category_targets:
+    usage:
+      target: 70                       # Usage category target score
+      threshold: 100                   # Usage category maximum
+    config_deps:
+      target: 65                       # Config/Dependencies target
+      threshold: 100                   # Config/Dependencies maximum
+
+# Gate Configuration
+gates:
+  # Spin-up Gates
+  spin_up:
+    weight: 0.20
+    critical: true
+    requirements:
+      - clean_checkout_validation
+      - hermetic_environment_setup
+      - environment_build_success
+      - golden_smoke_tests_pass
+      - signed_boot_transcript
+  
+  # Static Analysis Gates  
+  static_analysis:
+    weight: 0.15
+    critical: true
+    requirements:
+      sast_security:
+        threshold: 0                   # Zero high/critical issues
+        direction: "max"
+        tools: ["bandit", "semgrep"]
+      type_checking:
+        threshold: 0                   # Zero type errors
+        direction: "max"
+        mode: "strict"                 # mypy --strict
+      license_policy:
+        compliant: true
+        check_all_dependencies: true
+      api_surface:
+        breaking_changes: 0            # Zero undocumented breaking changes
+  
+  # Dynamic Testing Gates
+  dynamic_testing:
+    weight: 0.20
+    critical: true
+    requirements:
+      mutation_testing:
+        threshold: 0.80               # 80% mutation score
+        direction: "min"
+        tools: ["mutmut", "cosmic-ray"]
+      property_testing:
+        threshold: 0.70               # 70% metamorphic coverage
+        direction: "min"
+        tools: ["hypothesis"]
+      fuzz_testing:
+        duration_minutes: 30          # Minimum 30 minutes
+        max_crashes: 0                # Zero medium+ crashes
+        tools: ["atheris", "python-afl"]
+      concolic_testing:
+        path_coverage: 0.85           # 85% path coverage target
+        tools: ["symbolic"]
+  
+  # Domain Performance Gates
+  domain_performance:
+    weight: 0.25
+    critical: true
+    requirements:
+      qa_improvement:
+        50k_budget:
+          threshold: 0.13             # 13% improvement required
+          direction: "min"
+        120k_budget:
+          threshold: 0.13
+          direction: "min"
+        200k_budget:
+          threshold: 0.13
+          direction: "min"
+      category_performance:
+        usage:
+          target: 70
+          direction: "min"
+        config_deps:
+          target: 65
+          direction: "min"
+      statistical_significance:
+        p_value: 0.05                 # p < 0.05 required
+        confidence_intervals: 0.95    # 95% CI with lower bound > 0
+        multiple_testing_correction: "benjamini_hochberg"
+      no_regression:
+        max_category_drop: 5          # Max 5 point drop in any category
+  
+  # Performance Gates
+  performance:
+    weight: 0.15
+    critical: false
+    requirements:
+      latency_regression:
+        p50_max: 0.10                 # 10% max P50 regression
+        p95_max: 0.10                 # 10% max P95 regression
+        direction: "max"
+      memory_usage:
+        increase_max: 0.10            # 10% max memory increase
+        direction: "max"
+      budget_parity:
+        tolerance: 0.05               # ±5% budget tolerance
+        variants: ["V1", "V2", "V3"]
+      throughput:
+        maintain_or_improve: true     # No throughput regression
+  
+  # Runtime Invariant Gates
+  runtime_invariants:
+    weight: 0.15
+    critical: true
+    requirements:
+      shadow_traffic:
+        requests: 10000               # 10k shadow requests
+        max_violations: 0             # Zero invariant breaks
+      router_validation:
+        effectiveness_min: 0.95       # 95% effectiveness threshold
+        regression_prevention: true
+      determinism:
+        identical_runs: 3             # 3 identical runs required
+        hash_consistency: true
+      contract_compliance:
+        max_violations: 0             # Zero API contract violations
+  
+  # Paper Alignment Gates
+  paper_alignment:
+    weight: 0.10
+    critical: true
+    requirements:
+      metrics_sync:
+        max_mismatches: 0             # Perfect alignment required
+        paper_claims_verified: true
+      ci_validation:
+        proper_computation: true      # CIs properly computed
+        fdr_correction: true          # FDR correction applied
+      negative_controls:
+        unexpected_effects: 0         # Controls behave as expected
+        validate_baseline: true
+      reproducibility:
+        artifacts_verifiable: true    # All claims backed by artifacts
+        reproduction_success: true
+
+# Statistical Methods Configuration
+statistical_methods:
+  bootstrap:
+    samples: 10000                  # Bootstrap sample size
+    method: "bca"                   # Bias-corrected accelerated
+    confidence_level: 0.95
+  hypothesis_testing:
+    alpha: 0.05                     # Significance threshold
+    multiple_testing_correction: "benjamini_hochberg"
+    power_analysis: true
+    effect_size_calculation: "cohen_d"
+  confidence_intervals:
+    method: "bootstrap_bca"
+    level: 0.95
+    lower_bound_positive: true      # CI lower bound must be > 0
+
+# Reproducibility Requirements
+reproducibility:
+  deterministic_runs: 3             # Required identical runs
+  seed_management: "fixed"          # Fixed seeds for reproducibility
+  environment_isolation: "hermetic"  # Hermetic environment required
+  dependency_locking: "strict"       # Strict dependency locking
+  validation_artifacts: true        # Comprehensive artifact collection
+
+# Publication Standards
+publication_requirements:
+  zero_critical_failures: true     # No critical failures allowed
+  statistical_significance: true   # Statistical significance required
+  reproducibility_validated: true  # Full reproducibility validated
+  peer_review_artifacts: true      # Peer review materials prepared
+  paper_metric_alignment: true     # Perfect paper alignment required
+  audit_trail_complete: true       # Complete audit trail available
+
+# Risk Assessment Configuration
+risk_assessment:
+  dimensions:
+    security_risk:
+      weight: 0.35                  # Highest weight for security
+      escalation_threshold: 0.7
+    quality_risk:
+      weight: 0.25
+      escalation_threshold: 0.7
+    performance_risk:
+      weight: 0.20
+      escalation_threshold: 0.6
+    statistical_risk:
+      weight: 0.15
+      escalation_threshold: 0.6
+    publication_risk:
+      weight: 0.05
+      escalation_threshold: 0.5
+  
+  thresholds:
+    low_risk: 0.3
+    medium_risk: 0.6
+    high_risk: 0.8
+
+# Decision Routing Configuration
+decision_routing:
+  promote_criteria:
+    composite_score_min: 0.95       # 95% minimum for promotion
+    zero_critical_failures: true
+    statistical_significance: true
+    max_risk_score: 0.6            # Medium risk maximum
+    publication_ready: true
+  
+  refine_criteria:
+    composite_score_min: 0.85       # 85% minimum for refinement
+    max_critical_failures: 2       # Max 2 critical failures
+    max_risk_score: 0.8            # High risk maximum
+  
+  reject_criteria:
+    composite_score_max: 0.85       # Below 85% = reject
+    critical_failures_limit: 2     # More than 2 critical failures
+    high_risk_threshold: 0.8       # Above high risk threshold
+
+# Artifact Management
+artifacts:
+  required_types:
+    - boot_transcript
+    - statistical_analysis
+    - performance_benchmarks
+    - security_scan_results
+    - test_coverage_reports
+    - reproducibility_evidence
+  
+  retention_policy:
+    publication_artifacts: "permanent"
+    intermediate_results: "90_days"
+    debug_logs: "30_days"
+  
+  packaging:
+    peer_review_materials: true
+    reproducibility_archive: true
+    statistical_evidence: true
+    performance_evidence: true
+
+# Timeout Configuration
+timeouts:
+  gate_evaluation_minutes: 120     # 2 hours for complete evaluation
+  statistical_analysis_minutes: 30 # 30 minutes for statistical analysis
+  performance_benchmarks_minutes: 60 # 1 hour for performance benchmarking
+  security_scans_minutes: 30       # 30 minutes for security scanning
+  pipeline_total_hours: 3          # 3 hours total pipeline timeout
+
+# Notification and Reporting
+reporting:
+  comprehensive_logging: true
+  audit_trail_generation: true
+  peer_review_package_creation: true
+  statistical_validation_reports: true
+  performance_analysis_reports: true
+  
+  formats:
+    - json
+    - html_summary
+    - pdf_report
+  
+  distribution:
+    save_to_artifacts: true
+    create_publication_package: true
+    generate_reproducibility_archive: true

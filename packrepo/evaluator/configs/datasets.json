@@ -1,0 +1,85 @@
+{
+  "datasets": {
+    "code_qa": {
+      "name": "PackRepo Code QA Dataset",
+      "description": "Questions about code implementation and architecture",
+      "version": "1.0",
+      "questions": [
+        {
+          "question_id": "chunking_strategy",
+          "question": "How does the system handle code chunking for different programming languages?",
+          "context_budget": 10000,
+          "expected_concepts": ["tree-sitter", "language-specific", "AST", "fidelity"],
+          "difficulty": "medium",
+          "category": "implementation"
+        },
+        {
+          "question_id": "token_counting",
+          "question": "What tokenizer is used and how are tokens counted accurately?",
+          "context_budget": 8000,
+          "expected_concepts": ["tiktoken", "cl100k", "o200k", "downstream"],
+          "difficulty": "medium",
+          "category": "technical"
+        },
+        {
+          "question_id": "pack_format",
+          "question": "What is the structure of the packed output format?",
+          "context_budget": 12000,
+          "expected_concepts": ["index", "body", "sections", "manifest"],
+          "difficulty": "easy",
+          "category": "format"
+        }
+      ]
+    },
+    "repo_qa": {
+      "name": "Repository-level QA Dataset",
+      "description": "High-level questions about repository purpose and design",
+      "version": "1.0",
+      "questions": [
+        {
+          "question_id": "project_goals",
+          "question": "What are the primary objectives and success metrics for this project?",
+          "context_budget": 15000,
+          "expected_concepts": ["token-efficiency", "20%", "accuracy", "deterministic"],
+          "difficulty": "easy",
+          "category": "objectives"
+        },
+        {
+          "question_id": "evaluation_methodology",
+          "question": "How is the system's performance evaluated and validated?",
+          "context_budget": 18000,
+          "expected_concepts": ["QA", "harness", "bootstrap", "statistical"],
+          "difficulty": "hard",
+          "category": "methodology"
+        }
+      ]
+    }
+  },
+  "scoring_criteria": {
+    "exact_match": {
+      "weight": 0.3,
+      "case_sensitive": false
+    },
+    "concept_coverage": {
+      "weight": 0.4,
+      "threshold": 0.7
+    },
+    "semantic_similarity": {
+      "weight": 0.3,
+      "threshold": 0.8,
+      "model": "all-MiniLM-L6-v2"
+    }
+  },
+  "validation_requirements": {
+    "min_questions_per_category": 2,
+    "min_difficulty_distribution": {
+      "easy": 0.2,
+      "medium": 0.5,
+      "hard": 0.3
+    },
+    "budget_range": {
+      "min": 5000,
+      "max": 20000
+    }
+  }
+}

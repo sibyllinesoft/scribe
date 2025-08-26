@@ -1,0 +1,42 @@
+# FastPath Research Evaluation Suite Requirements
+# Production-quality dependencies for research evaluation
+
+# Core Data Science Stack
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# Statistical Analysis
+statsmodels>=0.14.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# LLM Integration for Real Evaluation
+openai>=1.30.0
+
+# GitHub API and Git Operations
+PyGithub>=1.58.0
+GitPython>=3.1.30
+requests>=2.31.0
+
+# Network Graph Analysis (for FastPath V2 PageRank)
+networkx>=3.1.0
+
+# System Monitoring
+psutil>=5.9.0
+
+# Optional GPU Information
+GPUtil>=1.4.0; platform_machine == "x86_64"
+
+# Testing Framework
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Code Quality
+mypy>=1.5.0
+black>=23.7.0
+flake8>=6.0.0
+
+# Documentation Generation (for LaTeX output)
+# Note: Requires system LaTeX installation for full functionality

@@ -1,0 +1,137 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*~
+.DS_Store
+Thumbs.db
+
+# Project specific temporary files
+temp_pack_*.json
+*_baseline.json
+*benchmark*.json
+*evaluation*.json
+*results*.json
+*report*.json
+
+# Generated reports and analysis
+*_REPORT.md
+*_SUMMARY.md
+*_ANALYSIS.md
+*BENCHMARK*.md
+*EVALUATION*.md
+*QUALITY*.md
+*PERFORMANCE*.md
+benchmark_report_*.md
+evaluation_report_*.md
+quality_report_*.md
+performance_report_*.md
+
+# Benchmark and test output directories
+artifacts/
+fastpath_quality_analysis/
+benchmark_reports/
+evaluation_results/
+test_results/
+
+# Data files
+*.csv
+*.jsonl
+*.pkl
+*.pickle
+*.npy
+*.npz
+
+# Serena cache and temporary files
+.serena/conversations/
+.serena/cache/
+.serena/temp/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+*.pdfsync
+
+# Development-only files (kept in dev/ directory)
+dev/
+
+# Temporary citation files
+citation_verification_*.md
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

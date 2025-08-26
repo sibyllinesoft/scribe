@@ -1,0 +1,54 @@
+# Include essential documentation files
+include README_PYPI.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+
+# Include configuration files
+include packrepo/configs/*.yaml
+include packrepo/configs/*.json
+recursive-include packrepo/evaluator/configs *.json
+recursive-include packrepo/evaluator/prompts *.md
+
+# Include test files for validation
+recursive-include packrepo/tests *.py
+recursive-include tests *.py
+
+# Configuration files already included via pyproject.toml package-data
+
+# Include research documentation
+include FastPath_V5_ICSE2025_Research_Paper.pdf
+
+# Exclude development and build artifacts
+exclude .gitignore
+exclude .repomixignore
+exclude repomix.config.json
+exclude uv.lock
+exclude Makefile
+exclude TODO.md
+exclude *.sh
+
+# Exclude development directories
+recursive-exclude .github *
+recursive-exclude .serena *
+recursive-exclude infra *
+recursive-exclude ci *
+recursive-exclude scripts *
+recursive-exclude dev *
+recursive-exclude benchmarks *
+recursive-exclude eval *
+recursive-exclude tools *
+recursive-exclude research *
+recursive-exclude results *
+recursive-exclude paper *
+recursive-exclude spec *
+
+# Exclude Python cache and build artifacts
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude *.so
+global-exclude .coverage
+global-exclude .pytest_cache
+global-exclude *.egg-info

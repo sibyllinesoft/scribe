@@ -1,0 +1,434 @@
+name: PackRepo FastPath V2 CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'packrepo/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'run_fastpath_benchmarks.py'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'packrepo/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'run_fastpath_benchmarks.py'
+  workflow_dispatch:
+    inputs:
+      force_promotion:
+        description: 'Force promotion even if gates fail (admin only)'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: 1
+  PYTHONDONTWRITEBYTECODE: 1
+  ARTIFACTS_RETENTION_DAYS: 30
+
+jobs:
+  # Fast pre-checks to fail early
+  pre-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should-run-full: ${{ steps.check.outputs.should-run }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for differential analysis
+
+    - name: Setup Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install minimal dependencies
+      run: |
+        python -m pip install --upgrade pip wheel
+        pip install ruff mypy
+
+    - name: Quick syntax and type checks
+      id: check
+      run: |
+        echo "Running quick pre-checks..."
+        
+        # Quick syntax check
+        python -m py_compile packrepo/*.py
+        
+        # Basic ruff check (fast)
+        ruff check packrepo --select=E,F --exit-zero
+        
+        # Check if this should trigger full pipeline
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || \
+           [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+           [[ "${{ github.event_name }}" == "pull_request" && "${{ github.base_ref }}" == "main" ]]; then
+          echo "should-run=true" >> $GITHUB_OUTPUT
+        else
+          echo "should-run=false" >> $GITHUB_OUTPUT
+        fi
+
+  # Main CI/CD pipeline execution
+  pipeline:
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-run-full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours max
+    
+    strategy:
+      matrix:
+        python-version: ['3.11']
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Create artifacts directory
+      run: |
+        mkdir -p artifacts
+        echo "ARTIFACTS_DIR=$GITHUB_WORKSPACE/artifacts" >> $GITHUB_ENV
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential graphviz
+
+    - name: Setup virtual environment
+      run: |
+        python -m venv .venv
+        source .venv/bin/activate
+        echo "PATH=$PWD/.venv/bin:$PATH" >> $GITHUB_ENV
+        echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+
+    - name: Install Python dependencies
+      run: |
+        source .venv/bin/activate
+        python -m pip install --upgrade pip wheel setuptools
+        pip install -r requirements.txt
+        
+        # Install additional testing and analysis tools
+        pip install mutmut pytest-json-report bandit semgrep
+
+    - name: Execute PackRepo FastPath V2 Pipeline
+      id: pipeline
+      run: |
+        source .venv/bin/activate
+        echo "🚀 Starting PackRepo FastPath V2 CI/CD Pipeline"
+        
+        # Make pipeline executable
+        chmod +x ci/pipeline.py
+        
+        # Execute full pipeline
+        python ci/pipeline.py --verbose --project-root .
+        
+        # Capture exit code
+        echo "pipeline-exit-code=$?" >> $GITHUB_OUTPUT
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pipeline-artifacts-${{ matrix.python-version }}-${{ github.run_id }}
+        path: |
+          artifacts/
+          .coverage
+          htmlcov/
+        retention-days: ${{ env.ARTIFACTS_RETENTION_DAYS }}
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}-${{ github.run_id }}
+        path: |
+          artifacts/*test*.json
+          artifacts/*report*.json
+          artifacts/pipeline.log
+        retention-days: 7
+
+    - name: Generate Pipeline Summary
+      if: always()
+      run: |
+        source .venv/bin/activate
+        echo "## 📊 PackRepo FastPath V2 Pipeline Results" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "artifacts/pipeline_report.json" ]; then
+          python -c "
+          import json, sys
+          with open('artifacts/pipeline_report.json') as f:
+              report = json.load(f)
+          
+          status = report.get('pipeline_status', 'UNKNOWN')
+          icon = '✅' if status == 'PROMOTE' else '❌'
+          
+          print(f'### {icon} Pipeline Status: **{status}**')
+          print()
+          print(f'⏱️ **Execution Time:** {report.get(\"execution_time\", 0)/60:.1f} minutes')
+          print(f'📦 **Artifacts Generated:** {report.get(\"artifacts_generated\", 0)}')
+          print(f'🔄 **Workflows Completed:** {len(report.get(\"workflows_completed\", []))}')
+          print()
+          
+          if report.get('gate_results'):
+              print('### 🚪 Acceptance Gates')
+              for gate, passed in report['gate_results'].items():
+                  icon = '✅' if passed else '❌'
+                  print(f'- {icon} **{gate.replace(\"_\", \" \").title()}**')
+              print()
+          
+          if report.get('recommendation'):
+              print('### 📋 Recommendation')
+              print(report['recommendation'])
+              print()
+          
+          if report.get('next_actions'):
+              print('### 🎯 Next Actions')
+              for action in report['next_actions']:
+                  print(f'- {action}')
+          " >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Pipeline report not generated - check pipeline.log for details" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'artifacts/pipeline_report.json';
+          
+          if (!fs.existsSync(path)) {
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ FastPath V2 pipeline failed to generate report. Check logs for details.'
+            });
+            return;
+          }
+          
+          const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const status = report.pipeline_status || 'UNKNOWN';
+          const icon = status === 'PROMOTE' ? '✅' : '❌';
+          
+          const body = `## ${icon} PackRepo FastPath V2 Pipeline Results
+          
+          **Status:** ${status}
+          **Execution Time:** ${(report.execution_time / 60).toFixed(1)} minutes
+          **Artifacts Generated:** ${report.artifacts_generated || 0}
+          
+          ### 🚪 Acceptance Gates
+          ${Object.entries(report.gate_results || {}).map(([gate, passed]) => 
+            `- ${passed ? '✅' : '❌'} **${gate.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}**`
+          ).join('\n')}
+          
+          ### 📋 Recommendation
+          ${report.recommendation || 'No recommendation available'}
+          
+          <details>
+          <summary>📊 Detailed Metrics</summary>
+          
+          \`\`\`json
+          ${JSON.stringify(report.quality_metrics, null, 2)}
+          \`\`\`
+          </details>
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+
+    - name: Set pipeline status
+      if: always()
+      run: |
+        if [ "${{ steps.pipeline.outputs.pipeline-exit-code }}" = "0" ]; then
+          echo "✅ FastPath V2 pipeline succeeded - promotion approved"
+          exit 0
+        else
+          echo "❌ FastPath V2 pipeline failed - promotion rejected"
+          exit 1
+        fi
+
+  # Security scan job (parallel)
+  security:
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-run-full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install security tools
+      run: |
+        pip install bandit safety semgrep
+
+    - name: Run Bandit security scan
+      run: |
+        bandit -r packrepo -f json -o bandit-report.json || true
+        bandit -r packrepo
+
+    - name: Run Safety dependency scan
+      run: |
+        safety check --json --output safety-report.json || true
+        safety check
+
+    - name: Run Semgrep SAST
+      run: |
+        semgrep --config=auto packrepo --json --output=semgrep-report.json || true
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports-${{ github.run_id }}
+        path: |
+          bandit-report.json
+          safety-report.json
+          semgrep-report.json
+        retention-days: 30
+
+  # Performance baseline job (parallel)
+  performance-baseline:
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-run-full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest-benchmark memory-profiler
+
+    - name: Run performance baseline
+      env:
+        FASTPATH_POLICY_V2: "0"
+      run: |
+        mkdir -p artifacts
+        echo "Running baseline performance tests..."
+        
+        # Run baseline benchmarks
+        if [ -f "run_fastpath_benchmarks.py" ]; then
+          python run_fastpath_benchmarks.py --budgets 50k,120k --seed 1337 --output artifacts/baseline_perf.json
+        fi
+        
+        # Run pytest benchmarks if available
+        pytest tests/ -k "benchmark" --benchmark-json=artifacts/benchmark_results.json || true
+
+    - name: Upload performance data
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: performance-baseline-${{ github.run_id }}
+        path: |
+          artifacts/baseline_perf.json
+          artifacts/benchmark_results.json
+        retention-days: 14
+
+  # Deployment preparation (only on main branch promotion)
+  deploy-prep:
+    needs: [pipeline, security, performance-baseline]
+    if: github.ref == 'refs/heads/main' && needs.pipeline.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download pipeline artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: pipeline-artifacts-3.11-${{ github.run_id }}
+        path: artifacts/
+
+    - name: Prepare deployment artifacts
+      run: |
+        echo "Preparing deployment package..."
+        
+        # Create deployment manifest
+        cat > deployment-manifest.json << EOF
+        {
+          "version": "fastpath-v2-${{ github.sha }}",
+          "commit": "${{ github.sha }}",
+          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "pipeline_status": "$(jq -r '.pipeline_status' artifacts/pipeline_report.json)",
+          "quality_gates": $(jq '.gate_results' artifacts/pipeline_report.json),
+          "performance_metrics": $(jq '.quality_metrics' artifacts/pipeline_report.json),
+          "artifacts": [
+            "packrepo/",
+            "requirements.txt",
+            "deployment-manifest.json"
+          ]
+        }
+        EOF
+        
+        echo "✅ Deployment artifacts prepared"
+
+    - name: Upload deployment package
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-package-${{ github.sha }}
+        path: |
+          packrepo/
+          requirements.txt
+          deployment-manifest.json
+          artifacts/pipeline_report.json
+        retention-days: 90
+
+  # Notification job (always runs)
+  notify:
+    needs: [pipeline, security, performance-baseline]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+    - name: Notify pipeline completion
+      run: |
+        echo "📢 PackRepo FastPath V2 Pipeline Completed"
+        echo "Main Pipeline: ${{ needs.pipeline.result }}"
+        echo "Security Scan: ${{ needs.security.result }}"
+        echo "Performance: ${{ needs.performance-baseline.result }}"
+        
+        if [ "${{ needs.pipeline.result }}" = "success" ]; then
+          echo "🎉 FastPath V2 has been approved for promotion!"
+        else
+          echo "⚠️ FastPath V2 requires attention before promotion"
+        fi

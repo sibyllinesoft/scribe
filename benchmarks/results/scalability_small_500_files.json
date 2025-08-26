@@ -1,0 +1,23 @@
+{
+  "scale": "SMALL",
+  "file_count": 500,
+  "dependency_count": 962,
+  "baseline_metrics": {
+    "execution_time_ms": 0.049114227294921875,
+    "memory_peak_mb": 0,
+    "cpu_percent": 0,
+    "throughput_files_per_sec": 10180349.514563106
+  },
+  "baseline_percentiles": {
+    "p50": 0.049114227294921875,
+    "p95": 0.049114227294921875,
+    "p99": 0.049114227294921875
+  },
+  "incremental_speedup": 0.12011661807580175,
+  "pagerank_accuracy": 0.95,
+  "incremental_metrics": {
+    "execution_time_ms": 0.4088878631591797,
+    "memory_peak_mb": 0,
+    "cache_hit_rate": 0.0
+  }
+}

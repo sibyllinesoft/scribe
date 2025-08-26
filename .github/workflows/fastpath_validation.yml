@@ -1,0 +1,230 @@
+name: PackRepo FastPath V2 Statistical Validation
+
+on:
+  pull_request:
+    paths:
+      - 'src/fastpath/**'
+      - 'tests/fastpath/**'
+      - '.github/workflows/fastpath_validation.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/fastpath/**'
+
+env:
+  FASTPATH_VALIDATION_THRESHOLD: 13.0
+  PERFORMANCE_REGRESSION_LIMIT: 10.0
+  CI_ANALYTICS_OUTPUT_DIR: ./ci_analytics_results
+
+jobs:
+  statistical-validation:
+    name: Comprehensive Statistical Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for baseline comparison
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install numpy scipy scikit-learn matplotlib seaborn
+      
+      - name: Run baseline performance measurement
+        run: |
+          echo "🔍 Measuring baseline performance..."
+          python -m pytest tests/performance/test_baseline_measurement.py \
+            --json-report --json-report-file=baseline_metrics.json
+          
+      - name: Run FastPath performance tests
+        run: |
+          echo "⚡ Testing FastPath V2 performance..."
+          python -m pytest tests/performance/test_fastpath_performance.py \
+            --json-report --json-report-file=fastpath_metrics.json
+      
+      - name: Execute comprehensive statistical validation
+        id: validation
+        run: |
+          echo "🔬 Running comprehensive statistical analysis..."
+          python ci_statistical_validation.py \
+            --baseline-file baseline_metrics.json \
+            --test-results fastpath_metrics.json
+          
+          # Capture exit code for conditional steps
+          echo "validation_result=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      
+      - name: Upload analysis artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: statistical-analysis-results
+          path: |
+            ci_analytics_results/
+            baseline_metrics.json
+            fastpath_metrics.json
+          retention-days: 30
+      
+      - name: Comment PR with results
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request' && always()
+        with:
+          script: |
+            const fs = require('fs');
+            const path = './ci_analytics_results/validation_summary.md';
+            
+            if (fs.existsSync(path)) {
+              const summary = fs.readFileSync(path, 'utf8');
+              
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: summary
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '❌ Statistical validation failed to generate summary. Check workflow logs.'
+              });
+            }
+      
+      - name: Block merge if validation fails
+        if: steps.validation.outputs.validation_result != '0'
+        run: |
+          echo "❌ Statistical validation failed. FastPath V2 does not meet promotion criteria."
+          echo "See analysis artifacts for detailed failure reasons."
+          exit 1
+      
+      - name: Approve for promotion
+        if: steps.validation.outputs.validation_result == '0'
+        run: |
+          echo "✅ Statistical validation passed. FastPath V2 approved for promotion."
+          echo "QA improvement ≥13% with 95% confidence interval confirmed."
+
+  # Additional quality gates that must also pass
+  security-scan:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    needs: statistical-validation
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run SAST security scan
+        uses: github/super-linter@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_PYTHON: true
+          VALIDATE_PYTHON_PYLINT: true
+          VALIDATE_PYTHON_FLAKE8: true
+          
+      - name: Python security check
+        run: |
+          pip install safety bandit
+          safety check
+          bandit -r src/ -f json -o security_report.json
+      
+      - name: Upload security artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-analysis
+          path: security_report.json
+
+  mutation-testing:
+    name: Mutation Score Validation
+    runs-on: ubuntu-latest
+    needs: statistical-validation
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install mutmut pytest-cov
+      
+      - name: Run mutation testing
+        run: |
+          echo "🧬 Running mutation testing..."
+          mutmut run --paths-to-mutate src/fastpath/
+          mutmut results
+          mutmut json-report > mutation_report.json
+          
+      - name: Validate mutation score threshold
+        run: |
+          python -c "
+          import json
+          with open('mutation_report.json') as f:
+              report = json.load(f)
+          mutation_score = report.get('mutation_score', 0)
+          if mutation_score < 0.80:
+              print(f'❌ Mutation score {mutation_score:.2%} below 80% threshold')
+              exit(1)
+          print(f'✅ Mutation score {mutation_score:.2%} meets 80% threshold')
+          "
+      
+      - name: Upload mutation testing artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: mutation-testing-results
+          path: mutation_report.json
+
+  deployment-readiness:
+    name: Deployment Readiness Check
+    runs-on: ubuntu-latest
+    needs: [statistical-validation, security-scan, mutation-testing]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Aggregate readiness report
+        run: |
+          echo "🚀 FASTPATH V2 DEPLOYMENT READINESS" > deployment_readiness.md
+          echo "=================================" >> deployment_readiness.md
+          echo "" >> deployment_readiness.md
+          echo "✅ Statistical validation passed" >> deployment_readiness.md
+          echo "✅ Security scan passed" >> deployment_readiness.md  
+          echo "✅ Mutation testing passed" >> deployment_readiness.md
+          echo "" >> deployment_readiness.md
+          echo "FastPath V2 is ready for production deployment." >> deployment_readiness.md
+          
+          cat deployment_readiness.md
+          
+      - name: Create deployment issue
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const readiness_report = fs.readFileSync('deployment_readiness.md', 'utf8');
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'FastPath V2 Ready for Production Deployment',
+              body: readiness_report,
+              labels: ['deployment', 'fastpath-v2', 'ready']
+            });

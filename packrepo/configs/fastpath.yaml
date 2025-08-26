@@ -1,0 +1,205 @@
+# FastPath Configuration File
+# Tuning parameters for FastPath and Extended modes
+
+# Execution Mode Settings
+execution:
+  # Default mode: 'fast', 'extended', 'auto'
+  default_mode: auto
+  
+  # Target performance times (seconds)
+  fast_path_target: 10.0
+  extended_target: 30.0
+  
+  # Safety margins and buffers
+  safety_margin: 0.05  # 5% token budget reserve
+  time_buffer: 0.1     # 10% time buffer for TTL
+
+# Scanner Configuration  
+scanner:
+  # File scanning limits
+  max_files: 2000
+  max_file_size_mb: 1
+  
+  # TTL settings per phase (seconds)
+  scan_ttl: 2.0
+  
+  # Directory exclusions (in addition to defaults)
+  exclude_dirs:
+    - .git
+    - node_modules
+    - __pycache__
+    - .pytest_cache
+    - target
+    - build
+    - dist
+    - .venv
+    - venv
+  
+  # File extension exclusions
+  exclude_extensions:
+    - .pyc
+    - .o
+    - .exe
+    - .dll
+    - .so
+    - .dylib
+
+# Heuristic Scoring Weights
+heuristics:
+  weights:
+    doc: 0.30          # Documentation files
+    readme: 0.25       # README priority  
+    import_deg: 0.15   # Import degree centrality
+    path: 0.10         # Path depth penalty
+    test_link: 0.10    # Test-code relationships
+    churn: 0.10        # Recent changes
+  
+  # Minimum scores for inclusion consideration
+  min_score_threshold: 0.1
+  
+  # Language-specific tuning
+  language_boosts:
+    python: 1.0
+    javascript: 0.9
+    typescript: 1.1
+    java: 0.8
+    rust: 0.9
+    go: 0.85
+
+# Selection Algorithm Configuration
+selection:
+  # Default selector: 'facility', 'mmr'
+  default_selector: mmr
+  
+  # MMR parameters
+  mmr:
+    lambda_param: 0.7           # Relevance vs diversity balance
+    diversity_threshold: 0.8    # Min diversity to consider
+    demotion_factor: 0.5       # Score reduction for demoted items
+    max_iterations: 1000       # Selection iteration limit
+  
+  # Facility location parameters  
+  facility:
+    diversity_weight: 0.3      # Diversity vs coverage balance
+    coverage_weight: 0.7
+    max_features: 1000         # TF-IDF feature limit
+    min_token_freq: 2          # Minimum token frequency
+
+# Text Centrality (README++) Settings
+text_centrality:
+  # Budget allocation for text layer
+  budget_reserve: 0.15  # 15% of total budget
+  
+  # Priority tier thresholds
+  priority_tiers:
+    critical: 4.0
+    high: 3.0
+    medium: 2.0
+    low: 1.0
+  
+  # Filename priority overrides (additional patterns)
+  custom_patterns:
+    - pattern: "getting.started"
+      priority: 2.0
+    - pattern: "quick.start"
+      priority: 2.0
+    - pattern: "user.guide"
+      priority: 1.8
+
+# Link Graph Analysis (Extended Mode)
+link_analysis:
+  # PageRank parameters
+  pagerank:
+    damping_factor: 0.85
+    iterations: 10
+    convergence_threshold: 0.001
+  
+  # Authority/hub detection
+  top_authorities: 10
+  top_hubs: 10
+  min_out_degree: 3      # Minimum links to be considered hub
+  
+  # Clustering parameters
+  cluster_overlap_threshold: 2  # Min common connections
+
+# Token Estimation
+tokenizer:
+  # Language-specific chars per token
+  chars_per_token:
+    python: 3.2
+    javascript: 3.5
+    typescript: 3.8
+    java: 4.0
+    cpp: 3.0
+    rust: 3.5
+    go: 3.3
+    markdown: 4.5
+    text: 5.0
+    json: 2.8
+    yaml: 4.0
+    default: 4.0
+  
+  # Confidence levels for estimation
+  confidence_levels:
+    python: 0.85
+    javascript: 0.80
+    typescript: 0.82
+    java: 0.88
+    cpp: 0.75
+    rust: 0.80
+    go: 0.85
+    markdown: 0.90
+    text: 0.95
+    json: 0.98
+    yaml: 0.92
+    default: 0.75
+
+# Demotion Ladder Configuration
+demotion:
+  # Demotion strategies (in order of preference)
+  strategies:
+    - name: summary
+      description: "First N + last N lines"
+      params:
+        head_lines: 20
+        tail_lines: 10
+    
+    - name: signatures
+      description: "Function/class signatures only"
+      params:
+        max_signatures: 50
+    
+    - name: minimal
+      description: "File metadata only"
+      params:
+        include_stats: true
+
+# Performance Monitoring
+monitoring:
+  # Metrics to track
+  track_metrics:
+    - execution_time
+    - token_utilization
+    - selection_quality
+    - demotion_rate
+  
+  # Performance targets
+  targets:
+    fast_path_p95: 10.0    # seconds
+    extended_p95: 30.0     # seconds
+    token_overflow: 0      # Must be zero
+    underflow_tolerance: 0.005  # 0.5% max underflow
+  
+  # Quality gates
+  quality_gates:
+    readme_retention: 1.0   # 100% README retention
+    doc_recall_at_k: 0.9   # 90% doc recall
+    determinism_check: true # Identical outputs required
+
+# CLI Defaults
+cli:
+  default_budget: 120000
+  default_tokenizer: tiktoken
+  default_model: gpt-4
+  verbose: false
+  stats: false

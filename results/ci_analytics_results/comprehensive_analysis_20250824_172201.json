@@ -1,0 +1,100 @@
+{
+  "timestamp": "2025-08-24T17:22:01.832904",
+  "analysis_type": "PackRepo FastPath V2 Statistical Validation",
+  "executive_summary": {
+    "qa_improvement_percentage": 13.09161361749239,
+    "confidence_interval": [
+      12.263361473470546,
+      13.900550658566358
+    ],
+    "success_criterion_met": "True",
+    "evidence_strength": "Strong"
+  },
+  "statistical_analysis": {
+    "bca_bootstrap": {
+      "baseline_mean": 0.7226,
+      "fastpath_mean": 0.8172,
+      "improvement_percentage": 13.09161361749239,
+      "confidence_interval": [
+        12.263361473470546,
+        13.900550658566358
+      ],
+      "bootstrap_samples": 10000,
+      "confidence_level": 0.95,
+      "success_criterion_met": "True",
+      "evidence_strength": "Strong"
+    },
+    "performance_regression": {
+      "latency": {
+        "baseline_mean": 897.8,
+        "fastpath_mean": 655.0,
+        "change_percentage": -27.043885052350188,
+        "threshold_met": "True",
+        "threshold": 10.0
+      },
+      "memory": {
+        "baseline_mean": 803.0,
+        "fastpath_mean": 753.0,
+        "change_percentage": -6.226650062266501,
+        "threshold_met": "True",
+        "threshold": 10.0
+      },
+      "overall_regression_status": {
+        "all_thresholds_met": true,
+        "status": "PASS"
+      }
+    },
+    "quality_gates": {
+      "mutation_score": {
+        "value": 0.85,
+        "threshold": 0.8,
+        "passed": true
+      },
+      "property_coverage": {
+        "value": 0.75,
+        "threshold": 0.7,
+        "passed": true
+      },
+      "sast_security": {
+        "value": 0,
+        "threshold": 0,
+        "passed": true
+      },
+      "test_coverage": {
+        "value": 92.5,
+        "threshold": 90.0,
+        "passed": true
+      },
+      "overall_quality_gates": {
+        "all_passed": true,
+        "status": "PASS"
+      }
+    },
+    "category_analysis": {
+      "usage_category": {
+        "baseline_mean": 70.0,
+        "fastpath_mean": 78.52000000000001,
+        "change": 8.52000000000001,
+        "threshold_met": "True",
+        "target": 70.0
+      },
+      "config_category": {
+        "baseline_mean": 65.03999999999999,
+        "fastpath_mean": 72.62,
+        "change": 7.5800000000000125,
+        "threshold_met": "True",
+        "target": 65.0
+      },
+      "overall_category_status": {
+        "no_degradation": "True",
+        "status": "PASS"
+      }
+    }
+  },
+  "methodology": {
+    "bootstrap_samples": 10000,
+    "confidence_level": 0.95,
+    "improvement_threshold": 13.0,
+    "regression_threshold": 10.0
+  }
+}

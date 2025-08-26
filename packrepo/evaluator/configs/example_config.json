@@ -1,0 +1,101 @@
+{
+  "pack_paths": {
+    "V0_baseline": "artifacts/packs/V0_baseline_120k.pack",
+    "V1_deterministic": "artifacts/packs/V1_deterministic_120k.pack",
+    "V2_coverage": "artifacts/packs/V2_coverage_120k.pack",
+    "V3_stability": "artifacts/packs/V3_stability_120k.pack"
+  },
+  "tasks": [
+    {
+      "question_id": "purpose",
+      "question": "What is the main purpose of this repository?",
+      "context_budget": 8000,
+      "expected_answer": "PackRepo is a tool for packing repositories into LLM-optimized formats with token budgets and deterministic output.",
+      "reference_patterns": [
+        "pack.*repository",
+        "token.*budget",
+        "deterministic"
+      ],
+      "difficulty": "easy",
+      "category": "overview"
+    },
+    {
+      "question_id": "architecture",
+      "question": "What are the key architectural components of the system?",
+      "context_budget": 12000,
+      "reference_patterns": [
+        "chunker",
+        "selector",
+        "tokenizer",
+        "packfmt"
+      ],
+      "difficulty": "medium",
+      "category": "architecture"
+    },
+    {
+      "question_id": "determinism",
+      "question": "How does the system ensure deterministic output?",
+      "context_budget": 10000,
+      "reference_patterns": [
+        "--no-llm",
+        "identical.*hash",
+        "reproducible",
+        "seed"
+      ],
+      "difficulty": "hard",
+      "category": "technical"
+    },
+    {
+      "question_id": "selection_algorithm",
+      "question": "What selection algorithms are used for choosing content?",
+      "context_budget": 15000,
+      "reference_patterns": [
+        "facility.*location",
+        "MMR",
+        "submodular",
+        "greedy"
+      ],
+      "difficulty": "hard",
+      "category": "algorithms"
+    },
+    {
+      "question_id": "budget_enforcement",
+      "question": "How are token budgets enforced and validated?",
+      "context_budget": 8000,
+      "reference_patterns": [
+        "budget.*constraint",
+        "overflow",
+        "underflow",
+        "token.*limit"
+      ],
+      "difficulty": "medium",
+      "category": "technical"
+    }
+  ],
+  "llm_config": {
+    "providers": {
+      "openai": {
+        "api_key": "${OPENAI_API_KEY}"
+      },
+      "anthropic": {
+        "api_key": "${ANTHROPIC_API_KEY}"
+      },
+      "local": {
+        "base_url": "http://localhost:11434",
+        "model": "llama3.1"
+      }
+    },
+    "default_provider": "openai",
+    "rate_limit_rpm": 60,
+    "rate_limit_tpm": 100000,
+    "max_retries": 3,
+    "log_requests": true
+  },
+  "seeds": [0, 1, 2],
+  "temperature": 0.0,
+  "max_tokens": 2048,
+  "enforce_budget": true,
+  "validate_prompts": true,
+  "max_concurrent": 3,
+  "timeout_seconds": 300
+}

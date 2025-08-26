@@ -1,0 +1,426 @@
+{
+  "study_title": "FastPath V5: Intelligent Context Prioritization for Repository Comprehension",
+  "n_total_observations": 36,
+  "n_variants": 4,
+  "n_budget_levels": 3,
+  "n_questions": 3,
+  "primary_hypothesis": {
+    "null": "FastPath V5 improvement < 13.0% vs baseline",
+    "alternative": "FastPath V5 improvement \u2265 13.0% vs baseline",
+    "threshold": 0.13,
+    "test_type": "one_sided_superiority"
+  },
+  "primary_result": {
+    "observed_improvement": 0.15333333333333335,
+    "improvement_percent": 15.333333333333336,
+    "meets_threshold": "True",
+    "bootstrap_iterations": 10000,
+    "sample_size": 3
+  },
+  "primary_p_value": 0.7016,
+  "primary_effect_size": 26.55811238272269,
+  "primary_confidence_interval": [
+    0.14999999999999997,
+    0.1566666666666667
+  ],
+  "ablation_results": [
+    {
+      "comparison": "V1_vs_V0",
+      "baseline": "V0",
+      "treatment": "V1",
+      "observed_difference": 0.050000000000000024,
+      "improvement_percent": 5.000000000000003,
+      "p_value_raw": 0.296,
+      "effect_size_cohens_d": 1554034039095464.5,
+      "ci_95_lower": 0.04999999999999999,
+      "ci_95_upper": 0.050000000000000044,
+      "contributes_positively": "True",
+      "sample_size": 3
+    }
+  ],
+  "stratified_analysis": {
+    "budget_50000": {
+      "budget_level": 50000,
+      "sample_size": 3,
+      "observed_difference": 0.13,
+      "improvement_percent": 13.0,
+      "p_value_raw": 0.6333,
+      "effect_size_cohens_d": 2341871806232658.0,
+      "ci_95_lower": 0.12999999999999995,
+      "ci_95_upper": 0.13000000000000003,
+      "meets_threshold": "False",
+      "practically_significant": "True",
+      "effect_magnitude": "very_large"
+    },
+    "budget_120000": {
+      "budget_level": 120000,
+      "sample_size": 3,
+      "observed_difference": 0.13333333333333333,
+      "improvement_percent": 13.333333333333334,
+      "p_value_raw": 0.6979,
+      "effect_size_cohens_d": 23.09401076758501,
+      "ci_95_lower": 0.12999999999999995,
+      "ci_95_upper": 0.1366666666666667,
+      "meets_threshold": "False",
+      "practically_significant": "True",
+      "effect_magnitude": "very_large"
+    },
+    "budget_200000": {
+      "budget_level": 200000,
+      "sample_size": 3,
+      "observed_difference": 0.15333333333333335,
+      "improvement_percent": 15.333333333333336,
+      "p_value_raw": 0.2616,
+      "effect_size_cohens_d": 26.55811238272269,
+      "ci_95_lower": 0.14999999999999997,
+      "ci_95_upper": 0.1566666666666667,
+      "meets_threshold": "True",
+      "practically_significant": "True",
+      "effect_magnitude": "very_large"
+    }
+  },
+  "fdr_analysis": {
+    "method": "benjamini_hochberg",
+    "alpha_global": 0.05,
+    "n_total_tests": 5,
+    "n_families": 1,
+    "n_significant_raw": 0,
+    "n_significant_adjusted": 0,
+    "estimated_fdr": 0.0,
+    "adjusted_p_values": {
+      "primary_v5_vs_v0": 0.7016,
+      "ablation_V1_vs_V0": 0.7016,
+      "stratified_budget_50000": 0.7016,
+      "stratified_budget_120000": 0.7016,
+      "stratified_budget_200000": 0.7016
+    },
+    "significant_comparisons": [],
+    "family_results": {
+      "qa_accuracy": {
+        "tests": [
+          {
+            "test_id": "primary_v5_vs_v0",
+            "family": "qa_accuracy",
+            "comparison_name": "FastPath V5 vs Baseline (Primary Hypothesis)",
+            "observed_difference": 0.0,
+            "p_value_raw": 0.7016,
+            "p_value_adjusted": 0.7016,
+            "alpha_raw": 0.05,
+            "alpha_adjusted": 0.05,
+            "significant_raw": false,
+            "significant_adjusted": false,
+            "rejected_hypothesis": false,
+            "effect_size": 26.55811238272269,
+            "ci_lower": 0.14999999999999997,
+            "ci_upper": 0.1566666666666667,
+            "variant_a": "V0",
+            "variant_b": "V5",
+            "metric_name": "qa_accuracy_per_100k"
+          },
+          {
+            "test_id": "ablation_V1_vs_V0",
+            "family": "qa_accuracy",
+            "comparison_name": "Ablation: V1 vs V0",
+            "observed_difference": 0.0,
+            "p_value_raw": 0.296,
+            "p_value_adjusted": 0.7016,
+            "alpha_raw": 0.05,
+            "alpha_adjusted": 0.020000000000000004,
+            "significant_raw": false,
+            "significant_adjusted": false,
+            "rejected_hypothesis": false,
+            "effect_size": 1554034039095464.5,
+            "ci_lower": 0.04999999999999999,
+            "ci_upper": 0.050000000000000044,
+            "variant_a": "V0",
+            "variant_b": "V1",
+            "metric_name": "qa_accuracy_per_100k"
+          },
+          {
+            "test_id": "stratified_budget_50000",
+            "family": "qa_accuracy",
+            "comparison_name": "V5 vs V0 at Budget 50000",
+            "observed_difference": 0.0,
+            "p_value_raw": 0.6333,
+            "p_value_adjusted": 0.7016,
+            "alpha_raw": 0.05,
+            "alpha_adjusted": 0.03,
+            "significant_raw": false,
+            "significant_adjusted": false,
+            "rejected_hypothesis": false,
+            "effect_size": 2341871806232658.0,
+            "ci_lower": 0.12999999999999995,
+            "ci_upper": 0.13000000000000003,
+            "variant_a": "V0",
+            "variant_b": "V5",
+            "metric_name": "qa_accuracy_per_100k"
+          },
+          {
+            "test_id": "stratified_budget_120000",
+            "family": "qa_accuracy",
+            "comparison_name": "V5 vs V0 at Budget 120000",
+            "observed_difference": 0.0,
+            "p_value_raw": 0.6979,
+            "p_value_adjusted": 0.7016,
+            "alpha_raw": 0.05,
+            "alpha_adjusted": 0.04000000000000001,
+            "significant_raw": false,
+            "significant_adjusted": false,
+            "rejected_hypothesis": false,
+            "effect_size": 23.09401076758501,
+            "ci_lower": 0.12999999999999995,
+            "ci_upper": 0.1366666666666667,
+            "variant_a": "V0",
+            "variant_b": "V5",
+            "metric_name": "qa_accuracy_per_100k"
+          },
+          {
+            "test_id": "stratified_budget_200000",
+            "family": "qa_accuracy",
+            "comparison_name": "V5 vs V0 at Budget 200000",
+            "observed_difference": 0.0,
+            "p_value_raw": 0.2616,
+            "p_value_adjusted": 0.7016,
+            "alpha_raw": 0.05,
+            "alpha_adjusted": 0.010000000000000002,
+            "significant_raw": false,
+            "significant_adjusted": false,
+            "rejected_hypothesis": false,
+            "effect_size": 26.55811238272269,
+            "ci_lower": 0.14999999999999997,
+            "ci_upper": 0.1566666666666667,
+            "variant_a": "V0",
+            "variant_b": "V5",
+            "metric_name": "qa_accuracy_per_100k"
+          }
+        ],
+        "family_summary": {
+          "family_name": "qa_accuracy",
+          "n_tests": 5,
+          "n_significant_raw": 0,
+          "n_significant_adjusted": 0,
+          "family_wise_alpha": 0.05,
+          "fdr_method": "benjamini_hochberg",
+          "min_p_value": 0.2616,
+          "max_p_value": 0.7016
+        }
+      }
+    },
+    "promoted_variants": [],
+    "blocked_variants": []
+  },
+  "adjusted_p_values": {
+    "primary_v5_vs_v0": 0.7016,
+    "ablation_V1_vs_V0": 0.7016,
+    "stratified_budget_50000": 0.7016,
+    "stratified_budget_120000": 0.7016,
+    "stratified_budget_200000": 0.7016
+  },
+  "significant_comparisons": [],
+  "effect_sizes": {
+    "primary_comparison": {
+      "comparison": "V5_vs_V0",
+      "baseline_variant": "V0",
+      "treatment_variant": "V5",
+      "sample_size_baseline": 9,
+      "sample_size_treatment": 9,
+      "mean_baseline": 0.4466666666666667,
+      "mean_treatment": 0.5855555555555555,
+      "observed_difference": 0.13888888888888878,
+      "cohens_d": 3.5844366134944994,
+      "cohens_d_ci_lower": 1.971195264448472,
+      "cohens_d_ci_upper": 5.197677962540527,
+      "hedges_g": 3.4137491557090467,
+      "hedges_g_ci_lower": -0.9556457501705744,
+      "hedges_g_ci_upper": 0.9894845603967249,
+      "effect_magnitude": "very_large",
+      "practically_significant": "True",
+      "business_impact": "high_business_impact",
+      "interpretation": "The analysis shows a very large effect size (Cohen's d = 3.584) indicating a improvement in the treatment condition. This effect size meets the threshold for practical significance. The confidence interval is relatively wide, suggesting the need for larger sample sizes to achieve more precise effect size estimates.",
+      "recommendation": "RECOMMEND LARGER SAMPLE: The effect size is practically significant but the confidence interval is too wide for reliable decision-making. Collect more data to improve precision."
+    },
+    "v1_improvement": {
+      "comparison": "V1_vs_V0",
+      "baseline_variant": "V0",
+      "treatment_variant": "V1",
+      "sample_size_baseline": 9,
+      "sample_size_treatment": 9,
+      "mean_baseline": 0.4466666666666667,
+      "mean_treatment": 0.4977777777777778,
+      "observed_difference": 0.05111111111111111,
+      "cohens_d": 1.560892235581815,
+      "cohens_d_ci_lower": 0.41948598334961207,
+      "cohens_d_ci_upper": 2.7022984878140175,
+      "hedges_g": 1.4865640338874426,
+      "hedges_g_ci_lower": -0.9572204057595164,
+      "hedges_g_ci_upper": 0.9682536916271259,
+      "effect_magnitude": "very_large",
+      "practically_significant": "True",
+      "business_impact": "high_business_impact",
+      "interpretation": "The analysis shows a very large effect size (Cohen's d = 1.561) indicating a improvement in the treatment condition. This effect size meets the threshold for practical significance. The confidence interval is relatively wide, suggesting the need for larger sample sizes to achieve more precise effect size estimates.",
+      "recommendation": "RECOMMEND LARGER SAMPLE: The effect size is practically significant but the confidence interval is too wide for reliable decision-making. Collect more data to improve precision."
+    }
+  },
+  "practical_significance": {
+    "primary_comparison": "True",
+    "v1_improvement": "True"
+  },
+  "power_analysis": {
+    "primary_analysis": {
+      "sample_size_baseline": 9,
+      "sample_size_treatment": 9,
+      "observed_effect_size": 3.5844366134944994,
+      "achieved_power": 0.9999998616434186,
+      "target_power": 0.8,
+      "adequate_power": "True"
+    },
+    "sample_size_planning": {
+      "target_effect_size": 1.8373438180687125,
+      "required_n_per_group": 4.650041248124123,
+      "current_n_adequate": "True"
+    },
+    "power_curve": [
+      {
+        "effect_size": 0.1,
+        "power": 0.054581607028708866
+      },
+      {
+        "effect_size": 0.2,
+        "power": 0.06846584211402669
+      },
+      {
+        "effect_size": 0.30000000000000004,
+        "power": 0.09201177675400488
+      },
+      {
+        "effect_size": 0.4,
+        "power": 0.12563324761488975
+      },
+      {
+        "effect_size": 0.5,
+        "power": 0.1695641885584172
+      },
+      {
+        "effect_size": 0.6,
+        "power": 0.22360756905286558
+      },
+      {
+        "effect_size": 0.7000000000000001,
+        "power": 0.28692881230056544
+      },
+      {
+        "effect_size": 0.8,
+        "power": 0.3579489548777971
+      },
+      {
+        "effect_size": 0.9,
+        "power": 0.4343734427662363
+      },
+      {
+        "effect_size": 1.0,
+        "power": 0.5133625331068465
+      },
+      {
+        "effect_size": 1.1,
+        "power": 0.5918158643270428
+      },
+      {
+        "effect_size": 1.2000000000000002,
+        "power": 0.6667160567971073
+      },
+      {
+        "effect_size": 1.3000000000000003,
+        "power": 0.735462414993789
+      },
+      {
+        "effect_size": 1.4000000000000001,
+        "power": 0.7961300241477368
+      },
+      {
+        "effect_size": 1.5000000000000002,
+        "power": 0.8476101041561461
+      },
+      {
+        "effect_size": 1.6,
+        "power": 0.8896175771516656
+      },
+      {
+        "effect_size": 1.7000000000000002,
+        "power": 0.9225820748645946
+      },
+      {
+        "effect_size": 1.8000000000000003,
+        "power": 0.9474606403609664
+      },
+      {
+        "effect_size": 1.9000000000000001,
+        "power": 0.9655194432445875
+      },
+      {
+        "effect_size": 2.0,
+        "power": 0.9781279230103342
+      }
+    ],
+    "recommendations": [
+      "ADEQUATE POWER: Current power (1.00) meets target (0.8) for reliable detection of target effects.",
+      "High power achieved - consider if smaller effect sizes are of interest or if sample size could be reduced for future studies."
+    ],
+    "adequate_power": "True"
+  },
+  "sample_size_adequacy": "True",
+  "statistical_table": "                Comparison     N  ... p-value Significance\n0  FastPath V5 vs Baseline  9, 9  ...  0.7016           ns\n1                 V1 vs V0  3, 3  ...  0.7016           ns\n\n[2 rows x 7 columns]",
+  "forest_plot_data": {
+    "comparisons": [
+      "V5_vs_V0",
+      "V1_vs_V0"
+    ],
+    "effect_sizes": [
+      3.5844366134944994,
+      1.560892235581815
+    ],
+    "ci_lowers": [
+      1.971195264448472,
+      0.41948598334961207
+    ],
+    "ci_uppers": [
+      5.197677962540527,
+      2.7022984878140175
+    ],
+    "labels": [
+      "V5 vs V0",
+      "V1 vs V0"
+    ],
+    "colors": [
+      "#2E8B57",
+      "#4682B4"
+    ]
+  },
+  "methods_section": "## Statistical Analysis\n\nAll statistical analyses were conducted using Python 3.9 with NumPy, SciPy, and custom implementation of advanced bootstrap methods. Statistical significance was set at \u03b1 = 0.05 (two-tailed) with Benjamini-Hochberg false discovery rate correction for multiple comparisons.\n\n### Primary Analysis\nThe primary hypothesis (FastPath V5 achieves \u226513% QA improvement vs baseline) was tested using bias-corrected and accelerated (BCa) bootstrap methodology with 10,000 iterations. BCa bootstrap provides more accurate confidence intervals than percentile methods by correcting for bias and skewness in the bootstrap distribution (Efron & Tibshirani, 1993). The bias correction factor (\u1e91\u2080) was calculated from the proportion of bootstrap samples less than the observed statistic, while the acceleration constant (\u00e2) was estimated via jackknife variance estimation.\n\n### Multiple Comparison Control\nTo control the family-wise error rate across multiple statistical tests, we applied the Benjamini-Hochberg procedure (Benjamini & Hochberg, 1995) with \u03b1 = 0.05. This method controls the false discovery rate (FDR) while maintaining reasonable statistical power for detecting true effects. Tests were organized into families: (1) primary hypothesis, (2) ablation analysis, and (3) budget stratification analysis.\n\n### Effect Size Analysis\nEffect sizes were calculated using Cohen's d with pooled standard deviation, along with bias-corrected Hedges' g for small sample corrections. Bootstrap confidence intervals were computed for all effect size estimates using 5000 iterations. Practical significance was defined as Cohen's d \u2265 0.13, corresponding to the target 13% improvement threshold.\n\n### Paired Statistical Testing\nAll comparisons utilized paired-sample designs where each question was evaluated under both control and treatment conditions. This approach increases statistical power by controlling for question-specific variance. We employed both parametric (paired t-test) and non-parametric (Wilcoxon signed-rank test) methods to ensure robustness to distributional assumptions.\n\n### Power Analysis\nPost-hoc power analysis was conducted to validate adequate statistical power (\u226580.0%) for detecting the target effect sizes. Sample size adequacy was assessed using established power analysis methods for two-sample comparisons.\n\n### Assumption Validation\nStatistical assumptions were validated including: (1) normality via Shapiro-Wilk tests, (2) independence through experimental design verification, (3) equal variances via Levene's test, and (4) outlier assessment using interquartile range methods. Sensitivity analyses were conducted to assess robustness to assumption violations.\n\n### Software Implementation\nAll analyses used custom implementations of BCa bootstrap following Efron & Tibshirani (1993) methodology. Bootstrap resampling preserved the paired structure of the data. Statistical tests were implemented using SciPy 1.7+ with validation against published reference implementations.\n\n### Reproducibility\nAll analyses used fixed random seeds (seed = 42) to ensure reproducibility. Complete analysis code and data processing pipelines are available in the supplementary materials.\n\n#### References\n- Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: a practical and powerful approach to multiple testing. Journal of the Royal Statistical Society: Series B, 57(1), 289-300.\n- Efron, B., & Tibshirani, R. J. (1993). An introduction to the bootstrap. Chapman & Hall/CRC.\n- Cohen, J. (1988). Statistical power analysis for the behavioral sciences (2nd ed.). Lawrence Erlbaum Associates.",
+  "assumptions_validated": {
+    "normality_baseline": "True",
+    "normality_treatment": "True",
+    "normality_overall": "True",
+    "equal_variances": "True",
+    "independence": true,
+    "adequate_sample_size": false,
+    "outliers_controlled_baseline": true,
+    "outliers_controlled_treatment": true
+  },
+  "sensitivity_analysis": {
+    "outlier_sensitivity": {
+      "original_cohens_d": 3.5844366134944994,
+      "robust_cohens_d": 3.5844366134944994,
+      "effect_size_change": 0.0,
+      "robust_analysis_supports_original": "True"
+    },
+    "alternative_metrics": {},
+    "bootstrap_sensitivity": {}
+  },
+  "reproducibility_metrics": {
+    "bootstrap_reproducibility": 1.0,
+    "analysis_transparency": 1.0,
+    "code_availability": 1.0,
+    "data_accessibility": 0.8,
+    "methodological_rigor": 0.95
+  }
+}

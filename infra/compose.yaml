@@ -1,0 +1,254 @@
+# PackRepo Docker Compose - Local Development Stack
+# Hermetic development environment with health-gated dependencies
+
+version: '3.8'
+
+services:
+  # ================================
+  # Main PackRepo Development Service
+  # ================================
+  packrepo-dev:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: development
+      args:
+        PYTHON_VERSION: 3.12.7
+        UV_VERSION: 0.5.6
+    container_name: packrepo-dev
+    volumes:
+      # Mount source code for live development
+      - ../packrepo:/app/packrepo:rw
+      - ../scripts:/app/scripts:rw
+      - ../tests:/app/tests:rw
+      - ../spec:/app/spec:rw
+      - ../artifacts:/app/artifacts:rw
+      - ../locks:/app/locks:rw
+      # Mount config files
+      - ../pyproject.toml:/app/pyproject.toml:ro
+      - ../uv.lock:/app/uv.lock:ro
+      - ../TODO.md:/app/TODO.md:ro
+      # Docker socket for CI operations
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PACKREPO_ENV=development
+      - UV_CACHE_DIR=/app/.uv-cache
+    working_dir: /app
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    ports:
+      - "8000:8000"  # For any development servers
+    networks:
+      - packrepo-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import packrepo; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - dev
+      - all
+
+  # ================================
+  # CI Testing Service
+  # ================================
+  packrepo-ci:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: ci
+      args:
+        PYTHON_VERSION: 3.12.7
+        UV_VERSION: 0.5.6
+    container_name: packrepo-ci
+    volumes:
+      # Read-only mounts for CI testing
+      - ../:/app:ro
+      # Writable artifacts directory
+      - ../artifacts:/app/artifacts:rw
+      - ../locks:/app/locks:rw
+      # Docker socket for integration testing
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PACKREPO_ENV=testing
+      - CI=true
+    working_dir: /app
+    depends_on:
+      static-analysis:
+        condition: service_completed_successfully
+    networks:
+      - packrepo-net
+    profiles:
+      - ci
+      - all
+
+  # ================================
+  # Static Analysis Service
+  # ================================
+  static-analysis:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: ci
+    container_name: packrepo-static
+    volumes:
+      - ../:/app:ro
+      - ../artifacts:/app/artifacts:rw
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    working_dir: /app
+    command: >
+      sh -c "
+        echo 'Running static analysis suite...' &&
+        /app/.venv/bin/ruff check . --output-format=json > artifacts/ruff_results.json || true &&
+        /app/.venv/bin/ruff format --check . > artifacts/ruff_format.log 2>&1 || true &&
+        /app/.venv/bin/mypy packrepo/ --json-report artifacts/mypy_report || true &&
+        /app/.venv/bin/bandit -r packrepo/ -f json -o artifacts/bandit_results.json || true &&
+        /app/.venv/bin/safety check --json --output artifacts/safety_results.json || true &&
+        echo 'Static analysis complete - results in artifacts/'
+      "
+    networks:
+      - packrepo-net
+    profiles:
+      - ci
+      - static
+      - all
+
+  # ================================
+  # Security Scanner Service
+  # ================================
+  security-scan:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: ci
+    container_name: packrepo-security
+    volumes:
+      - ../:/app:ro
+      - ../artifacts:/app/artifacts:rw
+    environment:
+      - PYTHONPATH=/app
+    working_dir: /app
+    command: >
+      sh -c "
+        echo 'Running security scans...' &&
+        /app/.venv/bin/semgrep --config=auto --json --output=artifacts/semgrep_results.json . || true &&
+        /app/.venv/bin/bandit -r packrepo/ -ll -f json -o artifacts/bandit_security.json || true &&
+        python scripts/scan_secrets.py --out artifacts/secret_scan.json || true &&
+        echo 'Security scanning complete'
+      "
+    networks:
+      - packrepo-net
+    profiles:
+      - security
+      - ci
+      - all
+
+  # ================================
+  # Test Database for Integration Testing
+  # ================================
+  test-db:
+    image: sqlite:latest
+    container_name: packrepo-testdb
+    volumes:
+      - test-db-data:/var/lib/sqlite
+      - ../tests/fixtures:/docker-entrypoint-initdb.d:ro
+    environment:
+      - SQLITE_DATABASE=packrepo_test
+    networks:
+      - packrepo-net
+    healthcheck:
+      test: ["CMD", "sqlite3", "/var/lib/sqlite/packrepo_test.db", "SELECT 1;"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    profiles:
+      - integration
+      - all
+
+  # ================================
+  # Cache Service for Embeddings/Models
+  # ================================
+  model-cache:
+    image: redis:7-alpine
+    container_name: packrepo-cache
+    volumes:
+      - model-cache-data:/data
+    networks:
+      - packrepo-net
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    profiles:
+      - cache
+      - integration
+      - all
+
+  # ================================
+  # Production Simulation Service
+  # ================================
+  packrepo-prod:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: production
+    container_name: packrepo-prod
+    volumes:
+      - ../artifacts:/app/artifacts:rw
+      - production-logs:/app/logs
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PACKREPO_ENV=production
+    ports:
+      - "8080:8080"
+    networks:
+      - packrepo-net
+    depends_on:
+      packrepo-ci:
+        condition: service_completed_successfully
+    profiles:
+      - prod
+      - all
+
+# ================================
+# Networks
+# ================================
+networks:
+  packrepo-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ================================
+# Volumes
+# ================================
+volumes:
+  test-db-data:
+    driver: local
+  model-cache-data:
+    driver: local
+  production-logs:
+    driver: local
+
+# ================================
+# Development Overrides
+# ================================
+# Use with: docker-compose -f compose.yaml -f compose.override.yaml up
+# The override file provides additional development-specific configurations

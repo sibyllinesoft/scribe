@@ -1,0 +1,248 @@
+# PackRepo Quality Gates Configuration
+# Defines all quality thresholds and promotion criteria
+
+metadata:
+  version: "1.0"
+  description: "PackRepo quality gates for CI/CD pipeline"
+  updated: "2024-12-19"
+
+# Global configuration
+global:
+  fdr_alpha: 0.05          # False discovery rate for statistical tests
+  confidence_level: 0.95   # Bootstrap confidence interval level
+  min_samples: 3           # Minimum samples required for analysis
+
+# Quality gate definitions
+gates:
+  # Static Analysis Gates
+  sast_high_critical:
+    threshold: 0
+    direction: "max"
+    weight: 0.20
+    critical: true
+    description: "High/critical SAST issues must be zero"
+    
+  # Dynamic Testing Gates
+  mutation_score:
+    threshold: 0.80
+    direction: "min"
+    weight: 0.15
+    critical: true
+    description: "Mutation testing score must be >= 80%"
+    
+  property_coverage:
+    threshold: 0.70
+    direction: "min"
+    weight: 0.10
+    critical: false
+    description: "Property-based test coverage >= 70%"
+    
+  fuzz_crashes:
+    threshold: 0
+    direction: "max"
+    weight: 0.10
+    critical: true
+    description: "No medium+ severity fuzz crashes allowed"
+    
+  # Determinism/Budget Gates
+  budget_overrun:
+    threshold: 0
+    direction: "max"
+    weight: 0.10
+    critical: true
+    description: "Zero budget overruns required"
+    
+  budget_underrun:
+    threshold: 0.5
+    direction: "max"
+    weight: 0.05
+    critical: false
+    description: "Budget underrun must be <= 0.5%"
+    
+  determinism_consistency:
+    threshold: 3
+    direction: "min"
+    weight: 0.15
+    critical: true
+    description: "3x identical runs required for --no-llm mode"
+    
+  # Domain KPI Gates
+  token_efficiency_ci_lower:
+    threshold: 0.0
+    direction: "min"
+    weight: 0.20
+    critical: true
+    description: "Token-efficiency CI lower bound must be positive"
+    
+  latency_p50_overhead:
+    threshold: 30.0
+    direction: "max"
+    weight: 0.08
+    critical: false
+    description: "P50 latency overhead <= 30% vs baseline"
+    
+  latency_p95_overhead:
+    threshold: 50.0
+    direction: "max"
+    weight: 0.12
+    critical: false
+    description: "P95 latency overhead <= 50% vs baseline"
+
+# Variant-specific promotion rules
+promotion_rules:
+  V1:
+    name: "V1 Hardening"
+    required_gates:
+      - sast_high_critical
+      - mutation_score
+      - budget_overrun
+      - determinism_consistency
+    optional_gates:
+      - property_coverage
+    description: "Focus on correctness and reliability"
+    
+  V2:
+    name: "V2 Coverage Construction"
+    required_gates:
+      - sast_high_critical
+      - mutation_score
+      - budget_overrun
+      - determinism_consistency
+      - token_efficiency_ci_lower
+    optional_gates:
+      - latency_p50_overhead
+      - latency_p95_overhead
+    additional_criteria:
+      - "CI lower bound > 0 vs V1"
+      - "Latency overhead <= 10%"
+    description: "Coverage improvement with performance bounds"
+    
+  V3:
+    name: "V3 Demotion Stability"
+    required_gates:
+      - sast_high_critical
+      - mutation_score
+      - budget_overrun
+      - determinism_consistency
+    additional_criteria:
+      - "Oscillations <= 1"
+      - "P95 latency within Objective 5 bounds"
+    description: "Stability controller validation"
+
+# Risk assessment configuration
+risk_assessment:
+  low_risk_threshold: 0.3
+  medium_risk_threshold: 0.7
+  high_risk_threshold: 1.0
+  
+  risk_factors:
+    sast_severity_weight: 0.4
+    test_coverage_weight: 0.3
+    performance_weight: 0.3
+    
+  decision_matrix:
+    promote_threshold: 0.85  # Composite score >= 85%
+    manual_qa_threshold: 0.8 # Risk score >= 80%
+    critical_failure_limit: 2  # Max critical gate failures
+
+# Statistical validation settings
+statistical:
+  bootstrap:
+    n_iterations: 10000
+    method: "BCa"  # Bias-corrected and accelerated
+    random_seed: 42
+    
+  fdr_correction:
+    method: "benjamini_hochberg"
+    alpha: 0.05
+    
+  effect_size:
+    small_threshold: 0.2
+    medium_threshold: 0.5
+    large_threshold: 0.8
+
+# Performance benchmarks
+performance_baselines:
+  V0_baseline:
+    qa_accuracy: 0.65
+    token_efficiency: 54.2  # (0.65 * 100000) / 120000
+    latency_p50_ms: 120
+    latency_p95_ms: 250
+    memory_usage_mb: 180
+    
+  improvement_targets:
+    V1:
+      qa_accuracy_min: 0.66   # +1.5% minimum
+      token_efficiency_min: 55.0
+      
+    V2:
+      qa_accuracy_min: 0.68   # +4.6% minimum
+      token_efficiency_min: 56.7
+      latency_overhead_max: 10.0  # % increase
+      
+    V3:
+      stability_score_min: 0.8
+      oscillation_count_max: 1
+
+# Evaluation matrix configuration
+evaluation:
+  variants: ["V0", "V1", "V2", "V3"]
+  
+  metrics:
+    primary:
+      - qa_accuracy
+      - token_efficiency
+      - latency_p50_ms
+      - latency_p95_ms
+      
+    secondary:
+      - memory_usage_mb
+      - budget_utilization
+      - deterministic_consistency
+      
+    stability:
+      - oscillation_count
+      - demotion_events
+      - reoptimization_cycles
+      
+  comparison_pairs:
+    - ["V1", "V0"]  # Hardening vs baseline
+    - ["V2", "V1"]  # Coverage vs hardening
+    - ["V3", "V2"]  # Stability vs coverage
+    - ["V2", "V0"]  # Coverage vs baseline (overall)
+    - ["V3", "V0"]  # Stability vs baseline (overall)
+
+# Artifact and logging requirements
+artifacts:
+  required:
+    - boot_transcript.json
+    - pack_verification_results.json
+    - mutation_test_results.json
+    - fuzz_test_results.json
+    - sast_scan_results.json
+    - bootstrap_ci_results.json
+    - fdr_correction_results.json
+    - gatekeeper_decision.json
+    
+  retention_days: 30
+  
+  paths:
+    artifacts: "./artifacts"
+    logs: "./logs"
+    metrics: "./artifacts/metrics"
+    reports: "./artifacts/reports"
+
+# Notification and escalation
+notifications:
+  promote_success:
+    channels: ["slack", "email"]
+    recipients: ["platform-team", "qa-team"]
+    
+  critical_failure:
+    channels: ["slack", "email", "pagerduty"]
+    recipients: ["platform-team", "security-team"]
+    escalation_timeout_minutes: 30
+    
+  manual_qa_required:
+    channels: ["slack", "email"]
+    recipients: ["qa-team", "product-team"]

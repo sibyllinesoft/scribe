@@ -1,0 +1,100 @@
+# PackRepo Docker Compose Override - Development Enhancements
+# Use with: docker-compose -f compose.yaml -f compose.override.yaml up
+
+version: '3.8'
+
+services:
+  # Development service enhancements
+  packrepo-dev:
+    environment:
+      # Development-specific environment variables
+      - DEBUG=1
+      - PACKREPO_LOG_LEVEL=DEBUG
+      - PYTHONDEVMODE=1
+      # Enable hot reloading for development
+      - WATCHDOG_ENABLE=1
+    volumes:
+      # Additional development mounts
+      - ../.git:/app/.git:ro  # Access to Git info
+      - ../artifacts:/app/artifacts:rw  # Writable artifacts
+      # Cache directories for performance
+      - uv-cache:/app/.uv-cache
+      - pip-cache:/home/packrepo/.cache/pip
+    # Override command for development
+    command: >
+      bash -c "
+        echo 'PackRepo Development Environment Ready' &&
+        echo 'Available commands:' &&
+        echo '  python rendergit.py --help' &&
+        echo '  scripts/spinup_smoke.sh --help' &&
+        echo '  scripts/pack_verify.py --help' &&
+        echo '  scripts/ci_full_test.sh' &&
+        echo '' &&
+        exec bash
+      "
+
+  # Add a development database for testing
+  dev-postgres:
+    image: postgres:15-alpine
+    container_name: packrepo-dev-db
+    environment:
+      - POSTGRES_DB=packrepo_dev
+      - POSTGRES_USER=packrepo
+      - POSTGRES_PASSWORD=dev_password_change_in_production
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+      - ../tests/fixtures/sql:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - packrepo-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U packrepo -d packrepo_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - dev
+      - database
+
+  # Development file watcher for auto-testing
+  test-watcher:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: ci
+    container_name: packrepo-watcher
+    volumes:
+      - ../:/app:ro
+      - ../artifacts:/app/artifacts:rw
+    environment:
+      - PYTHONPATH=/app
+      - WATCHDOG_ENABLE=1
+    working_dir: /app
+    command: >
+      bash -c "
+        echo 'Starting test watcher...' &&
+        while inotifywait -r -e modify,create,delete,move --exclude='__pycache__|\.pyc|artifacts|\.git' .; do
+          echo 'Changes detected, running tests...' &&
+          python -m pytest tests/ -x --tb=short || true &&
+          echo 'Test run complete, waiting for changes...'
+        done
+      "
+    depends_on:
+      packrepo-dev:
+        condition: service_healthy
+    networks:
+      - packrepo-net
+    profiles:
+      - watch
+      - dev
+
+# Additional volumes for development
+volumes:
+  uv-cache:
+    driver: local
+  pip-cache:
+    driver: local
+  postgres-dev-data:
+    driver: local
