@@ -3,20 +3,20 @@ requires = ["setuptools >= 61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fastpath-repo"
+name = "scribe-repo"
 version = "1.0.0"
-description = "Research-grade repository packing system for LLM code analysis with 20-35% improvement in Q&A accuracy"
+description = "Advanced repository intelligence system for LLM code analysis with 20-35% improvement in Q&A accuracy"
 readme = "README_PYPI.md"
 license = {text = "BSD Zero Clause License"}
 authors = [
-    {name = "FastPath Research Team", email = "contact@fastpath.ai"},
+    {name = "Scribe Research Team", email = "contact@scribe.ai"},
 ]
 maintainers = [
-    {name = "FastPath Research Team", email = "contact@fastpath.ai"},
+    {name = "Scribe Research Team", email = "contact@scribe.ai"},
 ]
 keywords = [
-    "llm", "code-analysis", "repository-packing", "submodular-optimization", 
-    "semantic-search", "ai", "machine-learning", "research", "icse"
+    "llm", "code-analysis", "repository-intelligence", "submodular-optimization", 
+    "semantic-search", "ai", "machine-learning", "research", "icse", "scribe"
 ]
 requires-python = ">=3.10"
 dependencies = [
@@ -91,21 +91,22 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 all = [
-    "fastpath-repo[research,evaluation,dev]"
+    "scribe-repo[research,evaluation,dev]"
 ]
 
 [project.scripts]
+scribe = "packrepo.cli.fastpack:main"
 fastpath = "packrepo.cli.fastpack:main"
 rendergit = "rendergit:main"
 
 [project.urls]
-Homepage = "https://github.com/fastpath-ai/fastpath-repo"
-Repository = "https://github.com/fastpath-ai/fastpath-repo"  
-Documentation = "https://fastpath-repo.readthedocs.io"
-"Bug Reports" = "https://github.com/fastpath-ai/fastpath-repo/issues"
-"Research Paper" = "https://arxiv.org/abs/2024.fastpath"
+Homepage = "https://github.com/scribe-ai/scribe-repo"
+Repository = "https://github.com/scribe-ai/scribe-repo"  
+Documentation = "https://scribe-repo.readthedocs.io"
+"Bug Reports" = "https://github.com/scribe-ai/scribe-repo/issues"
+"Research Paper" = "https://arxiv.org/abs/2024.scribe"
 "ICSE 2025" = "https://conf.researchr.org/track/icse-2025/icse-2025-research-track"
-"PyPI Package" = "https://pypi.org/project/fastpath-repo/"
+"PyPI Package" = "https://pypi.org/project/scribe-repo/"
 
 [tool.setuptools.packages.find]
 include = ["packrepo*"]

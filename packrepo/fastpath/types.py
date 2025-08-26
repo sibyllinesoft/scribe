@@ -39,8 +39,8 @@ class DiffPackingOptions:
 
 
 @dataclass
-class FastPathConfig:
-    """Configuration for FastPath variant execution."""
+class ScribeConfig:
+    """Configuration for Scribe variant execution."""
     variant: FastPathVariant
     total_budget: int
     
@@ -76,7 +76,7 @@ class FastPathConfig:
         total_budget: int = 120000,
         personalization_alpha: float = 0.15,
         **kwargs
-    ) -> 'FastPathConfig':
+    ) -> 'ScribeConfig':
         """Create configuration with entry points for personalized relevance."""
         # Import locally to avoid circular imports
         from .utils.entry_points import EntryPointConverter
@@ -98,7 +98,7 @@ class FastPathConfig:
         commit_range: Optional[str] = "HEAD~10..HEAD",
         entry_points: Optional[List[Union[str, EntryPointSpec]]] = None,
         **kwargs
-    ) -> 'FastPathConfig':
+    ) -> 'ScribeConfig':
         """Create configuration with diff packing enabled."""
         diff_options = DiffPackingOptions(
             enabled=True,

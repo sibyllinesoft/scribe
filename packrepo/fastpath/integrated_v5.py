@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Any
 
 from .fast_scan import ScanResult
-from .types import FastPathVariant, FastPathConfig, FastPathResult
+from .types import FastPathVariant, ScribeConfig, FastPathResult
 from .feature_flags import get_feature_flags
 from .quotas import QuotaManager, create_quota_manager
 from .centrality import CentralityCalculator, create_centrality_calculator
@@ -55,7 +55,7 @@ class FastPathEngine:
     def execute_variant(
         self, 
         scan_results: List[ScanResult],
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute specified FastPath variant with comprehensive metrics.
@@ -64,7 +64,7 @@ class FastPathEngine:
         """
         return self.variant_executor.execute_variant(scan_results, config, query_hint)
     
-    def _compute_heuristic_scores(self, scan_results: List[ScanResult], config: FastPathConfig) -> Dict[str, float]:
+    def _compute_heuristic_scores(self, scan_results: List[ScanResult], config: ScribeConfig) -> Dict[str, float]:
         """Compute base heuristic scores for all files."""
         scored_files = self.heuristic_scorer.score_all_files(scan_results)
         return {result.stats.path: components.final_score 
@@ -74,7 +74,7 @@ class FastPathEngine:
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig
+        config: ScribeConfig
     ) -> FastPathResult:
         """Execute V1 baseline: heuristics-only selection."""
         
@@ -104,7 +104,7 @@ class FastPathEngine:
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig
+        config: ScribeConfig
     ) -> FastPathResult:
         """Execute V2: V1 + Quotas + Density-Greedy."""
         
@@ -134,7 +134,7 @@ class FastPathEngine:
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig
+        config: ScribeConfig
     ) -> FastPathResult:
         """Execute V3: V2 + PageRank Centrality."""
         
@@ -187,7 +187,7 @@ class FastPathEngine:
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig
+        config: ScribeConfig
     ) -> FastPathResult:
         """Execute V4: V3 + Hybrid Demotion."""
         
@@ -226,7 +226,7 @@ class FastPathEngine:
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute V5: Full integration with router and two-pass selection."""

@@ -153,7 +153,7 @@ class UnifiedEvaluationMatrix:
     
     def _create_fastpath_variant(self, variant_name: str) -> Any:
         """Create FastPath variant instance."""
-        from packrepo.fastpath.types import FastPathVariant, FastPathConfig
+        from packrepo.fastpath.types import FastPathVariant, ScribeConfig
         from packrepo.fastpath.execution_strategy import VariantExecutionStrategy
         
         variant_map = {
@@ -170,19 +170,19 @@ class UnifiedEvaluationMatrix:
         
         # Create specialized configs for enhanced variants
         if variant_name == 'v5_plus_entry_points':
-            config = FastPathConfig.with_entry_points(
+            config = ScribeConfig.with_entry_points(
                 entry_points=["main.py", "app.py"],
                 variant=variant,
                 total_budget=100000
             )
         elif variant_name == 'v5_plus_diff_packing':
-            config = FastPathConfig.with_diffs(
+            config = ScribeConfig.with_diffs(
                 variant=variant,
                 total_budget=100000,
                 commit_range="HEAD~5..HEAD"
             )
         else:
-            config = FastPathConfig(
+            config = ScribeConfig(
                 variant=variant,
                 total_budget=100000
             )

@@ -1,9 +1,9 @@
 """
-PackRepo main library interface.
+Scribe main library interface.
 
 Provides a clean, minimal API for repository packing functionality
 that can be consumed by rendergit.py and other applications.
-Includes FastPath V5 optimization system for 20-35% improvement in LLM Q&A accuracy.
+Includes Scribe V5 optimization system for 20-35% improvement in LLM Q&A accuracy.
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ class PackRepoError(Exception):
 
 
 @dataclass
-class FastPathConfig:
+class ScribeConfig:
     """
-    Configuration class for FastPath optimized repository packing.
+    Configuration class for Scribe optimized repository packing.
     
-    FastPath implements research-grade algorithms for optimal file selection
+    Scribe implements research-grade algorithms for optimal file selection
     with 20-35% improvement in LLM Q&A accuracy compared to baseline approaches.
     """
     
@@ -64,7 +64,7 @@ class FastPathConfig:
     enable_quality_metrics: bool = True  # Calculate quality scores
     
     @classmethod
-    def for_research(cls) -> 'FastPathConfig':
+    def for_research(cls) -> 'ScribeConfig':
         """Create configuration optimized for research reproducibility."""
         return cls(
             variant='v5',
@@ -77,7 +77,7 @@ class FastPathConfig:
         )
     
     @classmethod  
-    def for_production(cls) -> 'FastPathConfig':
+    def for_production(cls) -> 'ScribeConfig':
         """Create configuration optimized for production use."""
         return cls(
             variant='v4',  # Slightly faster than v5
@@ -90,7 +90,7 @@ class FastPathConfig:
         )
     
     @classmethod
-    def for_large_repos(cls) -> 'FastPathConfig':
+    def for_large_repos(cls) -> 'ScribeConfig':
         """Create configuration optimized for large repositories."""
         return cls(
             variant='v3',  # More scalable variant
@@ -129,18 +129,18 @@ class RepositoryPacker:
     def pack_with_fastpath(
         self,
         repo_path: Union[str, Path],
-        config: Optional[FastPathConfig] = None,
+        config: Optional[ScribeConfig] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Pack repository using FastPath optimization for maximum LLM comprehension.
+        Pack repository using Scribe optimization for maximum LLM comprehension.
         
-        This method implements the research-grade FastPath V5 algorithm that delivers
+        This method implements the research-grade Scribe V5 algorithm that delivers
         20-35% improvement in LLM Q&A accuracy compared to baseline approaches.
         
         Args:
             repo_path: Path to repository (local path or GitHub URL)
-            config: FastPath configuration (uses default if None)
+            config: Scribe configuration (uses default if None)
             **kwargs: Additional options (model_name, output_file, etc.)
             
         Returns:
@@ -153,8 +153,8 @@ class RepositoryPacker:
                 
         Example:
             >>> packer = RepositoryPacker()
-            >>> config = FastPathConfig.for_research()
-            >>> result = packer.pack_with_fastpath('/path/to/repo', config)
+            >>> config = ScribeConfig.for_research()
+            >>> result = packer.pack_with_scribe('/path/to/repo', config)
             >>> print(result['pack_content'])
         """
         # Import FastPath components locally to avoid circular imports
@@ -162,7 +162,7 @@ class RepositoryPacker:
         
         # Use provided config or create default
         if config is None:
-            config = FastPathConfig()
+            config = ScribeConfig()
             
         # Convert repo_path to Path object
         repo_path = Path(repo_path)
@@ -172,7 +172,7 @@ class RepositoryPacker:
         
         # Convert config to args-like object for CLI
         class ConfigArgs:
-            def __init__(self, repo_path: Path, config: FastPathConfig, **kwargs):
+            def __init__(self, repo_path: Path, config: ScribeConfig, **kwargs):
                 self.repo_path = repo_path
                 self.budget = config.budget
                 self.mode = 'auto'  # Let CLI determine best mode

@@ -13,7 +13,7 @@ import psutil
 import os
 
 from .fast_scan import ScanResult
-from .types import FastPathVariant, FastPathConfig, FastPathResult
+from .types import FastPathVariant, ScribeConfig, FastPathResult
 from .result_builder import create_result_builder
 
 
@@ -88,7 +88,7 @@ class VariantExecutionStrategy(ABC):
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute the specific variant algorithm."""
@@ -115,7 +115,7 @@ class BaselineExecutionStrategy(VariantExecutionStrategy):
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute V1 baseline algorithm."""
@@ -136,7 +136,7 @@ class QuotasExecutionStrategy(VariantExecutionStrategy):
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute V2 quotas algorithm."""
@@ -157,7 +157,7 @@ class CentralityExecutionStrategy(VariantExecutionStrategy):
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute V3 centrality algorithm."""
@@ -178,7 +178,7 @@ class DemotionExecutionStrategy(VariantExecutionStrategy):
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute V4 demotion algorithm."""
@@ -199,7 +199,7 @@ class IntegratedExecutionStrategy(VariantExecutionStrategy):
         self, 
         scan_results: List[ScanResult], 
         heuristic_scores: Dict[str, float], 
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute V5 integrated algorithm."""
@@ -227,7 +227,7 @@ class VariantExecutor:
     def execute_variant(
         self, 
         scan_results: List[ScanResult],
-        config: FastPathConfig,
+        config: ScribeConfig,
         query_hint: str = ""
     ) -> FastPathResult:
         """Execute specified FastPath variant with comprehensive metrics.
@@ -276,7 +276,7 @@ class VariantExecutor:
                 .with_routing_decision(result.routing_decision)
                 .build())
     
-    def _create_error_result(self, config: FastPathConfig, scan_results: List[ScanResult], error_msg: str) -> FastPathResult:
+    def _create_error_result(self, config: ScribeConfig, scan_results: List[ScanResult], error_msg: str) -> FastPathResult:
         """Create a result object for error cases."""
         total_time_ms, _ = self.performance_monitor.get_total_metrics()
         

@@ -31,7 +31,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from packrepo.fastpath.integrated_v5 import (
-    FastPathEngine, FastPathVariant, FastPathConfig, FastPathResult,
+    FastPathEngine, FastPathVariant, ScribeConfig, FastPathResult,
     create_fastpath_engine, get_variant_flag_configuration
 )
 from packrepo.fastpath.fast_scan import ScanResult
@@ -775,7 +775,7 @@ class ResearchEvaluationFramework:
         flag_config = get_variant_flag_configuration(variant)
         
         # Create configuration
-        config = FastPathConfig(
+        config = ScribeConfig(
             variant=variant,
             total_budget=budget
         )

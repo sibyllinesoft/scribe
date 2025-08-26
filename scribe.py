@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Flatten a GitHub repo into multiple output formats with smart file selection.
-Supports traditional file filtering, FastPath intelligent selection, and multiple output formats.
+Scribe: Advanced Repository Intelligence for LLM Code Analysis
+
+Render GitHub repositories into multiple formats with intelligent file selection.
+Supports traditional file filtering, Scribe's intelligent selection algorithms, and multiple output formats
+optimized for LLM consumption.
 """
 
 from __future__ import annotations
@@ -34,11 +37,11 @@ except ImportError:
     RepositoryPacker = None
     PackRepoError = None
 
-# FastPath integration
+# Scribe FastPath integration
 try:
     from packrepo.fastpath.integrated_v5 import FastPathEngine, create_fastpath_engine, get_variant_flag_configuration
     from packrepo.fastpath.fast_scan import FastScanner
-    from packrepo.fastpath.types import FastPathVariant, FastPathConfig
+    from packrepo.fastpath.types import FastPathVariant, ScribeConfig
     from packrepo.packer.tokenizer import estimate_tokens_scan_result
     FASTPATH_AVAILABLE = True
 except ImportError as e:
@@ -47,7 +50,7 @@ except ImportError as e:
     create_fastpath_engine = None
     get_variant_flag_configuration = None
     FastPathVariant = None
-    FastPathConfig = None
+    ScribeConfig = None
     FastPathEngine = None
     estimate_tokens_scan_result = None
 
@@ -609,9 +612,9 @@ def select_files_fastpath(
     diff_branch: str = "",
     diff_relevance_threshold: float = 0.1
 ) -> Tuple[List[FileInfo], Optional[str]]:
-    """Use FastPath to intelligently select files within token budget with optional entry points and diffs."""
+    """Use Scribe's intelligent algorithms to select files within token budget with optional entry points and diffs."""
     if not FASTPATH_AVAILABLE:
-        raise RuntimeError("FastPath not available")
+        raise RuntimeError("Scribe intelligent selection not available")
     
     # Map variant string to enum
     variant_mapping = {
@@ -667,8 +670,8 @@ def select_files_fastpath(
             relevance_threshold=diff_relevance_threshold
         )
     
-    # Create FastPath configuration
-    config = FastPathConfig(
+    # Create Scribe configuration
+    config = ScribeConfig(
         variant=variant,
         total_budget=token_budget,
         entry_points=processed_entry_points,
@@ -676,10 +679,10 @@ def select_files_fastpath(
         diff_options=diff_options
     )
     
-    # Execute enhanced FastPath selection
+    # Execute enhanced Scribe selection
     result = execute_enhanced_fastpath(repo_dir, scan_results, config, query_hint)
     
-    # Convert FastPath results back to FileInfo objects
+    # Convert Scribe results back to FileInfo objects
     selected_infos = []
     for scan_result in result.selected_files:
         file_path = repo_dir / scan_result.stats.path
@@ -687,7 +690,7 @@ def select_files_fastpath(
             path=file_path,
             rel=scan_result.stats.path,
             size=scan_result.stats.size_bytes,
-            decision=RenderDecision(True, "fastpath_selected"),
+            decision=RenderDecision(True, "scribe_selected"),
             content=None,  # Will be loaded later
             token_estimate=estimate_tokens_scan_result(scan_result) if estimate_tokens_scan_result else None
         )
@@ -698,8 +701,8 @@ def select_files_fastpath(
 
 
 def execute_enhanced_fastpath(repo_dir, scan_results, config, query_hint=""):
-    """Execute FastPath with enhanced features (entry points and diffs)."""
-    # Create base FastPath engine
+    """Execute Scribe with enhanced features (entry points and diffs)."""
+    # Create base Scribe engine
     engine = FastPathEngine()
     
     # If no entry points or diffs, use standard execution
@@ -751,7 +754,7 @@ def execute_enhanced_fastpath(repo_dir, scan_results, config, query_hint=""):
             'avg_centrality_score': sum(centrality_scores.pagerank_scores.values()) / len(centrality_scores.pagerank_scores) if centrality_scores.pagerank_scores else 0
         })
     
-    # Phase 2: Execute standard FastPath selection
+    # Phase 2: Execute standard Scribe selection
     base_result = engine.execute_variant(scan_results, config, query_hint)
     
     # Phase 3: Add diff content if requested
@@ -816,7 +819,7 @@ def derive_temp_output_path(repo_url: str) -> pathlib.Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Render GitHub repositories in multiple formats with smart file selection",
+        description="Scribe: Render GitHub repositories with advanced intelligence for LLM analysis",
         epilog="""
 Examples:
   %(prog)s https://github.com/user/repo                           # Traditional HTML output
@@ -824,8 +827,8 @@ Examples:
   %(prog)s --output-format cxml https://github.com/user/repo      # CXML format with basic file filtering
   %(prog)s --output-format repomix --token-target 50000 https://github.com/user/repo  # Repomix format with token limit
   
-  # FastPath intelligent file selection:
-  %(prog)s --use-fastpath https://github.com/user/repo            # HTML with FastPath selection
+  # Scribe intelligent file selection:
+  %(prog)s --use-fastpath https://github.com/user/repo            # HTML with Scribe intelligence
   %(prog)s --use-fastpath --fastpath-variant v5_integrated --output-format cxml https://github.com/user/repo
   %(prog)s --use-fastpath --token-target 30000 --query-hint "authentication" --output-format repomix https://github.com/user/repo
         """,
@@ -842,19 +845,19 @@ Examples:
     
     # File selection method
     ap.add_argument("--use-fastpath", action="store_true", 
-                   help="Use FastPath intelligent file selection instead of traditional filtering")
+                   help="Use Scribe intelligent file selection instead of traditional filtering")
     ap.add_argument("--token-target", type=int, default=50000,
                    help="Target token count for intelligent selection modes (default: 50000)")
     
-    # FastPath-specific options (only available if FastPath is installed)
+    # Scribe-specific options (only available if Scribe is installed)
     if FASTPATH_AVAILABLE:
         ap.add_argument("--fastpath-variant", default="v5_integrated",
                        choices=["v1_baseline", "v2_quotas", "v3_centrality", "v4_demotion", "v5_integrated"],
-                       help="FastPath algorithm variant (default: v5_integrated)")
+                       help="Scribe algorithm variant (default: v5_integrated)")
         ap.add_argument("--query-hint", default="",
-                       help="Query hint for FastPath optimization (helps guide selection)")
+                       help="Query hint for Scribe optimization (helps guide selection)")
         ap.add_argument("--show-fastpath-metrics", action="store_true",
-                       help="Show detailed FastPath performance and quality metrics")
+                       help="Show detailed Scribe performance and quality metrics")
         
         # Entry point relevance (NEW)
         ap.add_argument("--entry-points", nargs="*", default=[],
@@ -876,9 +879,9 @@ Examples:
     
     args = ap.parse_args()
 
-    # Validate FastPath availability if requested
+    # Validate Scribe availability if requested
     if args.use_fastpath and not FASTPATH_AVAILABLE:
-        print("❌ FastPath requested but not available. Install FastPath components or remove --use-fastpath", file=sys.stderr)
+        print("❌ Scribe intelligent selection requested but not available. Install Scribe components or remove --use-fastpath", file=sys.stderr)
         return 1
 
     # Set default output path if not provided  
@@ -901,7 +904,7 @@ Examples:
         print(f"📊 Selecting files...", file=sys.stderr)
         diff_content = None
         if args.use_fastpath:
-            # Use FastPath intelligent selection with enhanced features
+            # Use Scribe intelligent selection with enhanced features
             selected_infos, diff_content = select_files_fastpath(
                 repo_dir, 
                 args.token_target, 
@@ -917,7 +920,7 @@ Examples:
             )
             
             # Enhanced status message
-            status_parts = [f"FastPath selected {len(selected_infos)} files"]
+            status_parts = [f"Scribe selected {len(selected_infos)} files"]
             if getattr(args, 'entry_points', []) or getattr(args, 'entry_functions', []):
                 entry_count = len(getattr(args, 'entry_points', [])) + len(getattr(args, 'entry_functions', []))
                 status_parts.append(f"with {entry_count} entry points")
@@ -971,9 +974,9 @@ Examples:
         file_size = out_path.stat().st_size
         print(f"✓ Wrote {bytes_human(file_size)} to {out_path}", file=sys.stderr)
 
-        # Show FastPath metrics if requested
+        # Show Scribe metrics if requested
         if args.use_fastpath and getattr(args, 'show_fastpath_metrics', False):
-            print(f"\n📊 FastPath Metrics:", file=sys.stderr)
+            print(f"\n📊 Scribe Metrics:", file=sys.stderr)
             print(f"  Selection method: {getattr(args, 'fastpath_variant', 'v5_integrated')}", file=sys.stderr)
             print(f"  Token target: {args.token_target:,}", file=sys.stderr)
             print(f"  Actual tokens: ~{total_tokens:,}", file=sys.stderr)

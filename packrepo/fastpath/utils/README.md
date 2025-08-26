@@ -15,7 +15,7 @@ This directory contains utility modules that centralize common functionality use
 - `EntryPointConverter.filter_by_file_patterns()` - Filter entry points by file patterns
 
 **Replaces duplicate code from**:
-- `types.py` - FastPathConfig.with_entry_points() and with_diffs()
+- `types.py` - ScribeConfig.with_entry_points() and with_diffs()
 - `personalized_centrality.py` - create_from_entry_points()
 - `diff_packer.py` - Entry point processing logic
 

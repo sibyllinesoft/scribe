@@ -1,7 +1,7 @@
 """
-FastPath CLI interface for optimized repository packing.
+Scribe CLI interface for optimized repository packing.
 
-Provides command-line access to FastPath and Extended modes:
+Provides command-line access to Scribe and Extended modes:
 - Automatic mode selection based on time constraints
 - Configuration file support
 - Performance monitoring and reporting
@@ -27,9 +27,9 @@ from ..packer.tokenizer import estimate_tokens_scan_result
 
 class FastPackCLI:
     """
-    Command-line interface for FastPath repository packing.
+    Command-line interface for Scribe repository packing.
     
-    Integrates all FastPath components with user-friendly CLI.
+    Integrates all Scribe components with user-friendly CLI.
     """
     
     def __init__(self):
@@ -40,7 +40,7 @@ class FastPackCLI:
         """Create command-line argument parser."""
         parser = argparse.ArgumentParser(
             prog='fastpack',
-            description='FastPath optimized repository packing for LLM consumption'
+            description='Scribe optimized repository packing for LLM consumption'
         )
         
         # Basic arguments
@@ -164,7 +164,7 @@ class FastPackCLI:
             return ExecutionMode.EXTENDED
         else:  # auto mode
             # Use target time or repository characteristics to choose mode
-            target_time = args.target_time or 10.0  # Default to FastPath timing
+            target_time = args.target_time or 10.0  # Default to Scribe timing
             
             if target_time <= 10.0:
                 return ExecutionMode.FAST_PATH
@@ -174,7 +174,7 @@ class FastPackCLI:
                 return ExecutionMode.EXTENDED  # Use extended for longer timeouts
                 
     def run_fast_path(self, args: argparse.Namespace, scheduler: TTLScheduler) -> Dict[str, Any]:
-        """Execute FastPath mode."""
+        """Execute Scribe fast mode."""
         repo_path = args.repo_path
         
         # Phase 1: Fast scanning
@@ -234,7 +234,7 @@ class FastPackCLI:
         """Execute Extended mode with AST parsing and centroids."""
         repo_path = args.repo_path
         
-        # Start with FastPath components
+        # Start with Scribe components
         results = self.run_fast_path(args, scheduler)
         
         # Phase 4: Link analysis (Extended only)
@@ -339,7 +339,7 @@ class FastPackCLI:
         }
         
         print("\n" + "="*50)
-        print("FASTPATH PERFORMANCE STATISTICS")
+        print("SCRIBE PERFORMANCE STATISTICS")
         print("="*50)
         print(json.dumps(stats, indent=2, default=str))
         print("="*50)
@@ -411,7 +411,7 @@ class FastPackCLI:
 
 
 def create_cli() -> FastPackCLI:
-    """Create FastPack CLI instance."""
+    """Create Scribe CLI instance."""
     return FastPackCLI()
 
 
