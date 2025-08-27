@@ -3,11 +3,11 @@ requires = ["setuptools >= 61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "scribe-repo"
+name = "sibylline-scribe"
 version = "1.0.0"
 description = "Advanced repository intelligence system for LLM code analysis with 20-35% improvement in Q&A accuracy"
-readme = "README_PYPI.md"
-license = {text = "BSD Zero Clause License"}
+readme = "README.md"
+license = "0BSD"
 authors = [
     {name = "Scribe Research Team", email = "contact@scribe.ai"},
 ]
@@ -53,7 +53,6 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -91,13 +90,12 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 all = [
-    "scribe-repo[research,evaluation,dev]"
+    "sibylline-scribe[research,evaluation,dev]"
 ]
 
 [project.scripts]
 scribe = "packrepo.cli.fastpack:main"
 fastpath = "packrepo.cli.fastpack:main"
-rendergit = "rendergit:main"
 
 [project.urls]
 Homepage = "https://github.com/scribe-ai/scribe-repo"
@@ -106,7 +104,7 @@ Documentation = "https://scribe-repo.readthedocs.io"
 "Bug Reports" = "https://github.com/scribe-ai/scribe-repo/issues"
 "Research Paper" = "https://arxiv.org/abs/2024.scribe"
 "ICSE 2025" = "https://conf.researchr.org/track/icse-2025/icse-2025-research-track"
-"PyPI Package" = "https://pypi.org/project/scribe-repo/"
+"PyPI Package" = "https://pypi.org/project/sibylline-scribe/"
 
 [tool.setuptools.packages.find]
 include = ["packrepo*"]

@@ -196,6 +196,70 @@ monitoring:
     doc_recall_at_k: 0.9   # 90% doc recall
     determinism_check: true # Identical outputs required
 
+# Include/Exclude Pattern Configuration (repomix-compatible)
+patterns:
+  # Include patterns (glob syntax)
+  include:
+    - "**/*"  # Include all files by default
+  
+  # Custom exclude patterns (highest priority)
+  exclude:
+    - "**/test_*"
+    - "**/tests/**"
+    - "**/*.tmp"
+    - "**/*.cache"
+  
+  # Pattern behavior
+  use_gitignore: true
+  use_default_patterns: true
+  max_file_size_mb: 50  # 50MB file size limit
+
+# Git Integration Configuration
+git:
+  # Change frequency analysis
+  sort_by_changes: false
+  max_commits_analyze: 100
+  
+  # Working tree analysis
+  include_diffs: false
+  include_commit_history: false
+  max_commits_history: 50
+  
+  # Remote repository support
+  remote:
+    default_branch: null  # Use repository default
+    clone_depth: 1        # Shallow clone by default
+    timeout_seconds: 300  # 5 minute clone timeout
+
+# Output Format Configuration
+output:
+  # Format style: 'plain', 'json', 'markdown', 'xml'
+  default_style: plain
+  
+  # Content options
+  include_file_summary: true
+  include_directory_structure: true
+  include_files: true
+  show_line_numbers: false
+  custom_header: null
+  
+  # Documentation features
+  file_summary_options:
+    top_files_count: 5
+    language_breakdown: true
+    size_breakdown: true
+    
+  directory_structure_options:
+    include_empty_directories: false
+    max_depth: 10
+    show_file_sizes: true
+  
+  # Git information in output
+  git_info:
+    include_commits: false
+    include_diffs: false
+    include_change_frequency: false
+
 # CLI Defaults
 cli:
   default_budget: 120000
@@ -203,3 +267,8 @@ cli:
   default_model: gpt-4
   verbose: false
   stats: false
+  
+  # New CLI defaults
+  default_output_style: plain
+  copy_to_clipboard: false
+  dry_run: false
