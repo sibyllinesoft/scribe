@@ -135,3 +135,5 @@ citation_verification_*.md
 *.swp
 *.swo
 *~
+
+.serena/
