@@ -9,6 +9,7 @@ optimized for LLM consumption.
 
 from __future__ import annotations
 import argparse
+import fnmatch
 import html
 import os
 import pathlib
@@ -19,7 +20,7 @@ import tempfile
 import time
 import webbrowser
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Set
 
 # External deps
 from pygments import highlight
@@ -83,6 +84,86 @@ def run(cmd: List[str], cwd: str | None = None, check: bool = True) -> subproces
     return subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=True)
 
 
+def parse_gitignore_patterns(repo_root: pathlib.Path) -> Set[str]:
+    """Parse .gitignore files and return a set of normalized patterns."""
+    patterns = set()
+    
+    # Add some essential patterns that should always be ignored even without .gitignore
+    essential_patterns = {
+        ".git/",
+        "__pycache__/",
+        "*.pyc",
+        "*.pyo",
+        "*.pyd",
+        ".DS_Store",
+        "Thumbs.db",
+    }
+    patterns.update(essential_patterns)
+    
+    # Parse the main .gitignore file in the repo root
+    main_gitignore = repo_root / ".gitignore"
+    if main_gitignore.exists():
+        try:
+            with main_gitignore.open("r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    # Skip empty lines and comments
+                    if not line or line.startswith("#"):
+                        continue
+                    # Remove negation patterns for simplicity (!)
+                    if line.startswith("!"):
+                        continue
+                    patterns.add(line)
+        except Exception:
+            # If we can't read the .gitignore file, just skip it
+            pass
+    
+    return patterns
+
+
+def should_ignore_path(rel_path: str, patterns: Set[str]) -> bool:
+    """Check if a relative path should be ignored based on gitignore patterns."""
+    # Check each pattern
+    for pattern in patterns:
+        if match_gitignore_pattern(rel_path, pattern):
+            return True
+    return False
+
+
+def match_gitignore_pattern(rel_path: str, pattern: str) -> bool:
+    """Match a single gitignore pattern against a relative path."""
+    # Handle directory patterns (ending with /)
+    if pattern.endswith("/"):
+        pattern_dir = pattern.rstrip("/")
+        # For directory patterns, check if any directory in the path matches
+        path_parts = rel_path.split("/")
+        for i, part in enumerate(path_parts[:-1]):  # Exclude the filename from directory matching
+            if fnmatch.fnmatch(part, pattern_dir):
+                return True
+        # Also check if it's a directory itself
+        if fnmatch.fnmatch(rel_path, pattern_dir) and rel_path.endswith("/"):
+            return True
+        # Check if the path starts with this directory
+        if rel_path.startswith(pattern_dir + "/"):
+            return True
+    else:
+        # For file patterns, match against the full path and filename
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True
+        # Also check just the filename
+        filename = rel_path.split("/")[-1]
+        if fnmatch.fnmatch(filename, pattern):
+            return True
+        # Handle patterns that might be meant to match anywhere in the path
+        if "/" not in pattern:
+            path_parts = rel_path.split("/")
+            for part in path_parts:
+                if fnmatch.fnmatch(part, pattern):
+                    return True
+    
+    return False
+
+
 def git_clone(url: str, dst: str) -> None:
     run(["git", "clone", "--depth", "1", url, dst])
 
@@ -129,15 +210,17 @@ def looks_binary(path: pathlib.Path) -> bool:
         return True
 
 
-def decide_file(path: pathlib.Path, repo_root: pathlib.Path, max_bytes: int) -> FileInfo:
+def decide_file(path: pathlib.Path, repo_root: pathlib.Path, max_bytes: int, ignore_patterns: Set[str]) -> FileInfo:
     rel = str(path.relative_to(repo_root)).replace(os.sep, "/")
     try:
         size = path.stat().st_size
     except FileNotFoundError:
         size = 0
-    # Ignore VCS and build junk
-    if "/.git/" in f"/{rel}/" or rel.startswith(".git/"):
+    
+    # Check if the file should be ignored based on gitignore patterns
+    if should_ignore_path(rel, ignore_patterns):
         return FileInfo(path, rel, size, RenderDecision(False, "ignored"))
+    
     if size > max_bytes:
         return FileInfo(path, rel, size, RenderDecision(False, "too_large"))
     if looks_binary(path):
@@ -146,13 +229,52 @@ def decide_file(path: pathlib.Path, repo_root: pathlib.Path, max_bytes: int) -> 
 
 
 def collect_files(repo_root: pathlib.Path, max_bytes: int) -> List[FileInfo]:
+    """Collect files from the repository, preferring git ls-files if available."""
     infos: List[FileInfo] = []
-    for p in sorted(repo_root.rglob("*")):
-        if p.is_symlink():
-            continue
-        if p.is_file():
-            infos.append(decide_file(p, repo_root, max_bytes))
-    return infos
+    
+    # Try to use git ls-files first (respects .gitignore automatically)
+    try:
+        result = run(["git", "ls-files"], cwd=str(repo_root), check=True)
+        git_files = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        
+        for rel_path in git_files:
+            if not rel_path:  # Skip empty lines
+                continue
+            abs_path = repo_root / rel_path
+            if abs_path.exists() and abs_path.is_file() and not abs_path.is_symlink():
+                infos.append(decide_file_simple(abs_path, repo_root, max_bytes))
+        
+        print(f"✓ Using git ls-files: found {len(git_files)} tracked files", file=sys.stderr)
+        return infos
+        
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback to filesystem walk if git is not available or not a git repo
+        print("⚠️  Git not available, falling back to filesystem walk", file=sys.stderr)
+        
+        # Parse gitignore patterns for manual filtering
+        ignore_patterns = parse_gitignore_patterns(repo_root)
+        
+        for p in sorted(repo_root.rglob("*")):
+            if p.is_symlink():
+                continue
+            if p.is_file():
+                infos.append(decide_file(p, repo_root, max_bytes, ignore_patterns))
+        return infos
+
+
+def decide_file_simple(path: pathlib.Path, repo_root: pathlib.Path, max_bytes: int) -> FileInfo:
+    """Simplified file decision for git-tracked files (no ignore checking needed)."""
+    rel = str(path.relative_to(repo_root)).replace(os.sep, "/")
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        size = 0
+    
+    if size > max_bytes:
+        return FileInfo(path, rel, size, RenderDecision(False, "too_large"))
+    if looks_binary(path):
+        return FileInfo(path, rel, size, RenderDecision(False, "binary"))
+    return FileInfo(path, rel, size, RenderDecision(True, "ok"))
 
 
 def generate_tree_fallback(root: pathlib.Path) -> str:
@@ -822,20 +944,23 @@ def main() -> int:
         description="Scribe: Render GitHub repositories with advanced intelligence for LLM analysis",
         epilog="""
 Examples:
-  %(prog)s https://github.com/user/repo                           # Traditional HTML output
+  %(prog)s                                                         # Process current directory with HTML output
+  %(prog)s /path/to/local/repo                                     # Process local directory
+  %(prog)s https://github.com/user/repo                           # Traditional HTML output from GitHub
   %(prog)s --output-format html https://github.com/user/repo      # Same as above
-  %(prog)s --output-format cxml https://github.com/user/repo      # CXML format with basic file filtering
-  %(prog)s --output-format repomix --token-target 50000 https://github.com/user/repo  # Repomix format with token limit
+  %(prog)s --output-format cxml                                    # CXML format for current directory
+  %(prog)s --output-format repomix --token-target 50000           # Repomix format with token limit for current directory
   
   # Scribe intelligent file selection:
-  %(prog)s --use-fastpath https://github.com/user/repo            # HTML with Scribe intelligence
-  %(prog)s --use-fastpath --fastpath-variant v5_integrated --output-format cxml https://github.com/user/repo
-  %(prog)s --use-fastpath --token-target 30000 --query-hint "authentication" --output-format repomix https://github.com/user/repo
+  %(prog)s --use-fastpath                                          # HTML with Scribe intelligence for current directory
+  %(prog)s --use-fastpath https://github.com/user/repo            # HTML with Scribe intelligence from GitHub
+  %(prog)s --use-fastpath --fastpath-variant v5_integrated --output-format cxml /path/to/repo
+  %(prog)s --use-fastpath --token-target 30000 --query-hint "authentication" --output-format repomix
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("repo_url", help="GitHub repo URL (https://github.com/owner/repo[.git])")
-    ap.add_argument("-o", "--out", help="Output file path (default: temporary file derived from repo name and format)")
+    ap.add_argument("repo_url", nargs="?", help="GitHub repo URL (https://github.com/owner/repo[.git]) or local directory path. If not provided, uses current directory.")
+    ap.add_argument("-o", "--out", help="Output file path (default: uses config file setting or saves to current directory with auto-generated name)")
     ap.add_argument("--max-bytes", type=int, default=MAX_DEFAULT_BYTES, help="Max file size to include (bytes); larger files are skipped (traditional mode only)")
     ap.add_argument("--no-open", action="store_true", help="Don't open the HTML file in browser after generation (HTML mode only)")
     
@@ -884,21 +1009,69 @@ Examples:
         print("❌ Scribe intelligent selection requested but not available. Install Scribe components or remove --use-fastpath", file=sys.stderr)
         return 1
 
-    # Set default output path if not provided  
-    if args.out is None:
-        base_name = derive_temp_output_path(args.repo_url).stem
-        ext_map = {'html': '.html', 'cxml': '.xml', 'repomix': '.txt'}
-        ext = ext_map.get(args.output_format, '.html')
-        args.out = str(pathlib.Path(tempfile.gettempdir()) / f"{base_name}{ext}")
+    # Determine if we're working with a URL or local directory
+    if args.repo_url is None:
+        # Use current directory
+        repo_url_for_display = f"file://{os.getcwd()}"
+        repo_dir = pathlib.Path.cwd()
+        is_local = True
+        tmpdir = None
+    elif args.repo_url.startswith(('http://', 'https://')):
+        # It's a URL
+        repo_url_for_display = args.repo_url
+        tmpdir = tempfile.mkdtemp(prefix="rendergit_")
+        repo_dir = pathlib.Path(tmpdir, "repo")
+        is_local = False
+    else:
+        # It's a local path
+        repo_path = pathlib.Path(args.repo_url)
+        if not repo_path.exists():
+            print(f"❌ Directory does not exist: {args.repo_url}", file=sys.stderr)
+            return 1
+        if not repo_path.is_dir():
+            print(f"❌ Path is not a directory: {args.repo_url}", file=sys.stderr)
+            return 1
+        repo_url_for_display = f"file://{repo_path.resolve()}"
+        repo_dir = repo_path
+        is_local = True
+        tmpdir = None
 
-    tmpdir = tempfile.mkdtemp(prefix="rendergit_")
-    repo_dir = pathlib.Path(tmpdir, "repo")
+    # Load configuration from scribe.config.json if available
+    config = None
+    try:
+        if PACKREPO_AVAILABLE:
+            from packrepo.fastpath.config_manager import load_config
+            config = load_config(repo_dir)
+    except Exception:
+        # If config loading fails, continue without config
+        config = None
+
+    # Set default output path if not provided
+    if args.out is None:
+        # Priority order: 1. CLI args, 2. Config file, 3. Current directory with auto-generated name
+        if config and config.output_file_path:
+            # Use the path from configuration
+            args.out = str(pathlib.Path(config.output_file_path).expanduser().resolve())
+        else:
+            # Generate default filename in current directory
+            if is_local:
+                base_name = repo_dir.name
+            else:
+                base_name = derive_temp_output_path(args.repo_url).stem
+            ext_map = {'html': '.html', 'cxml': '.xml', 'repomix': '.txt'}
+            ext = ext_map.get(args.output_format, '.html')
+            args.out = str(pathlib.Path.cwd() / f"{base_name}{ext}")
 
     try:
-        print(f"📁 Cloning {args.repo_url} to temporary directory: {repo_dir}", file=sys.stderr)
-        git_clone(args.repo_url, str(repo_dir))
-        head = git_head_commit(str(repo_dir))
-        print(f"✓ Clone complete (HEAD: {head[:8]})", file=sys.stderr)
+        if is_local:
+            print(f"📁 Processing local directory: {repo_dir}", file=sys.stderr)
+            head = git_head_commit(str(repo_dir))
+            print(f"✓ Local directory ready (HEAD: {head[:8] if head != '(unknown)' else 'no git'})", file=sys.stderr)
+        else:
+            print(f"📁 Cloning {args.repo_url} to temporary directory: {repo_dir}", file=sys.stderr)
+            git_clone(args.repo_url, str(repo_dir))
+            head = git_head_commit(str(repo_dir))
+            print(f"✓ Clone complete (HEAD: {head[:8]})", file=sys.stderr)
 
         # Phase 1: File Selection  
         print(f"📊 Selecting files...", file=sys.stderr)
@@ -958,11 +1131,11 @@ Examples:
         print(f"🔨 Generating {args.output_format} output...", file=sys.stderr)
         
         if args.output_format == 'html':
-            content = build_html(args.repo_url, repo_dir, head, loaded_infos, diff_content)
+            content = build_html(repo_url_for_display, repo_dir, head, loaded_infos, diff_content)
         elif args.output_format == 'cxml':
-            content = generate_cxml_text(loaded_infos, args.repo_url, head, diff_content)
+            content = generate_cxml_text(loaded_infos, repo_url_for_display, head, diff_content)
         elif args.output_format == 'repomix':
-            content = generate_repomix_text(loaded_infos, args.repo_url, head, diff_content)
+            content = generate_repomix_text(loaded_infos, repo_url_for_display, head, diff_content)
         else:
             print(f"❌ Unknown output format: {args.output_format}", file=sys.stderr)
             return 1
@@ -970,9 +1143,17 @@ Examples:
         # Write output
         out_path = pathlib.Path(args.out)
         print(f"💾 Writing output: {out_path.resolve()}", file=sys.stderr)
+        
+        # Ensure the parent directory exists
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        
         out_path.write_text(content, encoding="utf-8")
         file_size = out_path.stat().st_size
         print(f"✓ Wrote {bytes_human(file_size)} to {out_path}", file=sys.stderr)
+        
+        # Show configuration source info
+        if config and config.output_file_path and args.out == str(pathlib.Path(config.output_file_path).expanduser().resolve()):
+            print(f"📋 Output path from scribe.config.json", file=sys.stderr)
 
         # Show Scribe metrics if requested
         if args.use_fastpath and getattr(args, 'show_fastpath_metrics', False):
@@ -992,8 +1173,9 @@ Examples:
         return 0
 
     finally:
-        print(f"🗑️  Cleaning up temporary directory: {tmpdir}", file=sys.stderr)
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        if tmpdir:
+            print(f"🗑️  Cleaning up temporary directory: {tmpdir}", file=sys.stderr)
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 
