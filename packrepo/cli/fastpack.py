@@ -230,6 +230,19 @@ class FastPackCLI:
             help='Weight for diversity vs relevance (default: 0.3)'
         )
         
+        parser.add_argument(
+            '--entrypoint', '--entry-point',
+            action='append',
+            help='Entry point file for personalized centrality calculation (can be used multiple times)'
+        )
+        
+        parser.add_argument(
+            '--personalization-alpha',
+            type=float,
+            default=0.15,
+            help='Strength of personalization towards entry points (default: 0.15)'
+        )
+        
         # Output options
         parser.add_argument(
             '--verbose', '-v',
@@ -354,6 +367,40 @@ class FastPackCLI:
             
         return git
         
+    def _apply_personalized_centrality(self, args: argparse.Namespace, scan_results, link_analysis=None):
+        """Apply personalized centrality if entry points are provided."""
+        if not getattr(args, 'entrypoint', None):
+            return None
+            
+        try:
+            from ..fastpath.personalized_centrality import create_personalized_calculator
+            
+            # Create personalized centrality calculator
+            calculator = create_personalized_calculator(
+                entry_points=args.entrypoint,
+                personalization_alpha=getattr(args, 'personalization_alpha', 0.15)
+            )
+            
+            # Calculate personalized centrality scores
+            centrality_scores = calculator.calculate_personalized_centrality(scan_results)
+            
+            # Apply centrality scores to scan results
+            for result in scan_results:
+                if result.stats.path in centrality_scores.pagerank_scores:
+                    # Boost the final score based on centrality
+                    centrality_boost = centrality_scores.pagerank_scores[result.stats.path]
+                    result.final_score = getattr(result, 'final_score', 1.0) * (1.0 + centrality_boost)
+            
+            return {
+                'entry_points': args.entrypoint,
+                'centrality_scores': centrality_scores.pagerank_scores,
+                'personalization_alpha': args.personalization_alpha
+            }
+            
+        except Exception as e:
+            print(f"Warning: Personalized centrality calculation failed: {e}")
+            return None
+        
     def run_fast_path(self, args: argparse.Namespace, scheduler: TTLScheduler, 
                      pattern_filter=None, git_integration=None) -> Dict[str, Any]:
         """Execute Scribe fast mode with new filtering."""
@@ -405,6 +452,9 @@ class FastPackCLI:
             
         scored_files = rank_result.result
         
+        # Phase 3.5: Apply personalized centrality if entry points provided
+        entry_point_stats = self._apply_personalized_centrality(args, scan_results)
+        
         # Phase 4: Selection
         def select_phase():
             if args.selector == 'facility':
@@ -433,6 +483,7 @@ class FastPackCLI:
             'scan_results': scan_results,
             'scored_files': scored_files,
             'selection': selection,
+            'entry_point_stats': entry_point_stats,
             'mode': 'fast_path'
         }
         
@@ -454,6 +505,11 @@ class FastPackCLI:
         else:
             print(f"Warning: Link analysis failed: {link_result.error}")
             results['link_analysis'] = None
+            
+        # Apply personalized centrality if entry points provided (using link analysis)
+        entry_point_stats = self._apply_personalized_centrality(args, results['scan_results'], results.get('link_analysis'))
+        if entry_point_stats:
+            results['entry_point_stats'] = entry_point_stats
             
         # Enhanced selection with centrality
         def enhanced_select_phase():
@@ -650,6 +706,11 @@ class FastPackCLI:
                 parsed_args.style = config.output_style
             if not parsed_args.output and config.output_file_path:
                 parsed_args.output = Path(config.output_file_path)
+            
+            # Set default output filename based on repository name if no output specified
+            if not parsed_args.output:
+                repo_name = repo_path.name if repo_path.name else "repository"
+                parsed_args.output = Path(f"{repo_name}.txt")
             
             # Create pattern filter
             pattern_filter = self._create_pattern_filter(parsed_args, repo_path, config)

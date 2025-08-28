@@ -1,0 +1,44 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.whl
+*.tar.gz
+
+# Cache & temporary files
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.tmp
+*.temp
+
+# Virtual environments & IDE
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Documentation (non-essential)
+TODO.md
+CHANGELOG.md
+
+# Generated files
+logs/
+*.log
+
+# UV lock file
+uv.lock
+
+# Git
+.git/
+.gitignore
