@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
+from tqdm import tqdm
+
 from ..fastpath.fast_scan import ScanResult
 from ..fastpath.heuristics import ScoreComponents
 
@@ -197,7 +199,12 @@ class MMRSelector:
         timeout_seconds = 30.0  # Maximum 30 seconds for selection
             
         # Extract features and relevance scores
-        for idx, (result, score_components) in enumerate(scored_files):
+        if len(scored_files) > 100:
+            scored_files_iter = tqdm(enumerate(scored_files), total=len(scored_files), desc="🔍 Extracting features", unit="file", file=sys.stderr)
+        else:
+            scored_files_iter = enumerate(scored_files)
+            
+        for idx, (result, score_components) in scored_files_iter:
             self.file_features[idx] = self._extract_sparse_features(result)
             self.relevance_scores[idx] = score_components.final_score
             
@@ -236,23 +243,32 @@ class MMRSelector:
         # Process remaining candidates with MMR
         candidates = [idx for idx in other_candidates if idx not in selected_indices]
         
-        for iteration in range(self.config.max_iterations):
-            # Check timeout
-            if time.time() - start_time > timeout_seconds:
-                print(f"⚠️ MMR selection timeout after {timeout_seconds}s, returning {len(selected_files)} files", file=sys.stderr)
-                break
+        # Use tqdm for MMR iterations if processing many files
+        mmr_pbar = None
+        if len(scored_files) > 100:
+            mmr_pbar = tqdm(total=self.config.max_iterations, desc="🔍 MMR selection", unit="iter", file=sys.stderr)
+        
+        try:
+            for iteration in range(self.config.max_iterations):
+                # Check timeout
+                if time.time() - start_time > timeout_seconds:
+                    if mmr_pbar:
+                        mmr_pbar.write(f"⚠️ MMR selection timeout after {timeout_seconds}s, returning {len(selected_files)} files")
+                    else:
+                        print(f"⚠️ MMR selection timeout after {timeout_seconds}s, returning {len(selected_files)} files", file=sys.stderr)
+                    break
+                    
+                if not candidates or total_tokens >= token_budget:
+                    break
+                    
+                best_idx = None
+                best_mmr = float('-inf')
+                best_tokens = 0
                 
-            if not candidates or total_tokens >= token_budget:
-                break
-                
-            best_idx = None
-            best_mmr = float('-inf')
-            best_tokens = 0
-            
-            # Progress indicator for large repositories  
-            if iteration % 10 == 0 and len(scored_files) > 100:
-                elapsed = time.time() - start_time
-                print(f"🔍 MMR iteration {iteration}/{self.config.max_iterations}, selected {len(selected_files)} files ({elapsed:.1f}s)", file=sys.stderr)
+                # Update progress bar
+                if mmr_pbar:
+                    mmr_pbar.set_postfix_str(f"{len(selected_files)} files, {total_tokens:,} tokens")
+                    mmr_pbar.update(1)
 
             # Find candidate with highest MMR score that fits budget
             candidates_checked = 0
@@ -300,6 +316,9 @@ class MMRSelector:
                     demotion_candidates.clear()
                 else:
                     break
+        finally:
+            if mmr_pbar:
+                mmr_pbar.close()
                     
         return selected_files
         

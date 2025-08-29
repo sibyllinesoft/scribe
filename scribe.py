@@ -27,6 +27,7 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_for_filename, TextLexer
 import markdown
+from tqdm import tqdm
 
 # PackRepo integration
 try:
@@ -939,20 +940,6 @@ def derive_temp_output_path(repo_url: str) -> pathlib.Path:
     return pathlib.Path(tempfile.gettempdir()) / filename
 
 
-def show_progress_bar(current: int, total: int, prefix: str = "Progress", suffix: str = "", length: int = 40) -> None:
-    """Show a simple progress bar in the terminal."""
-    if total == 0:
-        return
-    
-    percent = (current / total) * 100
-    filled_length = int(length * current // total)
-    bar = '█' * filled_length + '-' * (length - filled_length)
-    
-    print(f'\r{prefix} |{bar}| {current}/{total} ({percent:.1f}%) {suffix}', end='', file=sys.stderr)
-    if current == total:
-        print(file=sys.stderr)  # Newline when complete
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Scribe: Render GitHub repositories with advanced intelligence for LLM analysis",
@@ -1077,20 +1064,21 @@ Examples:
             args.out = str(pathlib.Path.cwd() / f"{base_name}{ext}")
 
     try:
+        # Phase 1: Repository preparation
         if is_local:
-            print(f"📁 Processing local directory: {repo_dir}", file=sys.stderr)
             head = git_head_commit(str(repo_dir))
-            print(f"✓ Local directory ready (HEAD: {head[:8] if head != '(unknown)' else 'no git'})", file=sys.stderr)
+            print(f"✅ Repository ready (HEAD: {head[:8] if head != '(unknown)' else 'no git'})", file=sys.stderr)
         else:
-            print(f"📁 Cloning {args.repo_url} to temporary directory: {repo_dir}", file=sys.stderr)
+            print(f"📥 Cloning repository...", file=sys.stderr)
             git_clone(args.repo_url, str(repo_dir))
             head = git_head_commit(str(repo_dir))
-            print(f"✓ Clone complete (HEAD: {head[:8]})", file=sys.stderr)
+            print(f"✅ Clone complete (HEAD: {head[:8]})", file=sys.stderr)
 
-        # Phase 1: File Selection  
-        print(f"📊 Selecting files...", file=sys.stderr)
+        # Phase 2: File Selection with immediate feedback
+        print(f"\n🎯 Phase 1: File Selection", file=sys.stderr)
         diff_content = None
         if args.use_fastpath:
+            print(f"🧠 Using Scribe intelligent selection (variant: {getattr(args, 'fastpath_variant', 'v5_integrated')})", file=sys.stderr)
             # Use Scribe intelligent selection with enhanced features
             selected_infos, diff_content = select_files_fastpath(
                 repo_dir, 
@@ -1115,40 +1103,40 @@ Examples:
                 status_parts.append("including relevant diffs")
             status_parts.append(f"(target: {args.token_target} tokens)")
             
-            print(f"✓ {' '.join(status_parts)}", file=sys.stderr)
+            print(f"✅ {' '.join(status_parts)}", file=sys.stderr)
         else:
-            # Use traditional file filtering
+            print(f"🗂️  Using traditional file filtering (max size: {bytes_human(args.max_bytes)})", file=sys.stderr)
             all_infos = collect_files(repo_dir, args.max_bytes)
             selected_infos = [i for i in all_infos if i.decision.include]
-            print(f"✓ Traditional filtering selected {len(selected_infos)} files (max size: {bytes_human(args.max_bytes)})", file=sys.stderr)
+            print(f"✅ Selected {len(selected_infos)} files after filtering", file=sys.stderr)
 
-        # Phase 2: Content Loading
-        print(f"📄 Loading file contents...", file=sys.stderr)
-        loaded_infos = []
-        total_tokens = 0
-        
-        for i, file_info in enumerate(selected_infos):
-            # Show progress bar
-            show_progress_bar(i, len(selected_infos), "Loading", file_info.rel[-30:] if len(file_info.rel) > 30 else file_info.rel)
-            
-            loaded_info = load_file_content(file_info)
-            if loaded_info.decision.include and loaded_info.content is not None:
-                loaded_infos.append(loaded_info)
-                total_tokens += loaded_info.token_estimate or 0
-            elif not loaded_info.decision.include:
-                print(f"\n⚠️  Skipping {file_info.rel}: {loaded_info.decision.reason}", file=sys.stderr)
-        
-        # Complete the progress bar
-        show_progress_bar(len(selected_infos), len(selected_infos), "Loading", "Complete")
-        
-        print(f"✓ Loaded {len(loaded_infos)} files (~{total_tokens:,} tokens total)", file=sys.stderr)
-
-        if not loaded_infos:
+        if not selected_infos:
             print("❌ No files to process", file=sys.stderr)
             return 1
 
-        # Phase 3: Output Generation
-        print(f"🔨 Generating {args.output_format} output...", file=sys.stderr)
+        # Phase 3: Content Loading with better progress
+        print(f"\n📚 Phase 2: Content Loading", file=sys.stderr)
+        loaded_infos = []
+        total_tokens = 0
+        
+        with tqdm(selected_infos, desc="📄 Loading files", unit="file", file=sys.stderr) as pbar:
+            for file_info in pbar:
+                # Update progress bar description with current file
+                filename = file_info.rel[-40:] if len(file_info.rel) > 40 else file_info.rel
+                pbar.set_postfix_str(filename)
+                
+                loaded_info = load_file_content(file_info)
+                if loaded_info.decision.include and loaded_info.content is not None:
+                    loaded_infos.append(loaded_info)
+                    total_tokens += loaded_info.token_estimate or 0
+                elif not loaded_info.decision.include:
+                    pbar.write(f"⚠️  Skipping {file_info.rel}: {loaded_info.decision.reason}")
+        
+        print(f"✅ Loaded {len(loaded_infos)} files (~{total_tokens:,} tokens)", file=sys.stderr)
+
+        # Phase 4: Output Generation
+        print(f"\n🔨 Phase 3: Output Generation", file=sys.stderr)
+        print(f"🎨 Generating {args.output_format} format...", file=sys.stderr)
         
         if args.output_format == 'html':
             content = build_html(repo_url_for_display, repo_dir, head, loaded_infos, diff_content)
@@ -1162,14 +1150,14 @@ Examples:
 
         # Write output
         out_path = pathlib.Path(args.out)
-        print(f"💾 Writing output: {out_path.resolve()}", file=sys.stderr)
+        print(f"💾 Writing to: {out_path.resolve()}", file=sys.stderr)
         
         # Ensure the parent directory exists
         out_path.parent.mkdir(parents=True, exist_ok=True)
         
         out_path.write_text(content, encoding="utf-8")
         file_size = out_path.stat().st_size
-        print(f"✓ Wrote {bytes_human(file_size)} to {out_path}", file=sys.stderr)
+        print(f"✅ Complete! Wrote {bytes_human(file_size)} to {out_path.name}", file=sys.stderr)
         
         # Show configuration source info
         if config and config.output_file_path and args.out == str(pathlib.Path(config.output_file_path).expanduser().resolve()):
@@ -1194,7 +1182,7 @@ Examples:
 
     finally:
         if tmpdir:
-            print(f"🗑️  Cleaning up temporary directory: {tmpdir}", file=sys.stderr)
+            print(f"🧹 Cleaning up temporary files...", file=sys.stderr)
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
