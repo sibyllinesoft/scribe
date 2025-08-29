@@ -94,8 +94,7 @@ all = [
 ]
 
 [project.scripts]
-scribe = "packrepo.cli.fastpack:main"
-fastpath = "packrepo.cli.fastpack:main"
+scribe = "scribe:main"
 
 [project.urls]
 Homepage = "https://github.com/scribe-ai/scribe-repo"
@@ -111,7 +110,7 @@ include = ["packrepo*"]
 exclude = ["tests*", "docs*", "examples*", "scripts*"]
 
 [tool.setuptools]
-py-modules = ["rendergit"]
+py-modules = ["scribe", "smart_filter", "repository_analyzer", "config_generator", "intelligent_scribe"]
 
 [tool.setuptools.package-data]
 "packrepo" = ["configs/*.yaml", "configs/*.json"]

@@ -13,6 +13,12 @@ from typing import List, Set, Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
+try:
+    import magic
+    MAGIC_AVAILABLE = True
+except ImportError:
+    MAGIC_AVAILABLE = False
+
 
 class FilterReason(Enum):
     """Reasons why a file might be filtered out."""
@@ -47,8 +53,25 @@ class SmartFilter:
     def __init__(self, max_file_size: int = 1024 * 1024):  # 1MB default
         self.max_file_size = max_file_size
         
+        # Initialize python-magic if available
+        self._init_magic()
+        
         # Core patterns for different categories
         self._init_filter_patterns()
+
+    
+    def _init_magic(self):
+        """Initialize python-magic objects if available."""
+        if MAGIC_AVAILABLE:
+            try:
+                self.magic_mime = magic.Magic(mime=True)
+                self.magic_description = magic.Magic()
+                self.magic_available = True
+            except Exception:
+                # Fallback if magic fails to initialize
+                self.magic_available = False
+        else:
+            self.magic_available = False
     
     def _init_filter_patterns(self):
         """Initialize all filtering patterns."""
@@ -154,6 +177,19 @@ class SmartFilter:
             
             # Web technologies
             '.html', '.css', '.scss', '.sass', '.less', '.vue', '.svelte',
+            
+            # Template engines (commonly used in web development)
+            '.njk', '.nunjucks',  # Nunjucks templates
+            '.hbs', '.handlebars',  # Handlebars templates  
+            '.mustache',  # Mustache templates
+            '.ejs',  # Embedded JavaScript templates
+            '.pug', '.jade',  # Pug templates (formerly Jade)
+            '.liquid',  # Liquid templates (Shopify, Jekyll)
+            '.erb',  # ERB templates (Ruby)
+            '.twig',  # Twig templates (PHP)
+            '.j2', '.jinja', '.jinja2',  # Jinja2 templates (Python)
+            '.dust',  # Dust templates
+            '.eta',  # Eta templates
             
             # Data and config (often important for understanding)
             '.json', '.yaml', '.yml', '.xml', '.toml', '.ini', '.env',
@@ -331,8 +367,35 @@ class SmartFilter:
             )
     
     def _contains_binary_content(self, file_path: pathlib.Path) -> bool:
-        """Check if file contains binary content."""
+        """Check if file contains binary content using magic if available."""
         try:
+            # Use python-magic if available for accurate detection
+            if self.magic_available:
+                try:
+                    mime_type = self.magic_mime.from_file(str(file_path))
+                    # Text files should have text/ mime types
+                    if mime_type.startswith('text/'):
+                        return False
+                    # Some common text types that don't start with text/
+                    text_mimes = {
+                        'application/json',
+                        'application/xml',
+                        'application/javascript',
+                        'application/x-sh',
+                        'application/x-shellscript',
+                        'inode/x-empty',  # Empty files
+                    }
+                    if mime_type in text_mimes:
+                        return False
+                    # If mime type suggests binary, it's binary
+                    binary_prefixes = ('image/', 'video/', 'audio/', 'application/octet-stream', 'application/pdf')
+                    if any(mime_type.startswith(prefix) for prefix in binary_prefixes):
+                        return True
+                except Exception:
+                    # Fallback to heuristic detection if magic fails
+                    pass
+            
+            # Fallback to heuristic detection
             with open(file_path, 'rb') as f:
                 chunk = f.read(8192)  # Read first 8KB
             
@@ -349,7 +412,7 @@ class SmartFilter:
             return False
             
         except (OSError, PermissionError):
-            return True  # If we can't read it, assume binary
+            return True  # If we can't read it, assume binary  # If we can't read it, assume binary
     
     def _analyze_generated_content(self, file_path: pathlib.Path) -> float:
         """Analyze file content to determine if it's generated. Returns confidence 0-1."""
@@ -401,8 +464,46 @@ class SmartFilter:
             return 0.0
     
     def _appears_to_be_text(self, file_path: pathlib.Path) -> bool:
-        """Check if file appears to be a text file."""
+        """Check if file appears to be a text file using magic-enhanced detection."""
         try:
+            # Use python-magic if available for accurate detection
+            if self.magic_available:
+                try:
+                    mime_type = self.magic_mime.from_file(str(file_path))
+                    # Text files should have text/ mime types
+                    if mime_type.startswith('text/'):
+                        return True
+                    # Some common text types that don't start with text/
+                    text_mimes = {
+                        'application/json',
+                        'application/xml',
+                        'application/javascript',
+                        'application/x-sh',
+                        'application/x-shellscript',
+                        'application/x-python',
+                        'application/x-perl',
+                        'application/x-ruby',
+                        'inode/x-empty',  # Empty files
+                        # Template files might be detected as text/plain or application/octet-stream
+                        # so we'll also check the fallback heuristics for unknown types
+                    }
+                    if mime_type in text_mimes:
+                        return True
+                    # For application/octet-stream or other ambiguous types,
+                    # fall through to heuristic detection
+                    if mime_type in ('application/octet-stream', 'text/plain'):
+                        # Continue to heuristic check below
+                        pass
+                    else:
+                        # For clearly binary types, return False
+                        binary_prefixes = ('image/', 'video/', 'audio/', 'application/pdf', 'application/zip')
+                        if any(mime_type.startswith(prefix) for prefix in binary_prefixes):
+                            return False
+                except Exception:
+                    # Fallback to heuristic detection if magic fails
+                    pass
+            
+            # Fallback heuristic detection (always run for ambiguous mime types)
             with open(file_path, 'rb') as f:
                 chunk = f.read(1024)  # Read first 1KB
             
@@ -422,6 +523,38 @@ class SmartFilter:
             
         except (OSError, PermissionError):
             return False
+
+    
+    def get_file_info(self, file_path: pathlib.Path) -> Dict[str, str]:
+        """Get detailed file type information using magic if available."""
+        info = {
+            'extension': file_path.suffix.lower(),
+            'mime_type': 'unknown',
+            'description': 'unknown',
+            'detection_method': 'extension_only'
+        }
+        
+        try:
+            if self.magic_available:
+                try:
+                    info['mime_type'] = self.magic_mime.from_file(str(file_path))
+                    info['description'] = self.magic_description.from_file(str(file_path))
+                    info['detection_method'] = 'magic'
+                except Exception as e:
+                    info['detection_method'] = f'magic_failed: {e}'
+            
+            # Add our own classification
+            if info['extension'] in self.source_extensions:
+                info['scribe_classification'] = 'source_code'
+            elif info['extension'] in self.binary_extensions:
+                info['scribe_classification'] = 'binary'
+            else:
+                info['scribe_classification'] = 'unknown'
+                
+        except Exception as e:
+            info['error'] = str(e)
+            
+        return info
     
     def filter_files(self, files: List[pathlib.Path], repo_root: pathlib.Path) -> Tuple[List[pathlib.Path], Dict[FilterReason, int]]:
         """Filter a list of files, returning included files and statistics."""

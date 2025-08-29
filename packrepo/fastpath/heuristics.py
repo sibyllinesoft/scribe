@@ -12,9 +12,23 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
+from pathlib import Path
 
 from .fast_scan import ScanResult
 from .feature_flags import get_feature_flags
+
+try:
+    import magic
+    HAS_MAGIC = True
+except ImportError:
+    HAS_MAGIC = False
+
+try:
+    from pygments.lexers import get_lexer_for_filename
+    from pygments.util import ClassNotFound
+    HAS_PYGMENTS = True
+except ImportError:
+    HAS_PYGMENTS = False
 
 
 @dataclass
@@ -135,6 +149,115 @@ class HeuristicScorer:
             return True
             
         return False
+    
+    def _get_template_score_boost(self, filepath: str) -> float:
+        """
+        Intelligent template file detection using multiple methods.
+        Returns score boost for template files.
+        """
+        filepath = Path(filepath)
+        
+        # Method 1: Check if already classified as template
+        # (This would come from fast_scan.py language_type classification)
+        
+        # Method 2: Pygments lexer-based detection (most comprehensive)
+        if HAS_PYGMENTS:
+            try:
+                lexer = get_lexer_for_filename(str(filepath))
+                lexer_name = lexer.name.lower()
+                
+                # Template-specific lexers
+                template_lexers = [
+                    'django', 'jinja', 'handlebars', 'template', 'mako',
+                    'genshi', 'cheetah', 'smarty', 'twig', 'liquid',
+                    'mustache', 'erb', 'haml', 'pug', 'jade'
+                ]
+                
+                if any(template in lexer_name for template in template_lexers):
+                    return 1.5  # High priority for detected template files
+                    
+                # HTML/XML files might be templates too - check content patterns
+                if 'html' in lexer_name or 'xml' in lexer_name:
+                    if self._has_template_patterns(filepath):
+                        return 1.2  # Moderate boost for HTML with template patterns
+                        
+            except ClassNotFound:
+                pass  # Fall through to other methods
+        
+        # Method 3: Extension-based detection (fallback)
+        template_extensions = {
+            '.njk', '.nunjucks',           # Nunjucks
+            '.hbs', '.handlebars',         # Handlebars
+            '.j2', '.jinja', '.jinja2',    # Jinja2
+            '.twig',                       # Twig
+            '.liquid',                     # Liquid
+            '.mustache',                   # Mustache
+            '.ejs',                        # Embedded JavaScript
+            '.erb', '.rhtml',              # ERB (Ruby)
+            '.haml',                       # Haml
+            '.pug', '.jade',               # Pug/Jade
+            '.dust',                       # Dust.js
+            '.eta',                        # Eta
+            '.svelte',                     # Svelte
+            '.vue',                        # Vue single-file components
+            '.tsx', '.jsx'                 # JSX/TSX (React templates)
+        }
+        
+        if filepath.suffix.lower() in template_extensions:
+            return 1.5
+        
+        # Method 4: Content-based detection for ambiguous files
+        if filepath.suffix.lower() in {'.html', '.htm', '.xml'}:
+            if self._has_template_patterns(filepath):
+                return 1.2
+        
+        return 0.0
+    
+    def _has_template_patterns(self, filepath: Path) -> bool:
+        """
+        Check if file contains common template patterns.
+        Only reads first 2KB for performance.
+        """
+        try:
+            if not filepath.exists() or filepath.stat().st_size > 1024 * 1024:  # Skip large files
+                return False
+                
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(2048)  # Read first 2KB only
+                
+                # Common template patterns
+                template_patterns = [
+                    ('{{', '}}'),          # Handlebars, Mustache, Jinja2
+                    ('{%', '%}'),          # Jinja2, Liquid, Django
+                    ('<%', '%>'),          # EJS, ERB
+                    ('<#', '#>'),          # FreeMarker
+                    ('${', '}'),           # Template literals, some engines
+                    ('@{', '}'),           # Razor, some custom engines
+                    ('[[', ']]'),          # Some custom engines
+                ]
+                
+                # Check for pattern pairs
+                for open_tag, close_tag in template_patterns:
+                    if open_tag in content and close_tag in content:
+                        return True
+                        
+                # Check for single patterns that are strong indicators
+                single_patterns = [
+                    'ng-', 'v-', ':',      # Angular, Vue directives
+                    'data-bind',           # Knockout.js
+                    'handlebars',          # Handlebars comments
+                    'jinja',               # Jinja comments
+                ]
+                
+                content_lower = content.lower()
+                for pattern in single_patterns:
+                    if pattern in content_lower:
+                        return True
+                        
+        except (OSError, UnicodeDecodeError):
+            pass  # File read error, assume not template
+            
+        return False
         
     def _calculate_doc_score(self, result: ScanResult) -> float:
         """Calculate documentation importance score."""
@@ -147,6 +270,15 @@ class HeuristicScorer:
         # README gets maximum documentation score
         if result.stats.is_readme:
             score += 2.0
+            
+        # TEMPLATE FILES GET HIGH PRIORITY SCORE - Use intelligent detection
+        template_boost = self._get_template_score_boost(result.stats.path)
+        score += template_boost
+        
+        # Layout and component directories get extra boost
+        path_lower = result.stats.path.lower()
+        if any(keyword in path_lower for keyword in ['layout', 'template', '_includes', 'component']):
+            score += 0.5
             
         # Well-structured documents get bonus
         if result.doc_analysis:
@@ -168,7 +300,7 @@ class HeuristicScorer:
             if doc.code_block_count > 0:
                 score += min(doc.code_block_count / 10.0, 0.2)
                 
-        return min(score, 3.0)  # Cap at 3.0
+        return min(score, 4.0)  # Increased cap to 4.0 to allow for template boost
     
     def _calculate_centrality_score(self, result: ScanResult) -> float:
         """Calculate PageRank centrality score (V2 feature)."""
