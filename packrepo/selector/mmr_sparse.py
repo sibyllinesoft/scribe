@@ -10,6 +10,8 @@ Implements MMR algorithm optimized for sparse TF-IDF features:
 from __future__ import annotations
 
 import math
+import sys
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -116,19 +118,23 @@ class MMRSelector:
         
     def _compute_cosine_similarity(self, features1: Dict[int, float], 
                                  features2: Dict[int, float]) -> float:
-        """Compute cosine similarity between sparse feature vectors."""
+        """Compute cosine similarity between sparse feature vectors with performance optimization."""
         # Find common features
         common_features = set(features1.keys()) & set(features2.keys())
         
         if not common_features:
             return 0.0
+        
+        # Early exit for very large feature sets to prevent hanging
+        if len(features1) > 10000 or len(features2) > 10000:
+            return 0.0
             
         # Compute dot product
         dot_product = sum(features1[feat] * features2[feat] for feat in common_features)
         
-        # Compute norms
-        norm1_squared = sum(val * val for val in features1.values())
-        norm2_squared = sum(val * val for val in features2.values())
+        # Compute norms with optimization for sparse vectors
+        norm1_squared = sum(val * val for val in features1.values() if val != 0.0)
+        norm2_squared = sum(val * val for val in features2.values() if val != 0.0)
         
         if norm1_squared == 0.0 or norm2_squared == 0.0:
             return 0.0
@@ -179,12 +185,16 @@ class MMRSelector:
     def select_files(self, scored_files: List[Tuple[ScanResult, ScoreComponents]], 
                     token_budget: int) -> List[ScanResult]:
         """
-        Select files using MMR algorithm within token budget.
+        Select files using MMR algorithm within token budget with timeout protection.
         
         Returns ordered list of selected files optimizing MMR objective.
         """
         if not scored_files:
             return []
+            
+        # Start timeout protection
+        start_time = time.time()
+        timeout_seconds = 30.0  # Maximum 30 seconds for selection
             
         # Extract features and relevance scores
         for idx, (result, score_components) in enumerate(scored_files):
@@ -227,6 +237,11 @@ class MMRSelector:
         candidates = [idx for idx in other_candidates if idx not in selected_indices]
         
         for iteration in range(self.config.max_iterations):
+            # Check timeout
+            if time.time() - start_time > timeout_seconds:
+                print(f"⚠️ MMR selection timeout after {timeout_seconds}s, returning {len(selected_files)} files", file=sys.stderr)
+                break
+                
             if not candidates or total_tokens >= token_budget:
                 break
                 
@@ -234,8 +249,20 @@ class MMRSelector:
             best_mmr = float('-inf')
             best_tokens = 0
             
+            # Progress indicator for large repositories  
+            if iteration % 10 == 0 and len(scored_files) > 100:
+                elapsed = time.time() - start_time
+                print(f"🔍 MMR iteration {iteration}/{self.config.max_iterations}, selected {len(selected_files)} files ({elapsed:.1f}s)", file=sys.stderr)
+
             # Find candidate with highest MMR score that fits budget
+            candidates_checked = 0
             for idx in candidates:
+                # Timeout check during expensive inner loop
+                if candidates_checked % 50 == 0:
+                    if time.time() - start_time > timeout_seconds:
+                        break
+                candidates_checked += 1
+                
                 result, score_components = scored_files[idx]
                 estimated_tokens = self._estimate_token_count(result)
                 
