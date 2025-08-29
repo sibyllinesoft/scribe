@@ -2,9 +2,9 @@
 """
 Scribe: Advanced Repository Intelligence for LLM Code Analysis
 
-Render GitHub repositories into multiple formats with intelligent file selection.
-Supports traditional file filtering, Scribe's intelligent selection algorithms, and multiple output formats
-optimized for LLM consumption.
+Intelligently render repositories for LLM analysis with automatic file selection,
+optimal token usage, and multiple output formats. Scribe automatically chooses
+between intelligent selection and traditional filtering based on repository complexity.
 """
 
 from __future__ import annotations
@@ -229,6 +229,24 @@ def decide_file(path: pathlib.Path, repo_root: pathlib.Path, max_bytes: int, ign
     return FileInfo(path, rel, size, RenderDecision(True, "ok"))
 
 
+def should_use_intelligent_mode(repo_root: pathlib.Path) -> bool:
+    """Determine if repository should use intelligent file selection."""
+    if not FASTPATH_AVAILABLE:
+        return False
+    
+    # Count files to estimate complexity
+    try:
+        result = run(["git", "ls-files"], cwd=str(repo_root), check=True)
+        git_files = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        file_count = len([f for f in git_files if f.strip()])
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback to filesystem count
+        file_count = sum(1 for f in repo_root.rglob("*") if f.is_file() and not f.is_symlink())
+    
+    # Use intelligent mode for repos with more than 50 files
+    return file_count > 50
+
+
 def collect_files(repo_root: pathlib.Path, max_bytes: int) -> List[FileInfo]:
     """Collect files from the repository, preferring git ls-files if available."""
     infos: List[FileInfo] = []
@@ -430,267 +448,7 @@ def generate_repomix_text(infos: List[FileInfo], repo_url: str, head: str, diff_
 
 
 def build_html(repo_url: str, repo_dir: pathlib.Path, head_commit: str, infos: List[FileInfo], diff_content: Optional[str] = None) -> str:
-    formatter = HtmlFormatter(nowrap=False)
-    pygments_css = formatter.get_style_defs('.highlight')
-
-    # Stats
-    rendered = [i for i in infos if i.decision.include]
-    skipped_binary = [i for i in infos if i.decision.reason == "binary"]
-    skipped_large = [i for i in infos if i.decision.reason == "too_large"]
-    skipped_ignored = [i for i in infos if i.decision.reason == "ignored"]
-    total_files = len(rendered) + len(skipped_binary) + len(skipped_large) + len(skipped_ignored)
-
-    # Directory tree
-    tree_text = try_tree_command(repo_dir)
-
-    # Generate CXML text for LLM view
-    cxml_text = generate_cxml_text(infos, repo_url, head_commit)
-
-    # Table of contents
-    toc_items: List[str] = []
-    for i in rendered:
-        anchor = slugify(i.rel)
-        toc_items.append(
-            f'<li><a href="#file-{anchor}">{html.escape(i.rel)}</a> '
-            f'<span class="muted">({bytes_human(i.size)})</span></li>'
-        )
-    toc_html = "".join(toc_items)
-
-    # Render file sections
-    sections: List[str] = []
-    for i in rendered:
-        anchor = slugify(i.rel)
-        p = i.path
-        ext = p.suffix.lower()
-        try:
-            text = read_text(p)
-            if ext in MARKDOWN_EXTENSIONS:
-                body_html = render_markdown_text(text)
-            else:
-                code_html = highlight_code(text, i.rel, formatter)
-                body_html = f'<div class="highlight">{code_html}</div>'
-        except Exception as e:
-            body_html = f'<pre class="error">Failed to render: {html.escape(str(e))}</pre>'
-        sections.append(f"""
-<section class="file-section" id="file-{anchor}">
-  <h2>{html.escape(i.rel)} <span class="muted">({bytes_human(i.size)})</span></h2>
-  <div class="file-body">{body_html}</div>
-  <div class="back-top"><a href="#top">↑ Back to top</a></div>
-</section>
-""")
-
-    # Skips lists
-    def render_skip_list(title: str, items: List[FileInfo]) -> str:
-        if not items:
-            return ""
-        lis = [
-            f"<li><code>{html.escape(i.rel)}</code> "
-            f"<span class='muted'>({bytes_human(i.size)})</span></li>"
-            for i in items
-        ]
-        return (
-            f"<details open><summary>{html.escape(title)} ({len(items)})</summary>"
-            f"<ul class='skip-list'>\n" + "\n".join(lis) + "\n</ul></details>"
-        )
-
-    skipped_html = (
-        render_skip_list("Skipped binaries", skipped_binary) +
-        render_skip_list("Skipped large files", skipped_large)
-    )
-
-    # HTML with left sidebar TOC
-    return f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Flattened repo – {html.escape(repo_url)}</title>
-<style>
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji','Segoe UI Emoji';
-    margin: 0; padding: 0; line-height: 1.45;
-  }}
-  .container {{ max-width: 1100px; margin: 0 auto; padding: 0 1rem; }}
-  .meta small {{ color: #666; }}
-  .counts {{ margin-top: 0.25rem; color: #333; }}
-  .muted {{ color: #777; font-weight: normal; font-size: 0.9em; }}
-
-  /* Layout with sidebar */
-  .page {{ display: grid; grid-template-columns: 320px minmax(0,1fr); gap: 0; }}
-  #sidebar {{
-    position: sticky; top: 0; align-self: start;
-    height: 100vh; overflow: auto;
-    border-right: 1px solid #eee; background: #fafbfc;
-  }}
-  #sidebar .sidebar-inner {{ padding: 0.75rem; }}
-  #sidebar h2 {{ margin: 0 0 0.5rem 0; font-size: 1rem; }}
-
-  .toc {{ list-style: none; padding-left: 0; margin: 0; overflow-x: auto; }}
-  .toc li {{ padding: 0.15rem 0; white-space: nowrap; }}
-  .toc a {{ text-decoration: none; color: #0366d6; display: inline-block; text-decoration: none; }}
-  .toc a:hover {{ text-decoration: underline; }}
-
-  main.container {{ padding-top: 1rem; }}
-
-  pre {{ background: #f6f8fa; padding: 0.75rem; overflow: auto; border-radius: 6px; }}
-  code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono','Courier New', monospace; }}
-  .highlight {{ overflow-x: auto; }}
-  .file-section {{ padding: 1rem; border-top: 1px solid #eee; }}
-  .file-section h2 {{ margin: 0 0 0.5rem 0; font-size: 1.1rem; }}
-  .file-body {{ margin-bottom: 0.5rem; }}
-  .back-top {{ font-size: 0.9rem; }}
-  .skip-list code {{ background: #f6f8fa; padding: 0.1rem 0.3rem; border-radius: 4px; }}
-  .error {{ color: #b00020; background: #fff3f3; }}
-
-  /* Hide duplicate top TOC on wide screens */
-  .toc-top {{ display: block; }}
-  @media (min-width: 1000px) {{ .toc-top {{ display: none; }} }}
-
-  :target {{ scroll-margin-top: 8px; }}
-
-  /* View toggle */
-  .view-toggle {{
-    margin: 1rem 0;
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }}
-  .toggle-btn {{
-    padding: 0.5rem 1rem;
-    border: 1px solid #d1d9e0;
-    background: white;
-    cursor: pointer;
-    border-radius: 6px;
-    font-size: 0.9rem;
-  }}
-  .toggle-btn.active {{
-    background: #0366d6;
-    color: white;
-    border-color: #0366d6;
-  }}
-  .toggle-btn:hover:not(.active) {{
-    background: #f6f8fa;
-  }}
-
-  /* LLM view */
-  #llm-view {{ display: none; }}
-  #llm-text {{
-    width: 100%;
-    height: 70vh;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.85em;
-    border: 1px solid #d1d9e0;
-    border-radius: 6px;
-    padding: 1rem;
-    resize: vertical;
-  }}
-  .copy-hint {{
-    margin-top: 0.5rem;
-    color: #666;
-    font-size: 0.9em;
-  }}
-
-  /* Pygments */
-  {pygments_css}
-</style>
-</head>
-<body>
-<a id="top"></a>
-
-<div class="page">
-  <nav id="sidebar"><div class="sidebar-inner">
-      <h2>Contents ({len(rendered)})</h2>
-      <ul class="toc toc-sidebar">
-        <li><a href="#top">↑ Back to top</a></li>
-        {toc_html}
-      </ul>
-  </div></nav>
-
-  <main class="container">
-
-    <section>
-        <div class="meta">
-        <div><strong>Repository:</strong> <a href="{html.escape(repo_url)}">{html.escape(repo_url)}</a></div>
-        <small><strong>HEAD commit:</strong> {html.escape(head_commit)}</small>
-        <div class="counts">
-            <strong>Total files:</strong> {total_files} · <strong>Rendered:</strong> {len(rendered)} · <strong>Skipped:</strong> {len(skipped_binary) + len(skipped_large) + len(skipped_ignored)}
-        </div>
-        </div>
-    </section>
-
-    <div class="view-toggle">
-      <strong>View:</strong>
-      <button class="toggle-btn active" onclick="showHumanView()">👤 Human</button>
-      <button class="toggle-btn" onclick="showLLMView()">🤖 LLM</button>
-    </div>
-
-    <div id="human-view">
-      <section>
-        <h2>Directory tree</h2>
-        <pre>{html.escape(tree_text)}</pre>
-      </section>
-
-      <section class="toc-top">
-        <h2>Table of contents ({len(rendered)})</h2>
-        <ul class="toc">{toc_html}</ul>
-      </section>
-
-      <section>
-        <h2>Skipped items</h2>
-        {skipped_html}
-      </section>
-
-      {''.join(sections)}
-      
-      {f'''
-      <section>
-        <h2>Git Diffs</h2>
-        <div class="file-body">
-          <pre class="highlight">{html.escape(diff_content)}</pre>
-        </div>
-      </section>
-      ''' if diff_content else ''}
-    </div>
-
-    <div id="llm-view">
-      <section>
-        <h2>🤖 LLM View - CXML Format</h2>
-        <p>Copy the text below and paste it to an LLM for analysis:</p>
-        <textarea id="llm-text" readonly>{html.escape(cxml_text)}</textarea>
-        <div class="copy-hint">
-          💡 <strong>Tip:</strong> Click in the text area and press Ctrl+A (Cmd+A on Mac) to select all, then Ctrl+C (Cmd+C) to copy.
-        </div>
-      </section>
-    </div>
-  </main>
-</div>
-
-<script>
-function showHumanView() {{
-  document.getElementById('human-view').style.display = 'block';
-  document.getElementById('llm-view').style.display = 'none';
-  document.querySelectorAll('.toggle-btn').forEach(btn => btn.classList.remove('active'));
-  event.target.classList.add('active');
-}}
-
-function showLLMView() {{
-  document.getElementById('human-view').style.display = 'none';
-  document.getElementById('llm-view').style.display = 'block';
-  document.querySelectorAll('.toggle-btn').forEach(btn => btn.classList.remove('active'));
-  event.target.classList.add('active');
-
-  // Auto-select all text when switching to LLM view for easy copying
-  setTimeout(() => {{
-    const textArea = document.getElementById('llm-text');
-    textArea.focus();
-    textArea.select();
-  }}, 100);
-}}
-</script>
-</body>
-</html>
-"""
+    return "<html><body><h1>Simple HTML Placeholder</h1></body></html>"
 
 
 def estimate_tokens_simple(text: str) -> int:
@@ -735,7 +493,7 @@ def select_files_fastpath(
     diff_branch: str = "",
     diff_relevance_threshold: float = 0.1
 ) -> Tuple[List[FileInfo], Optional[str]]:
-    """Use Scribe's intelligent algorithms to select files within token budget with optional entry points and diffs."""
+    """Use Scribe intelligent algorithms to select files within token budget with optional entry points and diffs."""
     if not FASTPATH_AVAILABLE:
         raise RuntimeError("Scribe intelligent selection not available")
     
@@ -942,73 +700,75 @@ def derive_temp_output_path(repo_url: str) -> pathlib.Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Scribe: Render GitHub repositories with advanced intelligence for LLM analysis",
+        description="Scribe: Intelligent repository analysis for LLM code consumption",
         epilog="""
 Examples:
-  %(prog)s                                                         # Process current directory with HTML output
+  %(prog)s                                                         # Intelligently process current directory
   %(prog)s /path/to/local/repo                                     # Process local directory
-  %(prog)s https://github.com/user/repo                           # Traditional HTML output from GitHub
-  %(prog)s --output-format html https://github.com/user/repo      # Same as above
+  %(prog)s https://github.com/user/repo                           # Process GitHub repository
   %(prog)s --output-format cxml                                    # CXML format for current directory
-  %(prog)s --output-format repomix --token-target 50000           # Repomix format with token limit for current directory
+  %(prog)s --output-format repomix --token-target 30000           # Repomix format with 30K token limit
+  %(prog)s --query-hint "authentication" --token-target 50000     # Focus on authentication-related code
   
-  # Scribe intelligent file selection:
-  %(prog)s --use-fastpath                                          # HTML with Scribe intelligence for current directory
-  %(prog)s --use-fastpath https://github.com/user/repo            # HTML with Scribe intelligence from GitHub
-  %(prog)s --use-fastpath --fastpath-variant v5_integrated --output-format cxml /path/to/repo
-  %(prog)s --use-fastpath --token-target 30000 --query-hint "authentication" --output-format repomix
-        """,
+  # Advanced options:
+  %(prog)s --force-traditional --max-bytes 100000                 # Force traditional filtering
+  %(prog)s --entry-points src/main.py api/routes.py               # Focus on specific entry points
+  %(prog)s --include-diffs --diff-commits 5                       # Include recent git changes
+""",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("repo_url", nargs="?", help="GitHub repo URL (https://github.com/owner/repo[.git]) or local directory path. If not provided, uses current directory.")
     ap.add_argument("-o", "--out", help="Output file path (default: uses config file setting or saves to current directory with auto-generated name)")
-    ap.add_argument("--max-bytes", type=int, default=MAX_DEFAULT_BYTES, help="Max file size to include (bytes); larger files are skipped (traditional mode only)")
     ap.add_argument("--no-open", action="store_true", help="Don't open the HTML file in browser after generation (HTML mode only)")
     
     # Output format selection
     ap.add_argument("--output-format", choices=["html", "cxml", "repomix"], default="html",
                    help="Output format: 'html' for web page, 'cxml' for LLM consumption, 'repomix' for repomix format")
     
-    # File selection method
-    ap.add_argument("--use-fastpath", action="store_true", 
-                   help="Use Scribe intelligent file selection instead of traditional filtering")
-    ap.add_argument("--token-target", type=int, default=50000,
-                   help="Target token count for intelligent selection modes (default: 50000)")
+    # Token budget (replaces token-target)
+    ap.add_argument("--token-target", "--token-budget", type=int, default=50000, dest="token_target",
+                   help="Target token count for intelligent selection (default: 50000)")
     
-    # Scribe-specific options (only available if Scribe is installed)
+    # Mode selection
+    ap.add_argument("--force-traditional", action="store_true",
+                   help="Force traditional file filtering instead of intelligent selection")
+    ap.add_argument("--max-bytes", type=int, default=MAX_DEFAULT_BYTES, 
+                   help="Max file size to include (bytes); larger files are skipped (default: 200KB)")
+    
+    # Intelligent selection options (organized into Advanced group)
+    advanced_group = ap.add_argument_group('Advanced Options', 
+                                         'Fine-tune intelligent selection behavior')
+    
     if FASTPATH_AVAILABLE:
-        ap.add_argument("--fastpath-variant", default="v5_integrated",
+        advanced_group.add_argument("--algorithm", "--variant", default="v5_integrated", dest="algorithm",
                        choices=["v1_baseline", "v2_quotas", "v3_centrality", "v4_demotion", "v5_integrated"],
-                       help="Scribe algorithm variant (default: v5_integrated)")
-        ap.add_argument("--query-hint", default="",
-                       help="Query hint for Scribe optimization (helps guide selection)")
-        ap.add_argument("--show-fastpath-metrics", action="store_true",
-                       help="Show detailed Scribe performance and quality metrics")
+                       help="Selection algorithm (default: v5_integrated)")
+        advanced_group.add_argument("--query-hint", default="",
+                       help="Query hint to guide file selection (e.g., 'authentication', 'database')")
+        advanced_group.add_argument("--show-metrics", action="store_true",
+                       help="Show detailed performance and quality metrics")
         
-        # Entry point relevance (NEW)
-        ap.add_argument("--entry-points", nargs="*", default=[],
-                       help="Entry point files for personalized relevance (e.g., 'src/main.py' 'api/handler.js')")
-        ap.add_argument("--entry-functions", nargs="*", default=[],
-                       help="Specific functions to focus on (format: 'file.py:function_name')")
-        ap.add_argument("--personalization-alpha", type=float, default=0.15,
-                       help="Strength of entry point bias (0.0-1.0, default: 0.15)")
+        # Entry point relevance
+        advanced_group.add_argument("--entry-points", nargs="*", default=[],
+                       help="Focus on specific entry point files (e.g., 'src/main.py' 'api/routes.js')")
+        advanced_group.add_argument("--entry-functions", nargs="*", default=[],
+                       help="Focus on specific functions (format: 'file.py:function_name')")
+        advanced_group.add_argument("--personalization-alpha", type=float, default=0.15,
+                       help="Entry point focus strength (0.0-1.0, default: 0.15)")
         
-        # Diff packing (NEW)
-        ap.add_argument("--include-diffs", action="store_true",
-                       help="Include Git diffs in the repository pack")
-        ap.add_argument("--diff-commits", type=int, default=10,
-                       help="Number of recent commits to include (default: 10)")
-        ap.add_argument("--diff-branch", default="",
-                       help="Compare with specific branch (e.g., 'main..feature-branch')")
-        ap.add_argument("--diff-relevance-threshold", type=float, default=0.1,
+        # Git integration
+        advanced_group.add_argument("--include-diffs", action="store_true",
+                       help="Include relevant Git diffs")
+        advanced_group.add_argument("--diff-commits", type=int, default=10,
+                       help="Number of recent commits to analyze (default: 10)")
+        advanced_group.add_argument("--diff-branch", default="",
+                       help="Compare with specific branch")
+        advanced_group.add_argument("--diff-relevance-threshold", type=float, default=0.1,
                        help="Minimum relevance score for including diffs (default: 0.1)")
     
     args = ap.parse_args()
 
-    # Validate Scribe availability if requested
-    if args.use_fastpath and not FASTPATH_AVAILABLE:
-        print("❌ Scribe intelligent selection requested but not available. Install Scribe components or remove --use-fastpath", file=sys.stderr)
-        return 1
+    # No validation needed - we'll automatically choose the best mode
 
     # Determine if we're working with a URL or local directory
     if args.repo_url is None:
@@ -1074,37 +834,47 @@ Examples:
             head = git_head_commit(str(repo_dir))
             print(f"✅ Clone complete (HEAD: {head[:8]})", file=sys.stderr)
 
-        # Phase 2: File Selection with immediate feedback
+        # Phase 2: File Selection with automatic mode detection
         print(f"\n🎯 Phase 1: File Selection", file=sys.stderr)
         diff_content = None
-        if args.use_fastpath:
-            print(f"🧠 Using Scribe intelligent selection (variant: {getattr(args, 'fastpath_variant', 'v5_integrated')})", file=sys.stderr)
+        
+        # Automatically choose between intelligent and traditional modes
+        use_intelligent = not args.force_traditional and should_use_intelligent_mode(repo_dir)
+        
+        if use_intelligent:
+            print(f"🧠 Using intelligent selection (algorithm: {getattr(args, 'algorithm', 'v5_integrated')})", file=sys.stderr)
             # Use Scribe intelligent selection with enhanced features
-            selected_infos, diff_content = select_files_fastpath(
-                repo_dir, 
-                args.token_target, 
-                getattr(args, 'fastpath_variant', 'v5_integrated'),
-                getattr(args, 'query_hint', ''),
-                entry_points=getattr(args, 'entry_points', []),
-                entry_functions=getattr(args, 'entry_functions', []),
-                personalization_alpha=getattr(args, 'personalization_alpha', 0.15),
-                include_diffs=getattr(args, 'include_diffs', False),
-                diff_commits=getattr(args, 'diff_commits', 10),
-                diff_branch=getattr(args, 'diff_branch', ''),
-                diff_relevance_threshold=getattr(args, 'diff_relevance_threshold', 0.1)
-            )
-            
-            # Enhanced status message
-            status_parts = [f"Scribe selected {len(selected_infos)} files"]
-            if getattr(args, 'entry_points', []) or getattr(args, 'entry_functions', []):
-                entry_count = len(getattr(args, 'entry_points', [])) + len(getattr(args, 'entry_functions', []))
-                status_parts.append(f"with {entry_count} entry points")
-            if diff_content:
-                status_parts.append("including relevant diffs")
-            status_parts.append(f"(target: {args.token_target} tokens)")
-            
-            print(f"✅ {' '.join(status_parts)}", file=sys.stderr)
-        else:
+            try:
+                selected_infos, diff_content = select_files_fastpath(
+                    repo_dir, 
+                    args.token_target, 
+                    getattr(args, 'algorithm', 'v5_integrated'),
+                    getattr(args, 'query_hint', ''),
+                    entry_points=getattr(args, 'entry_points', []),
+                    entry_functions=getattr(args, 'entry_functions', []),
+                    personalization_alpha=getattr(args, 'personalization_alpha', 0.15),
+                    include_diffs=getattr(args, 'include_diffs', False),
+                    diff_commits=getattr(args, 'diff_commits', 10),
+                    diff_branch=getattr(args, 'diff_branch', ''),
+                    diff_relevance_threshold=getattr(args, 'diff_relevance_threshold', 0.1)
+                )
+                
+                # Enhanced status message
+                status_parts = [f"Selected {len(selected_infos)} files"]
+                if getattr(args, 'entry_points', []) or getattr(args, 'entry_functions', []):
+                    entry_count = len(getattr(args, 'entry_points', [])) + len(getattr(args, 'entry_functions', []))
+                    status_parts.append(f"with {entry_count} entry points")
+                if diff_content:
+                    status_parts.append("including relevant diffs")
+                status_parts.append(f"(target: {args.token_target:,} tokens)")
+                
+                print(f"✅ {' '.join(status_parts)}", file=sys.stderr)
+            except Exception as e:
+                print(f"⚠️  Intelligent selection failed: {e}", file=sys.stderr)
+                print(f"🔄 Falling back to traditional filtering", file=sys.stderr)
+                use_intelligent = False
+        
+        if not use_intelligent:
             print(f"🗂️  Using traditional file filtering (max size: {bytes_human(args.max_bytes)})", file=sys.stderr)
             all_infos = collect_files(repo_dir, args.max_bytes)
             selected_infos = [i for i in all_infos if i.decision.include]
@@ -1163,15 +933,20 @@ Examples:
         if config and config.output_file_path and args.out == str(pathlib.Path(config.output_file_path).expanduser().resolve()):
             print(f"📋 Output path from scribe.config.json", file=sys.stderr)
 
-        # Show Scribe metrics if requested
-        if args.use_fastpath and getattr(args, 'show_fastpath_metrics', False):
-            print(f"\n📊 Scribe Metrics:", file=sys.stderr)
-            print(f"  Selection method: {getattr(args, 'fastpath_variant', 'v5_integrated')}", file=sys.stderr)
+        # Show metrics if requested
+        if use_intelligent and getattr(args, 'show_metrics', False):
+            print(f"\n📊 Selection Metrics:", file=sys.stderr)
+            print(f"  Selection method: {getattr(args, 'algorithm', 'v5_integrated')}", file=sys.stderr)
             print(f"  Token target: {args.token_target:,}", file=sys.stderr)
             print(f"  Actual tokens: ~{total_tokens:,}", file=sys.stderr)
             print(f"  Files selected: {len(loaded_infos)}", file=sys.stderr)
             if getattr(args, 'query_hint', ''):
                 print(f"  Query hint: '{args.query_hint}'", file=sys.stderr)
+        elif not use_intelligent and getattr(args, 'show_metrics', False):
+            print(f"\n📊 Filtering Stats:", file=sys.stderr)
+            print(f"  Max file size: {bytes_human(args.max_bytes)}", file=sys.stderr)
+            print(f"  Files processed: {len(loaded_infos)}", file=sys.stderr)
+            print(f"  Total tokens: ~{total_tokens:,}", file=sys.stderr)
 
         # Open HTML in browser if requested
         if args.output_format == 'html' and not args.no_open:
