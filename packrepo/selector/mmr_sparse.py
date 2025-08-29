@@ -270,52 +270,52 @@ class MMRSelector:
                     mmr_pbar.set_postfix_str(f"{len(selected_files)} files, {total_tokens:,} tokens")
                     mmr_pbar.update(1)
 
-            # Find candidate with highest MMR score that fits budget
-            candidates_checked = 0
-            for idx in candidates:
-                # Timeout check during expensive inner loop
-                if candidates_checked % 50 == 0:
-                    if time.time() - start_time > timeout_seconds:
-                        break
-                candidates_checked += 1
-                
-                result, score_components = scored_files[idx]
-                estimated_tokens = self._estimate_token_count(result)
-                
-                # Check if fits in remaining budget
-                if total_tokens + estimated_tokens > token_budget:
-                    # Add to demotion candidates for later consideration
-                    demotion_candidates.add(idx)
-                    continue
+                # Find candidate with highest MMR score that fits budget
+                candidates_checked = 0
+                for idx in candidates:
+                    # Timeout check during expensive inner loop
+                    if candidates_checked % 50 == 0:
+                        if time.time() - start_time > timeout_seconds:
+                            break
+                    candidates_checked += 1
                     
-                # Compute MMR score
-                mmr_score = self._compute_mmr_score(idx, selected_indices)
-                
-                # Penalize if too similar to selected files
-                max_sim = self._compute_max_similarity(idx, selected_indices)
-                if max_sim > self.config.diversity_threshold:
-                    mmr_score *= 0.5  # Reduce score for redundant files
+                    result, score_components = scored_files[idx]
+                    estimated_tokens = self._estimate_token_count(result)
                     
-                if mmr_score > best_mmr:
-                    best_mmr = mmr_score
-                    best_idx = idx
-                    best_tokens = estimated_tokens
+                    # Check if fits in remaining budget
+                    if total_tokens + estimated_tokens > token_budget:
+                        # Add to demotion candidates for later consideration
+                        demotion_candidates.add(idx)
+                        continue
+                        
+                    # Compute MMR score
+                    mmr_score = self._compute_mmr_score(idx, selected_indices)
                     
-            # Select best candidate
-            if best_idx is not None:
-                selected_indices.add(best_idx)
-                result, score_components = scored_files[best_idx]
-                selected_files.append(result)
-                total_tokens += best_tokens
-                candidates.remove(best_idx)
-            else:
-                # Try demotion ladder - reduce quality scores and retry
-                if demotion_candidates:
-                    self._apply_demotion(demotion_candidates)
-                    candidates.extend(list(demotion_candidates))
-                    demotion_candidates.clear()
+                    # Penalize if too similar to selected files
+                    max_sim = self._compute_max_similarity(idx, selected_indices)
+                    if max_sim > self.config.diversity_threshold:
+                        mmr_score *= 0.5  # Reduce score for redundant files
+                        
+                    if mmr_score > best_mmr:
+                        best_mmr = mmr_score
+                        best_idx = idx
+                        best_tokens = estimated_tokens
+                        
+                # Select best candidate
+                if best_idx is not None:
+                    selected_indices.add(best_idx)
+                    result, score_components = scored_files[best_idx]
+                    selected_files.append(result)
+                    total_tokens += best_tokens
+                    candidates.remove(best_idx)
                 else:
-                    break
+                    # Try demotion ladder - reduce quality scores and retry
+                    if demotion_candidates:
+                        self._apply_demotion(demotion_candidates)
+                        candidates.extend(list(demotion_candidates))
+                        demotion_candidates.clear()
+                    else:
+                        break
         finally:
             if mmr_pbar:
                 mmr_pbar.close()
