@@ -55,7 +55,7 @@ except ImportError as e:
     FastPathEngine = None
     estimate_tokens_scan_result = None
 
-MAX_DEFAULT_BYTES = 50 * 1024
+MAX_DEFAULT_BYTES = 200 * 1024  # Increased from 50KB to 200KB for modern source files
 BINARY_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico",
     ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
@@ -939,6 +939,20 @@ def derive_temp_output_path(repo_url: str) -> pathlib.Path:
     return pathlib.Path(tempfile.gettempdir()) / filename
 
 
+def show_progress_bar(current: int, total: int, prefix: str = "Progress", suffix: str = "", length: int = 40) -> None:
+    """Show a simple progress bar in the terminal."""
+    if total == 0:
+        return
+    
+    percent = (current / total) * 100
+    filled_length = int(length * current // total)
+    bar = '█' * filled_length + '-' * (length - filled_length)
+    
+    print(f'\r{prefix} |{bar}| {current}/{total} ({percent:.1f}%) {suffix}', end='', file=sys.stderr)
+    if current == total:
+        print(file=sys.stderr)  # Newline when complete
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Scribe: Render GitHub repositories with advanced intelligence for LLM analysis",
@@ -1113,13 +1127,19 @@ Examples:
         loaded_infos = []
         total_tokens = 0
         
-        for file_info in selected_infos:
+        for i, file_info in enumerate(selected_infos):
+            # Show progress bar
+            show_progress_bar(i, len(selected_infos), "Loading", file_info.rel[-30:] if len(file_info.rel) > 30 else file_info.rel)
+            
             loaded_info = load_file_content(file_info)
             if loaded_info.decision.include and loaded_info.content is not None:
                 loaded_infos.append(loaded_info)
                 total_tokens += loaded_info.token_estimate or 0
             elif not loaded_info.decision.include:
-                print(f"⚠️  Skipping {file_info.rel}: {loaded_info.decision.reason}", file=sys.stderr)
+                print(f"\n⚠️  Skipping {file_info.rel}: {loaded_info.decision.reason}", file=sys.stderr)
+        
+        # Complete the progress bar
+        show_progress_bar(len(selected_infos), len(selected_infos), "Loading", "Complete")
         
         print(f"✓ Loaded {len(loaded_infos)} files (~{total_tokens:,} tokens total)", file=sys.stderr)
 

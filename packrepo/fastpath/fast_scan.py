@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -236,6 +237,19 @@ class FastScanner:
             '.rs': 'rust',
             '.go': 'go',
             '.md': 'markdown', '.rst': 'markdown', '.txt': 'text',
+            
+            # Template engines
+            '.njk': 'template', '.nunjucks': 'template',
+            '.hbs': 'template', '.handlebars': 'template',
+            '.mustache': 'template',
+            '.ejs': 'template',
+            '.pug': 'template', '.jade': 'template',
+            '.liquid': 'template',
+            '.erb': 'template',
+            '.twig': 'template',
+            '.j2': 'template', '.jinja': 'template', '.jinja2': 'template',
+            '.dust': 'template',
+            '.eta': 'template',
         }
         
         return lang_map.get(suffix)
@@ -507,6 +521,41 @@ class FastScanner:
             boost += 0.2
             
         return boost
+    
+    def _get_git_tracked_files(self) -> Optional[List[Path]]:
+        """
+        Get list of git-tracked files using 'git ls-files'.
+        
+        Returns None if not a git repository or git command fails.
+        This respects .gitignore automatically and only returns tracked files.
+        """
+        try:
+            result = subprocess.run(
+                ['git', 'ls-files'],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True
+            )
+            
+            if not result.stdout.strip():
+                return []
+            
+            git_files = []
+            for rel_path in result.stdout.strip().split('\n'):
+                if not rel_path:  # Skip empty lines
+                    continue
+                    
+                abs_path = self.repo_path / rel_path
+                if abs_path.exists() and abs_path.is_file() and not abs_path.is_symlink():
+                    git_files.append(abs_path)
+            
+            return git_files
+            
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            # Git not available or not a git repository
+            return None
         
     def scan_file(self, file_path: Path) -> Optional[ScanResult]:
         """Scan a single file and return analysis result."""
@@ -596,41 +645,30 @@ class FastScanner:
         """
         Scan entire repository with TTL protection.
         
+        Uses git ls-files first (respects .gitignore), falls back to filesystem walk if not a git repo.
         Returns list of scan results for processable files.
         Automatically stops when TTL exceeded or max_files reached.
         """
         self.start_time = time.time()
         results = []
-        file_count = 0
         
-        # Common directories to skip
-        skip_dirs = {
-            '.git', '.svn', '.hg',
-            'node_modules', '__pycache__', '.pytest_cache',
-            'target', 'build', 'dist', '.venv', 'venv',
-            '.idea', '.vscode'
-        }
+        # Try git ls-files first (preferred method)
+        git_files = self._get_git_tracked_files()
         
-        try:
-            for root, dirs, files in os.walk(self.repo_path):
-                # Skip excluded directories  
-                dirs[:] = [d for d in dirs if d not in skip_dirs]
-                
-                # Check TTL
-                if self._is_time_exceeded():
+        if git_files is not None:
+            # Use git-tracked files (respects .gitignore automatically)
+            file_count = 0
+            
+            for file_path in git_files:
+                if file_count >= max_files or self._is_time_exceeded():
                     break
-                    
-                for file_name in files:
-                    if file_count >= max_files:
-                        break
-                        
-                    file_path = Path(root) / file_name
-                    
-                    # Skip binary files and common excludes
-                    if (file_path.suffix.lower() in {'.pyc', '.o', '.exe', '.dll', '.so', '.dylib'} or
-                        file_name.startswith('.') and file_name not in {'.env', '.gitignore'}):
-                        continue
-                        
+                
+                # Skip binary files and common excludes
+                if (file_path.suffix.lower() in {'.pyc', '.o', '.exe', '.dll', '.so', '.dylib'} or
+                    (file_path.name.startswith('.') and file_path.name not in {'.env', '.gitignore'})):
+                    continue
+                
+                try:
                     result = self.scan_file(file_path)
                     if result:
                         results.append(result)
@@ -640,9 +678,54 @@ class FastScanner:
                     if file_count % 100 == 0 and self._is_time_exceeded():
                         break
                         
-        except Exception as e:
-            # Log error but return partial results
-            print(f"Scan interrupted: {e}")
+                except Exception as e:
+                    # Log error for individual file but continue
+                    pass
+                    
+        else:
+            # Fallback to filesystem walk (not a git repo or git not available)
+            file_count = 0
+            
+            # Common directories to skip
+            skip_dirs = {
+                '.git', '.svn', '.hg',
+                'node_modules', '__pycache__', '.pytest_cache',
+                'target', 'build', 'dist', '.venv', 'venv',
+                '.idea', '.vscode'
+            }
+            
+            try:
+                for root, dirs, files in os.walk(self.repo_path):
+                    # Skip excluded directories  
+                    dirs[:] = [d for d in dirs if d not in skip_dirs]
+                    
+                    # Check TTL
+                    if self._is_time_exceeded():
+                        break
+                        
+                    for file_name in files:
+                        if file_count >= max_files:
+                            break
+                            
+                        file_path = Path(root) / file_name
+                        
+                        # Skip binary files and common excludes
+                        if (file_path.suffix.lower() in {'.pyc', '.o', '.exe', '.dll', '.so', '.dylib'} or
+                            file_name.startswith('.') and file_name not in {'.env', '.gitignore'}):
+                            continue
+                            
+                        result = self.scan_file(file_path)
+                        if result:
+                            results.append(result)
+                            file_count += 1
+                            
+                        # Check TTL periodically
+                        if file_count % 100 == 0 and self._is_time_exceeded():
+                            break
+                            
+            except Exception as e:
+                # Log error but return partial results
+                print(f"Scan interrupted: {e}")
             
         # Build adjacency graph and calculate PageRank centrality (V2 feature)
         if get_feature_flags().centrality_enabled and results:
