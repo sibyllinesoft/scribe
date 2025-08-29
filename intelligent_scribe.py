@@ -137,7 +137,7 @@ class IntelligentScribe:
         
         # Determine output path
         if output_path is None:
-            output_path = repo_path / f"{repo_path.name}_scribe_output.xml"
+            output_path = repo_path / f"{repo_path.name}.xml"
         
         print(f"🔄 Executing scribe...")
         

@@ -73,7 +73,7 @@ class ConfigGenerator:
         
         # Determine output file path
         repo_name = repo_path.name
-        output_file = str(repo_path / f"{repo_name}_scribe_output.xml")
+        output_file = str(repo_path / f"{repo_name}.xml")
         
         # Get smart exclusion patterns
         exclude_patterns = self.smart_filter.get_exclusion_patterns_for_scribe()
