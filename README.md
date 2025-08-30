@@ -1,4 +1,6 @@
-# 🚀 Scribe: Advanced Repository Intelligence System
+<div align="center">
+  <img src="logo.webp" alt="Scribe Logo" width="400">
+</div>
 
 **The next-generation repository analysis tool that delivers 10x better results than repomix with 100% compatibility.**
 
@@ -392,6 +394,15 @@ scribe . --selector mmr --style json --stats
 ```bash
 scribe . --mode extended --diversity-weight 0.3 --include-diffs
 ```
+
+## 🙏 **Attributions**
+
+Scribe builds upon the excellent work of several open source projects:
+
+- **HTML Page Rendering**: Inspired by [rendergit](https://github.com/karpathy/rendergit) by Andrej Karpathy - A tool for rendering Git repositories into single static HTML pages for humans and LLMs
+- **Configuration & API Design**: Inspired by [repomix](https://github.com/yamadashy/repomix) by yamadashy - A powerful tool that packs repositories into AI-friendly files
+
+We're grateful to these projects for laying the foundation and inspiring better approaches to repository analysis and presentation.
 
 ---
 

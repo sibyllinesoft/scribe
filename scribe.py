@@ -201,10 +201,25 @@ def looks_binary(path: pathlib.Path) -> bool:
         if b"\x00" in chunk:
             return True
         # Heuristic: try UTF-8 decode; if it hard-fails, likely binary
+        # Handle partial UTF-8 characters at chunk boundaries
         try:
             chunk.decode("utf-8")
-        except UnicodeDecodeError:
-            return True
+        except UnicodeDecodeError as e:
+            # If the error is at the end of the chunk, it might be a partial UTF-8 character
+            # Read a few more bytes to see if we can complete the sequence
+            if e.start >= len(chunk) - 4:  # UTF-8 characters are at most 4 bytes
+                try:
+                    with path.open("rb") as f:
+                        f.seek(0)
+                        extended_chunk = f.read(8196)  # Read 4 more bytes
+                    extended_chunk.decode("utf-8")
+                    return False  # Successfully decoded with more bytes - it's text
+                except UnicodeDecodeError:
+                    return True  # Still can't decode - likely binary
+                except Exception:
+                    return True  # Any other error - treat as binary
+            else:
+                return True  # Decode error not at end - likely binary
         return False
     except Exception:
         # If unreadable, treat as binary to be safe
@@ -1324,7 +1339,7 @@ Examples:
     )
     ap.add_argument("repo_url", nargs="?", help="GitHub repo URL (https://github.com/owner/repo[.git]) or local directory path. If not provided, uses current directory.")
     ap.add_argument("-o", "--out", help="Output file path (default: uses config file setting or saves to current directory with auto-generated name)")
-    ap.add_argument("--no-open", action="store_true", help="Don't open the HTML file in browser after generation (HTML mode only)")
+    ap.add_argument("--open", action="store_true", help="Open the HTML file in browser after generation (HTML mode only)")
     
     # Output format selection
     ap.add_argument("--output-format", choices=["html", "cxml", "repomix"], default="html",
@@ -1554,7 +1569,7 @@ Examples:
             print(f"  Total tokens: ~{total_tokens:,}", file=sys.stderr)
 
         # Open HTML in browser if requested
-        if args.output_format == 'html' and not args.no_open:
+        if args.output_format == 'html' and args.open:
             print(f"🌐 Opening {out_path} in browser...", file=sys.stderr)
             webbrowser.open(f"file://{out_path.resolve()}")
 
