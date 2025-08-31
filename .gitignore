@@ -59,6 +59,11 @@ coverage.xml
 .dmypy.json
 dmypy.json
 
+# Modern Python tooling (2024-2025)
+.uv/
+.ruff_cache/
+.pre-commit-config.yaml.bak
+
 # Temporary files
 *.tmp
 *.temp
@@ -95,6 +100,10 @@ benchmark_reports/
 evaluation_results/
 test_results/
 
+# Large benchmark test files (ignore pattern for storage tests)
+benchmarks/results/*_test_*
+benchmarks/results/storage_test_*
+
 # Data files
 *.csv
 *.jsonl
@@ -102,6 +111,14 @@ test_results/
 *.pickle
 *.npy
 *.npz
+
+# Research & Data Science specific
+*.parquet
+*.feather
+data/raw/
+data/interim/
+mlruns/
+wandb/
 
 # Serena cache and temporary files
 .serena/conversations/

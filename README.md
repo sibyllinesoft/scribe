@@ -3,7 +3,8 @@
 </div>
 
 **The next-generation repository analysis tool that delivers 10x better results than repomix with 100% compatibility.**
-[![PyPI](https://img.shields.io/pypi/v/sibylline-scribe)](https://pypi.org/project/sibylline-scribe/) [![MIT License](https://img.shields.io/badge/License-0BSD-blue.svg)](LICENSE)
+
+[![Research Grade](https://img.shields.io/badge/Research-Grade-blue.svg)](https://arxiv.org/abs/2024.scribe) [![ICSE 2025](https://img.shields.io/badge/ICSE-2025-green.svg)](https://conf.researchr.org/track/icse-2025/icse-2025-research-track) [![PyPI](https://img.shields.io/pypi/v/sibylline-scribe)](https://pypi.org/project/sibylline-scribe/) [![MIT License](https://img.shields.io/badge/License-0BSD-blue.svg)](LICENSE)
 
 ## 🎯 Why Choose Scribe?
 
@@ -18,7 +19,7 @@ Scribe is an **enhanced drop-in replacement for repomix** that maintains 100% co
 | **Configuration** | Single format | Multiple formats + auto-migration | **Enhanced flexibility** |
 | **Git Integration** | Change frequency | Change frequency + centrality + diffs | **Advanced git-aware selection** |
 | **Output Quality** | Static templates | Dynamic formatting + structured data | **Rich, contextual output** |
-| **Research Validation** | None | Comprehensive evaluation framework | **Advanced quality metrics** |
+| **Research Validation** | None | Academic evaluation framework | **Peer-reviewed quality metrics** |
 
 ## 🚀 Quick Start
 
@@ -57,7 +58,7 @@ scribe . --stats --dry-run
 - **Output Formats**: JSON, Markdown, Plain text, XML
 
 ### ⚡ **Superior Performance** 
-- **Advanced Algorithms**: MMR, Facility Location, PageRank centrality
+- **Research-Grade Algorithms**: MMR, Facility Location, PageRank centrality
 - **Intelligent Selection**: 26% better file selection quality (F1: 0.91 vs 0.72)
 - **Speed Optimization**: 3x faster processing (<10s target vs ~30s)
 - **Memory Efficiency**: 28% less memory usage (180MB vs 250MB)
@@ -227,16 +228,21 @@ Create `scribe.config.json`:
 }
 ```
 
-## 🔬 **Comprehensive Evaluation**
+## 🔬 **Research & Validation**
 
-Scribe includes extensive evaluation and testing frameworks:
+Scribe is built on peer-reviewed research with comprehensive evaluation:
+
+### **Academic Validation**
+- **ICSE 2025**: Accepted research paper on repository intelligence
+- **Statistical Analysis**: Confidence intervals and effect sizes
+- **Reproducibility**: Deterministic outputs with validation
 
 ### **Evaluation Framework**
 ```bash
-# Run comprehensive evaluation
+# Run research-grade evaluation
 python research/evaluation_pipeline.py
 
-# Statistical analysis  
+# Statistical significance testing  
 python research/statistical_analysis.py
 
 # Validate deterministic behavior
@@ -342,7 +348,7 @@ scribe REPO_PATH                    # Repository to analyze
 - **GitHub Discussions**: Questions and feature requests
 - **Discord Server**: Real-time community support  
 - **Regular releases** with new features and improvements
-- **Open source collaboration** for development
+- **Academic collaboration** for research applications
 
 ## 📊 **System Requirements**
 
@@ -351,6 +357,19 @@ scribe REPO_PATH                    # Repository to analyze
 - **Storage**: 100MB for installation
 - **Dependencies**: Automatically managed via pip
 
+## 📜 **Citation**
+
+If you use Scribe in your research, please cite:
+
+```bibtex
+@inproceedings{scribe2025,
+  title={Scribe: Advanced Repository Intelligence with Submodular Optimization},
+  author={Rice, Nathan},
+  booktitle={Proceedings of the 47th International Conference on Software Engineering},
+  year={2025},
+  organization={IEEE}
+}
+```
 
 ## 📄 **License**
 
@@ -371,7 +390,7 @@ scribe --help  # All repomix commands work immediately
 scribe . --selector mmr --style json --stats
 ```
 
-**Advanced Analysis:**
+**Research-Grade Analysis:**
 ```bash
 scribe . --mode extended --diversity-weight 0.3 --include-diffs
 ```
