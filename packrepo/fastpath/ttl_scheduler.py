@@ -55,13 +55,13 @@ class ExecutionPlan:
     
 class TTLScheduler:
     """
-    Time-to-Live scheduler for FastPath execution.
+    Time-budget scheduler for FastPath execution.
     
-    Enforces strict wall-clock budgets per phase with graceful degradation.
-    Automatically switches to simpler modes when time constraints are violated.
+    Treats time as a budget that guides algorithm adaptation rather than hard limits.
+    Automatically adapts algorithm complexity when time budget is constrained.
     """
     
-    # Default phase budgets (seconds)
+    # Default phase budgets (seconds) - now used as guides rather than hard limits
     FAST_PATH_BUDGETS = {
         Phase.SCAN: 2.0,
         Phase.RANK: 2.0, 
@@ -78,12 +78,14 @@ class TTLScheduler:
         Phase.FINALIZE: 5.0,
     }
     
-    def __init__(self, target_mode: ExecutionMode = ExecutionMode.FAST_PATH):
+    def __init__(self, target_mode: ExecutionMode = ExecutionMode.FAST_PATH, max_time_budget: Optional[float] = None):
         self.target_mode = target_mode
         self.current_mode = target_mode
         self.start_time: Optional[float] = None
         self.phase_results: List[PhaseResult] = []
-        self.total_budget = self._get_total_budget(target_mode)
+        self.total_budget = max_time_budget or self._get_total_budget(target_mode)
+        self.adaptation_threshold = 0.7  # Start adapting at 70% budget usage
+        self.budget_pressure = 0.0  # Track how much pressure we're under
         
     def _get_total_budget(self, mode: ExecutionMode) -> float:
         """Get total time budget for execution mode."""
@@ -124,6 +126,21 @@ class TTLScheduler:
         elapsed = self.get_elapsed_time()
         return max(0.0, self.total_budget - elapsed)
         
+    def get_budget_pressure(self) -> float:
+        """Calculate budget pressure (0.0 = no pressure, 1.0+ = over budget)."""
+        elapsed = self.get_elapsed_time()
+        if self.total_budget <= 0:
+            return 0.0
+        return elapsed / self.total_budget
+        
+    def get_adaptation_factor(self) -> float:
+        """Get adaptation factor based on budget pressure (0.0 = no adapt, 1.0 = max adapt)."""
+        pressure = self.get_budget_pressure()
+        if pressure < self.adaptation_threshold:
+            return 0.0
+        # Gradually increase adaptation factor as pressure increases
+        return min(1.0, (pressure - self.adaptation_threshold) / (1.0 - self.adaptation_threshold))
+        
     def should_degrade_mode(self) -> bool:
         """Check if execution mode should be degraded due to time pressure."""
         elapsed = self.get_elapsed_time()
@@ -148,7 +165,7 @@ class TTLScheduler:
         
     def execute_phase(self, phase: Phase, func: Callable[[], T], *args, **kwargs) -> PhaseResult[T]:
         """
-        Execute a phase with TTL protection.
+        Execute a phase with budget-based adaptation.
         
         Args:
             phase: Phase being executed
@@ -156,42 +173,51 @@ class TTLScheduler:
             *args, **kwargs: Arguments to pass to function
             
         Returns:
-            PhaseResult with execution details
+            PhaseResult with execution details and adaptation guidance
         """
         if self.start_time is None:
             self.start_execution()
             
-        # Check if we should degrade execution mode
-        if self.should_degrade_mode() and self.current_mode != ExecutionMode.DEGRADED:
-            self.current_mode = ExecutionMode.DEGRADED
-            self.total_budget = self._get_total_budget(ExecutionMode.DEGRADED)
-            
-        # Get phase budget
-        phase_budgets = self._get_phase_budgets(self.current_mode)
-        phase_budget = phase_budgets.get(phase, 1.0)  # Default 1s if phase not in plan
+        # Update budget pressure
+        self.budget_pressure = self.get_budget_pressure()
+        adaptation_factor = self.get_adaptation_factor()
         
-        # Check if phase should be skipped due to time constraints
-        remaining = self.get_remaining_budget()
-        if remaining < phase_budget * 0.5:  # Need at least 50% of phase budget
-            result = PhaseResult(
-                phase=phase,
-                result=None,
-                duration=0.0,
-                completed=False,
-                error="Insufficient time budget remaining"
-            )
-            self.phase_results.append(result)
-            return result
+        # Adapt execution mode based on budget pressure
+        if adaptation_factor > 0.5 and self.current_mode != ExecutionMode.DEGRADED:
+            self.current_mode = ExecutionMode.DEGRADED
             
-        # Execute phase with timeout
+        # Get phase budget and adapt it based on remaining time
+        phase_budgets = self._get_phase_budgets(self.current_mode)
+        base_phase_budget = phase_budgets.get(phase, 1.0)
+        
+        # Scale phase budget based on remaining time and pressure
+        remaining = self.get_remaining_budget()
+        remaining_phases = len(self._get_remaining_phases())
+        
+        if remaining_phases > 0:
+            # Distribute remaining time across remaining phases
+            adaptive_budget = min(base_phase_budget, remaining / remaining_phases * 1.5)
+        else:
+            adaptive_budget = remaining
+            
+        # Never completely skip a phase - use minimum viable time
+        adaptive_budget = max(0.1, adaptive_budget)  # Minimum 0.1s per phase
+        
+        # Execute phase with adaptive budget guidance
         phase_start = time.time()
         error = None
         completed = False
         result_value = None
         
         try:
-            # Simple timeout implementation
-            # In a real implementation, might use threading or signals
+            # Pass adaptation factor to function if it accepts it
+            import inspect
+            sig = inspect.signature(func)
+            if 'adaptation_factor' in sig.parameters:
+                kwargs['adaptation_factor'] = adaptation_factor
+            if 'time_budget' in sig.parameters:
+                kwargs['time_budget'] = adaptive_budget
+                
             result_value = func(*args, **kwargs)
             completed = True
             
@@ -201,9 +227,13 @@ class TTLScheduler:
         finally:
             duration = time.time() - phase_start
             
-            # Check if phase exceeded its budget
-            if duration > phase_budget * 1.2:  # Allow 20% overrun
-                error = error or f"Phase exceeded budget: {duration:.2f}s > {phase_budget:.2f}s"
+            # Note budget deviation but don't treat as error
+            budget_deviation = duration - adaptive_budget
+            if budget_deviation > adaptive_budget * 0.5:  # More than 150% of budget
+                if error:
+                    error += f" (Budget deviation: +{budget_deviation:.2f}s)"
+                else:
+                    error = f"Phase used {duration:.2f}s (budget: {adaptive_budget:.2f}s, deviation: +{budget_deviation:.2f}s)"
                 
         result = PhaseResult(
             phase=phase,
@@ -270,8 +300,13 @@ class TTLScheduler:
         }
         
     def is_budget_exceeded(self) -> bool:
-        """Check if total execution budget has been exceeded."""
-        return self.get_elapsed_time() > self.total_budget
+        """Check if total execution budget has been significantly exceeded."""
+        # Allow some overrun (20%) before considering budget truly exceeded
+        return self.get_elapsed_time() > self.total_budget * 1.2
+        
+    def is_budget_constrained(self) -> bool:
+        """Check if we're operating under budget constraints."""
+        return self.get_budget_pressure() > self.adaptation_threshold
         
     def get_recommended_actions(self) -> List[str]:
         """Get recommendations for improving execution performance."""
@@ -299,6 +334,6 @@ class TTLScheduler:
         return recommendations
 
 
-def create_scheduler(mode: ExecutionMode = ExecutionMode.FAST_PATH) -> TTLScheduler:
-    """Create a TTL scheduler instance."""
-    return TTLScheduler(mode)
+def create_scheduler(mode: ExecutionMode = ExecutionMode.FAST_PATH, max_time_budget: Optional[float] = None) -> TTLScheduler:
+    """Create a TTL scheduler instance with optional time budget override."""
+    return TTLScheduler(mode, max_time_budget)

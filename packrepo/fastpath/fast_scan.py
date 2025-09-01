@@ -641,16 +641,25 @@ class FastScanner:
             signatures=signatures
         )
             
-    def scan_repository(self, max_files: int = 2000) -> List[ScanResult]:
+    def scan_repository(self, max_files: int = 2000, adaptation_factor: float = 0.0, time_budget: Optional[float] = None) -> List[ScanResult]:
         """
-        Scan entire repository with TTL protection.
+        Scan entire repository with budget-aware adaptation.
         
         Uses git ls-files first (respects .gitignore), falls back to filesystem walk if not a git repo.
         Returns list of scan results for processable files.
-        Automatically stops when TTL exceeded or max_files reached.
+        Adapts scanning depth and thoroughness based on budget pressure.
         """
         self.start_time = time.time()
         results = []
+        
+        # Adapt scanning parameters based on budget pressure
+        if time_budget is not None:
+            self.ttl_seconds = time_budget
+            
+        # Reduce file processing depth under budget pressure
+        adaptive_max_files = max_files
+        if adaptation_factor > 0.3:
+            adaptive_max_files = int(max_files * (1.0 - adaptation_factor * 0.5))  # Reduce by up to 50%
         
         # Try git ls-files first (preferred method)
         git_files = self._get_git_tracked_files()
@@ -660,7 +669,7 @@ class FastScanner:
             file_count = 0
             
             for file_path in git_files:
-                if file_count >= max_files or self._is_time_exceeded():
+                if file_count >= adaptive_max_files or self._is_time_exceeded():
                     break
                 
                 # Skip binary files and common excludes
@@ -674,8 +683,9 @@ class FastScanner:
                         results.append(result)
                         file_count += 1
                         
-                    # Check TTL periodically
-                    if file_count % 100 == 0 and self._is_time_exceeded():
+                    # Check time budget periodically - more frequent checks under pressure
+                    check_interval = max(10, int(100 * (1.0 - adaptation_factor)))
+                    if file_count % check_interval == 0 and self._is_time_exceeded():
                         break
                         
                 except Exception as e:

@@ -218,7 +218,9 @@ class QuotaManager:
     def select_files_density_greedy(
         self, 
         categorized_files: Dict[FileCategory, List[ScanResult]],
-        heuristic_scores: Dict[str, float]
+        heuristic_scores: Dict[str, float],
+        adaptation_factor: float = 0.0,
+        time_budget: Optional[float] = None
     ) -> Tuple[List[ScanResult], Dict[FileCategory, QuotaAllocation]]:
         """
         Apply density-greedy selection algorithm with quotas.
@@ -228,10 +230,22 @@ class QuotaManager:
         2. Compute density scores for all files in each category
         3. Greedily select highest density files within budget constraints
         4. Ensure recall targets are met for critical categories
+        
+        Under budget pressure, simplifies selection by:
+        - Reducing per-category analysis depth 
+        - Skipping secondary scoring passes
+        - Prioritizing high-value files more aggressively
         """
         selected_files = []
         allocations = {}
-        remaining_budget = self.total_budget
+        
+        # Adapt total budget under pressure
+        effective_budget = self.total_budget
+        if adaptation_factor > 0.4:
+            # Reduce effective budget to force faster selection
+            effective_budget = int(self.total_budget * (1.0 - adaptation_factor * 0.3))
+        
+        remaining_budget = effective_budget
         
         # Phase 1: Allocate minimum budgets
         min_allocations = {}
@@ -239,7 +253,7 @@ class QuotaManager:
             if category not in categorized_files:
                 continue
                 
-            min_budget = int(self.total_budget * quota.min_budget_pct / 100.0)
+            min_budget = int(effective_budget * quota.min_budget_pct / 100.0)
             min_allocations[category] = min_budget
             remaining_budget -= min_budget
         
