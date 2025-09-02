@@ -146,6 +146,9 @@ dev/
 # Temporary citation files
 citation_verification_*.md
 
+# Bundle editor temporary files
+scribe-bundle-editor*.html
+
 # Editor and IDE files
 .vscode/
 .idea/

@@ -326,13 +326,42 @@ def render_file_tree_html(tree: Dict[str, Any], included_files: Set[str], prefix
         file_count = count_files_in_tree(dir_tree)
         
         if file_count > 0:  # Only show directories that contain files
+            # Calculate how many files in this directory are selected
+            def count_selected_in_tree(t, prefix_path):
+                selected_count = 0
+                for file_info in t.get('_files', []):
+                    if file_info.rel in included_files:
+                        selected_count += 1
+                for subdir_name, subdir_tree in t.get('_directories', {}).items():
+                    selected_count += count_selected_in_tree(subdir_tree, f"{prefix_path}{subdir_name}/")
+                return selected_count
+            
+            selected_count = count_selected_in_tree(dir_tree, f"{prefix}{dir_name}/")
+            dir_path = f"{prefix}{dir_name}/"
+            
+            # Determine checkbox state
+            if selected_count == 0:
+                checkbox_class = "square"
+                dir_selected_class = ""
+            elif selected_count == file_count:
+                checkbox_class = "check-square" 
+                dir_selected_class = "dir-selected"
+            else:
+                checkbox_class = "minus-square"  # Partially selected
+                dir_selected_class = "dir-partial"
+            
             html_content += f"""
             <div class="tree-directory" style="margin-left: {level * 20}px;">
-                <div class="tree-directory-header" onclick="toggleDirectory(this)">
-                    <i data-lucide="chevron-right" class="icon chevron-icon"></i>
+                <div class="tree-directory-header {dir_selected_class}" data-dir-path="{html.escape(dir_path)}">
+                    <div class="directory-checkbox" onclick="toggleDirectory(this.parentElement, event)">
+                        <i data-lucide="{checkbox_class}" class="icon checkbox-icon"></i>
+                    </div>
+                    <div class="directory-expander" onclick="toggleDirectoryExpansion(this.parentElement)">
+                        <i data-lucide="chevron-right" class="icon chevron-icon"></i>
+                    </div>
                     <i data-lucide="folder" class="icon folder-icon"></i>
                     <span class="directory-name">{html.escape(dir_name)}</span>
-                    <span class="file-count">({file_count})</span>
+                    <span class="file-count">({selected_count}/{file_count})</span>
                 </div>
                 <div class="tree-directory-content" style="display: none;">
                     {render_file_tree_html(dir_tree, included_files, f"{prefix}{dir_name}/", level + 1)}
@@ -678,7 +707,6 @@ def get_editor_css() -> str:
             align-items: center;
             gap: 8px;
             padding: 8px 16px;
-            cursor: pointer;
             background: rgba(255, 255, 255, 0.02);
             border-radius: 6px;
             margin-bottom: 2px;
@@ -722,6 +750,46 @@ def get_editor_css() -> str:
             border-left: 1px solid rgba(255, 255, 255, 0.08);
             margin-left: 12px;
             padding-left: 8px;
+        }
+        
+        .directory-checkbox {
+            display: flex;
+            align-items: center;
+            padding: 2px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.2s ease;
+        }
+        
+        .directory-checkbox:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .directory-checkbox .checkbox-icon {
+            width: 16px;
+            height: 16px;
+            color: var(--text-muted);
+            transition: color 0.2s ease;
+        }
+        
+        .directory-expander {
+            display: flex;
+            align-items: center;
+            padding: 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        .directory-expander:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .tree-directory-header.dir-selected .directory-checkbox .checkbox-icon {
+            color: var(--accent-primary);
+        }
+        
+        .tree-directory-header.dir-partial .directory-checkbox .checkbox-icon {
+            color: var(--warning-color);
         }
         
         .file-checkbox {
@@ -871,8 +939,62 @@ def get_editor_javascript() -> str:
             content.classList.toggle('open');
         }
         
+        // Toggle directory selection (files within directory)
+        function toggleDirectory(headerElement, event) {
+            event.stopPropagation();
+            
+            const dirPath = headerElement.dataset.dirPath;
+            const checkbox = headerElement.querySelector('.directory-checkbox .checkbox-icon');
+            const isCurrentlySelected = checkbox.getAttribute('data-lucide') === 'check-square';
+            
+            // Get all files in this directory
+            const filesInDirectory = [];
+            for (const [filePath, fileData] of bundleState.allFileData) {
+                if (filePath.startsWith(dirPath)) {
+                    filesInDirectory.push(filePath);
+                }
+            }
+            
+            // Toggle all files in directory
+            const targetState = !isCurrentlySelected;
+            let statusMessage = '';
+            
+            for (const filePath of filesInDirectory) {
+                const currentlyIncluded = bundleState.includedFiles.has(filePath);
+                
+                if (targetState && !currentlyIncluded) {
+                    // Add to bundle
+                    const fileData = bundleState.allFileData.get(filePath);
+                    bundleState.includedFiles.add(filePath);
+                    bundleState.tokenEstimate += fileData.tokens;
+                    bundleState.totalSize += fileData.size;
+                    moveFileToCategory(filePath, 'included');
+                } else if (!targetState && currentlyIncluded) {
+                    // Remove from bundle
+                    const fileData = bundleState.allFileData.get(filePath);
+                    bundleState.includedFiles.delete(filePath);
+                    bundleState.tokenEstimate -= fileData.tokens;
+                    bundleState.totalSize -= fileData.size;
+                    moveFileToCategory(filePath, fileData.originalCategory);
+                }
+            }
+            
+            // Update directory checkbox state
+            updateDirectoryCheckboxes();
+            
+            // Update stats and UI
+            updateStats();
+            updateLastModified();
+            updateCategoryCounts();
+            
+            statusMessage = targetState ? 
+                `Added ${filesInDirectory.length} files from ${dirPath}` :
+                `Removed ${filesInDirectory.length} files from ${dirPath}`;
+            setStatusMessage(statusMessage);
+        }
+        
         // Toggle directory expansion in file trees
-        function toggleDirectory(headerElement) {
+        function toggleDirectoryExpansion(headerElement) {
             const content = headerElement.nextElementSibling;
             const chevron = headerElement.querySelector('.chevron-icon');
             
@@ -882,6 +1004,49 @@ def get_editor_javascript() -> str:
             } else {
                 content.style.display = 'none';
                 headerElement.classList.remove('expanded');
+            }
+        }
+        
+        // Update directory checkbox states based on file selection
+        function updateDirectoryCheckboxes() {
+            const directories = document.querySelectorAll('.tree-directory-header[data-dir-path]');
+            
+            for (const dirHeader of directories) {
+                const dirPath = dirHeader.dataset.dirPath;
+                const checkbox = dirHeader.querySelector('.directory-checkbox .checkbox-icon');
+                const fileCountSpan = dirHeader.querySelector('.file-count');
+                
+                // Count files in this directory
+                let totalFiles = 0;
+                let selectedFiles = 0;
+                
+                for (const [filePath, fileData] of bundleState.allFileData) {
+                    if (filePath.startsWith(dirPath)) {
+                        totalFiles++;
+                        if (bundleState.includedFiles.has(filePath)) {
+                            selectedFiles++;
+                        }
+                    }
+                }
+                
+                // Update checkbox icon and class
+                dirHeader.classList.remove('dir-selected', 'dir-partial');
+                
+                if (selectedFiles === 0) {
+                    checkbox.setAttribute('data-lucide', 'square');
+                } else if (selectedFiles === totalFiles) {
+                    checkbox.setAttribute('data-lucide', 'check-square');
+                    dirHeader.classList.add('dir-selected');
+                } else {
+                    checkbox.setAttribute('data-lucide', 'minus-square');
+                    dirHeader.classList.add('dir-partial');
+                }
+                
+                // Update file count display
+                fileCountSpan.textContent = `(${selectedFiles}/${totalFiles})`;
+                
+                // Refresh lucide icons
+                lucide.createIcons();
             }
         }
         
@@ -913,6 +1078,7 @@ def get_editor_javascript() -> str:
             updateStats();
             updateLastModified();
             updateCategoryCounts();
+            updateDirectoryCheckboxes();
         }
         
         // Move file to specified category

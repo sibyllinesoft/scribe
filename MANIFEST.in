@@ -4,6 +4,9 @@ include LICENSE
 include CHANGELOG.md
 include CONTRIBUTING.md
 
+# Include core application files
+include scribe_editor.py
+
 # Include configuration files
 include packrepo/configs/*.yaml
 include packrepo/configs/*.json

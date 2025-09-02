@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sibylline-scribe"
-version = "1.0.0"
+version = "1.1.0"
 description = "Advanced repository intelligence system for LLM code analysis with 20-35% improvement in Q&A accuracy"
 readme = "README.md"
 license = "0BSD"
@@ -110,7 +110,7 @@ include = ["packrepo*"]
 exclude = ["tests*", "docs*", "examples*", "scripts*"]
 
 [tool.setuptools]
-py-modules = ["scribe", "smart_filter", "repository_analyzer", "config_generator", "intelligent_scribe"]
+py-modules = ["scribe", "smart_filter", "repository_analyzer", "config_generator", "intelligent_scribe", "scribe_editor"]
 
 [tool.setuptools.package-data]
 "packrepo" = ["configs/*.yaml", "configs/*.json"]
