@@ -19,6 +19,7 @@ Scribe is an **enhanced drop-in replacement for repomix** that maintains 100% co
 | **Configuration** | Single format | Multiple formats + auto-migration | **Enhanced flexibility** |
 | **Git Integration** | Change frequency | Change frequency + centrality + diffs | **Advanced git-aware selection** |
 | **Output Quality** | Static templates | Dynamic formatting + structured data | **Rich, contextual output** |
+| **Bundle Editing** | Static generation | Interactive web-based editor + live updates | **Visual file management interface** |
 | **Research Validation** | None | Academic evaluation framework | **Peer-reviewed quality metrics** |
 
 ## 🚀 Quick Start
@@ -48,6 +49,20 @@ scribe . --mode extended --target-time 30
 scribe . --stats --dry-run
 ```
 
+### 🎨 Interactive Bundle Editor
+```bash
+# Launch interactive web-based bundle editor
+scribe . --editor --open
+
+# Fine-tune with specific token target
+scribe . --editor --token-target 25000
+
+# Start from traditional filtering as base
+scribe . --editor --force-traditional --max-bytes 100000
+```
+
+**Revolutionary surgical bundle editing** - The interactive editor provides a web-based interface where you can see ALL files in your repository organized by category, then add/remove files with live token counting and export in any format. Perfect for fine-tuning AI prompts and LLM context optimization.
+
 ## 🌟 Core Features
 
 ### 🔄 **100% Repomix Compatibility**
@@ -68,6 +83,13 @@ scribe . --stats --dry-run
 - **Import Graph Analysis**: PageRank centrality for dependency importance
 - **Semantic Understanding**: Context-aware file relevance scoring
 - **Multi-Modal Processing**: Code, documentation, and configuration files
+
+### 🎨 **Interactive Bundle Editor**
+- **Visual File Management**: Web-based interface with hierarchical file trees
+- **Live Token Counting**: Real-time token estimation as you add/remove files
+- **Smart Categorization**: Files organized by inclusion reason (binary, too large, ignored, etc.)
+- **Multi-Format Export**: Generate bundles in HTML, CXML, Repomix, or custom formats
+- **Surgical Editing**: Perfect for fine-tuning LLM prompts and AI context optimization
 
 ### 🎛️ **Enhanced Configuration**
 
@@ -320,6 +342,14 @@ scribe REPO_PATH                    # Repository to analyze
 --no-files                          # Metadata only
 --custom-header TEXT                # Custom header text
 --copy                              # Copy to clipboard
+```
+
+### **Interactive Bundle Editor**
+```bash
+--editor                            # Launch interactive web-based editor
+--open                              # Automatically open editor in browser
+--force-traditional                 # Use traditional filtering as starting point
+--entry-points FILE                 # Starting points for intelligent selection
 ```
 
 ### **Analysis & Debugging**

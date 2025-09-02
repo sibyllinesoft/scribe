@@ -1334,12 +1334,14 @@ Examples:
   %(prog)s --force-traditional --max-bytes 100000                 # Force traditional filtering
   %(prog)s --entry-points src/main.py api/routes.py               # Focus on specific entry points
   %(prog)s --include-diffs --diff-commits 5                       # Include recent git changes
+  %(prog)s --editor --token-target 20000 --open                   # Interactive bundle editor
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("repo_url", nargs="?", help="GitHub repo URL (https://github.com/owner/repo[.git]) or local directory path. If not provided, uses current directory.")
     ap.add_argument("-o", "--out", help="Output file path (default: uses config file setting or saves to current directory with auto-generated name)")
     ap.add_argument("--open", action="store_true", help="Open the HTML file in browser after generation (HTML mode only)")
+    ap.add_argument("--editor", action="store_true", help="Launch interactive bundle editor instead of generating static output")
     
     # Output format selection
     ap.add_argument("--output-format", choices=["html", "cxml", "repomix"], default="html",
@@ -1387,6 +1389,47 @@ Examples:
                        help="Minimum relevance score for including diffs (default: 0.1)")
     
     args = ap.parse_args()
+
+    # Check if editor mode is requested
+    if args.editor:
+        # Import and launch bundle editor
+        try:
+            from scribe_editor import create_bundle_editor
+            import webbrowser
+            
+            # Only support local directories for editor mode
+            if args.repo_url and args.repo_url.startswith(('http://', 'https://')):
+                print("❌ Editor mode only supports local repositories", file=sys.stderr)
+                return 1
+            
+            repo_dir = pathlib.Path(args.repo_url or ".").resolve()
+            if not repo_dir.exists() or not repo_dir.is_dir():
+                print(f"❌ Directory does not exist or is not a directory: {repo_dir}", file=sys.stderr)
+                return 1
+            
+            # Set default output for editor
+            if args.out is None:
+                args.out = f"{repo_dir.name}-bundle-editor.html"
+            
+            # Create bundle editor
+            create_bundle_editor(
+                repo_dir=repo_dir,
+                output_path=pathlib.Path(args.out),
+                max_bytes=args.max_bytes,
+                use_intelligent=not args.force_traditional,
+                token_target=args.token_target
+            )
+            
+            # Open in browser if requested
+            if args.open:
+                print(f"🌐 Opening bundle editor in browser...", file=sys.stderr)
+                webbrowser.open(f"file://{pathlib.Path(args.out).resolve()}")
+            
+            return 0
+            
+        except ImportError:
+            print("❌ Bundle editor not available - scribe_editor.py not found", file=sys.stderr)
+            return 1
 
     # No validation needed - we'll automatically choose the best mode
 
