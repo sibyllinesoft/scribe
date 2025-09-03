@@ -466,63 +466,91 @@ class SmartFilter:
     def _appears_to_be_text(self, file_path: pathlib.Path) -> bool:
         """Check if file appears to be a text file using magic-enhanced detection."""
         try:
-            # Use python-magic if available for accurate detection
+            # Try magic-based detection first
             if self.magic_available:
-                try:
-                    mime_type = self.magic_mime.from_file(str(file_path))
-                    # Text files should have text/ mime types
-                    if mime_type.startswith('text/'):
-                        return True
-                    # Some common text types that don't start with text/
-                    text_mimes = {
-                        'application/json',
-                        'application/xml',
-                        'application/javascript',
-                        'application/x-sh',
-                        'application/x-shellscript',
-                        'application/x-python',
-                        'application/x-perl',
-                        'application/x-ruby',
-                        'inode/x-empty',  # Empty files
-                        # Template files might be detected as text/plain or application/octet-stream
-                        # so we'll also check the fallback heuristics for unknown types
-                    }
-                    if mime_type in text_mimes:
-                        return True
-                    # For application/octet-stream or other ambiguous types,
-                    # fall through to heuristic detection
-                    if mime_type in ('application/octet-stream', 'text/plain'):
-                        # Continue to heuristic check below
-                        pass
-                    else:
-                        # For clearly binary types, return False
-                        binary_prefixes = ('image/', 'video/', 'audio/', 'application/pdf', 'application/zip')
-                        if any(mime_type.startswith(prefix) for prefix in binary_prefixes):
-                            return False
-                except Exception:
-                    # Fallback to heuristic detection if magic fails
-                    pass
+                magic_result = self._check_magic_mime_type(file_path)
+                if magic_result is not None:
+                    return magic_result
             
-            # Fallback heuristic detection (always run for ambiguous mime types)
-            with open(file_path, 'rb') as f:
-                chunk = f.read(1024)  # Read first 1KB
-            
-            if not chunk:
-                return True  # Empty files are text
-            
-            # Try to decode as UTF-8
-            try:
-                chunk.decode('utf-8')
-                return True
-            except UnicodeDecodeError:
-                pass
-            
-            # Check if it's mostly printable ASCII
-            printable = sum(1 for b in chunk if 32 <= b <= 126 or b in (9, 10, 13))
-            return printable / len(chunk) > 0.8
+            # Fallback to heuristic detection
+            return self._check_text_heuristic(file_path)
             
         except (OSError, PermissionError):
             return False
+
+    def _check_magic_mime_type(self, file_path: pathlib.Path) -> bool | None:
+        """Check mime type using python-magic. Returns None if inconclusive."""
+        try:
+            mime_type = self.magic_mime.from_file(str(file_path))
+            
+            # Text files should have text/ mime types
+            if mime_type.startswith('text/'):
+                return True
+            
+            # Check for common text types that don't start with text/
+            if self._is_known_text_mime(mime_type):
+                return True
+            
+            # For ambiguous types, let heuristic check handle it
+            if mime_type in ('application/octet-stream', 'text/plain'):
+                return None  # Inconclusive, use heuristic
+            
+            # For clearly binary types, return False
+            if self._is_known_binary_mime(mime_type):
+                return False
+                
+            return None  # Let heuristic decide for unknown types
+            
+        except Exception:
+            return None  # Fallback to heuristic detection
+
+    def _is_known_text_mime(self, mime_type: str) -> bool:
+        """Check if mime type is a known text format."""
+        text_mimes = {
+            'application/json',
+            'application/xml',
+            'application/javascript',
+            'application/x-sh',
+            'application/x-shellscript',
+            'application/x-python',
+            'application/x-perl',
+            'application/x-ruby',
+            'inode/x-empty',  # Empty files
+        }
+        return mime_type in text_mimes
+
+    def _is_known_binary_mime(self, mime_type: str) -> bool:
+        """Check if mime type is a known binary format."""
+        binary_prefixes = ('image/', 'video/', 'audio/', 'application/pdf', 'application/zip')
+        return any(mime_type.startswith(prefix) for prefix in binary_prefixes)
+
+    def _check_text_heuristic(self, file_path: pathlib.Path) -> bool:
+        """Heuristic text detection by examining file content."""
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)  # Read first 1KB
+        
+        if not chunk:
+            return True  # Empty files are text
+        
+        # Try UTF-8 decoding first
+        if self._is_valid_utf8(chunk):
+            return True
+        
+        # Check if it's mostly printable ASCII
+        return self._is_mostly_printable_ascii(chunk)
+
+    def _is_valid_utf8(self, data: bytes) -> bool:
+        """Check if data is valid UTF-8."""
+        try:
+            data.decode('utf-8')
+            return True
+        except UnicodeDecodeError:
+            return False
+
+    def _is_mostly_printable_ascii(self, data: bytes) -> bool:
+        """Check if data is mostly printable ASCII characters."""
+        printable = sum(1 for b in data if 32 <= b <= 126 or b in (9, 10, 13))
+        return printable / len(data) > 0.8
 
     
     def get_file_info(self, file_path: pathlib.Path) -> Dict[str, str]:

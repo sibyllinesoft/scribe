@@ -640,15 +640,30 @@ class RepositoryBenchmark:
         """
         random.seed(random_seed)
         
-        # Get search patterns for this repository type
-        patterns = self.classification_patterns[repo_type]
-        
-        # Build search queries
-        queries = self._build_search_queries(
-            patterns, min_stars, max_stars, languages
+        # Search for repositories
+        found_repos = self._search_repositories_by_type(
+            repo_type, min_stars, max_stars, languages, max_count
         )
         
-        # Search repositories
+        # Remove duplicates and classify
+        unique_repos = self._deduplicate_repositories(found_repos)
+        classified_repos = self._filter_by_classification(unique_repos, repo_type)
+        
+        # Apply count constraints
+        return self._apply_count_constraints(classified_repos, min_count, max_count, repo_type)
+
+    def _search_repositories_by_type(
+        self, 
+        repo_type: RepositoryType, 
+        min_stars: int, 
+        max_stars: int, 
+        languages: Optional[List[str]], 
+        max_count: int
+    ) -> List[Repository]:
+        """Search for repositories using GitHub API."""
+        patterns = self.classification_patterns[repo_type]
+        queries = self._build_search_queries(patterns, min_stars, max_stars, languages)
+        
         found_repos = []
         for query in queries:
             try:
@@ -661,29 +676,41 @@ class RepositoryBenchmark:
                 print(f"Warning: Search query failed: {query} - {str(e)}")
                 continue
         
-        # Remove duplicates
+        return found_repos
+
+    def _deduplicate_repositories(self, repos: List[Repository]) -> List[Repository]:
+        """Remove duplicate repositories based on owner/name."""
         unique_repos = {}
-        for repo in found_repos:
+        for repo in repos:
             key = f"{repo.metadata.owner}/{repo.metadata.name}"
             if key not in unique_repos:
                 unique_repos[key] = repo
-        
-        found_repos = list(unique_repos.values())
-        
-        # Filter by type classification
+        return list(unique_repos.values())
+
+    def _filter_by_classification(self, repos: List[Repository], repo_type: RepositoryType) -> List[Repository]:
+        """Filter repositories by type classification."""
         classified_repos = []
-        for repo in found_repos:
+        for repo in repos:
             if self._classify_repository(repo) == repo_type:
                 classified_repos.append(repo)
-        
+        return classified_repos
+
+    def _apply_count_constraints(
+        self, 
+        repos: List[Repository], 
+        min_count: int, 
+        max_count: int, 
+        repo_type: RepositoryType
+    ) -> List[Repository]:
+        """Apply minimum and maximum count constraints with random selection."""
         # Random selection within bounds
-        if len(classified_repos) > max_count:
-            classified_repos = random.sample(classified_repos, max_count)
+        if len(repos) > max_count:
+            repos = random.sample(repos, max_count)
         
-        if len(classified_repos) < min_count:
-            print(f"Warning: Only found {len(classified_repos)} repositories of type {repo_type.value}, requested {min_count}")
+        if len(repos) < min_count:
+            print(f"Warning: Only found {len(repos)} repositories of type {repo_type.value}, requested {min_count}")
         
-        return classified_repos[:max_count]
+        return repos[:max_count]
     
     def _build_search_queries(
         self,

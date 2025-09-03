@@ -309,48 +309,40 @@ def build_file_tree(files: List[FileInfo]) -> Dict[str, Any]:
     
     return tree
 
-def render_file_tree_html(tree: Dict[str, Any], included_files: Set[str], prefix: str = "", level: int = 0) -> str:
-    """Render a file tree as HTML with collapsible directories."""
-    html_content = ""
+def _count_files_in_tree(tree: Dict[str, Any]) -> int:
+    """Count total files in a tree recursively."""
+    count = len(tree.get('_files', []))
+    for subdir in tree.get('_directories', {}).values():
+        count += _count_files_in_tree(subdir)
+    return count
+
+
+def _count_selected_files_in_tree(tree: Dict[str, Any], prefix_path: str, included_files: Set[str]) -> int:
+    """Count selected files in a tree recursively."""
+    selected_count = 0
+    for file_info in tree.get('_files', []):
+        if file_info.rel in included_files:
+            selected_count += 1
+    for subdir_name, subdir_tree in tree.get('_directories', {}).items():
+        selected_count += _count_selected_files_in_tree(subdir_tree, f"{prefix_path}{subdir_name}/", included_files)
+    return selected_count
+
+
+def _get_directory_checkbox_state(selected_count: int, file_count: int) -> tuple[str, str]:
+    """Determine directory checkbox state and CSS class."""
+    if selected_count == 0:
+        return "square", ""
+    elif selected_count == file_count:
+        return "check-square", "dir-selected"
+    else:
+        return "minus-square", "dir-partial"  # Partially selected
+
+
+def _render_directory_html(dir_name: str, dir_path: str, selected_count: int, file_count: int, level: int) -> str:
+    """Render HTML for a single directory."""
+    checkbox_class, dir_selected_class = _get_directory_checkbox_state(selected_count, file_count)
     
-    # Count files in a tree recursively
-    def count_files_in_tree(t):
-        count = len(t.get('_files', []))
-        for subdir in t.get('_directories', {}).values():
-            count += count_files_in_tree(subdir)
-        return count
-    
-    # Render directories first
-    for dir_name in sorted(tree.get('_directories', {}).keys()):
-        dir_tree = tree['_directories'][dir_name]
-        file_count = count_files_in_tree(dir_tree)
-        
-        if file_count > 0:  # Only show directories that contain files
-            # Calculate how many files in this directory are selected
-            def count_selected_in_tree(t, prefix_path):
-                selected_count = 0
-                for file_info in t.get('_files', []):
-                    if file_info.rel in included_files:
-                        selected_count += 1
-                for subdir_name, subdir_tree in t.get('_directories', {}).items():
-                    selected_count += count_selected_in_tree(subdir_tree, f"{prefix_path}{subdir_name}/")
-                return selected_count
-            
-            selected_count = count_selected_in_tree(dir_tree, f"{prefix}{dir_name}/")
-            dir_path = f"{prefix}{dir_name}/"
-            
-            # Determine checkbox state
-            if selected_count == 0:
-                checkbox_class = "square"
-                dir_selected_class = ""
-            elif selected_count == file_count:
-                checkbox_class = "check-square" 
-                dir_selected_class = "dir-selected"
-            else:
-                checkbox_class = "minus-square"  # Partially selected
-                dir_selected_class = "dir-partial"
-            
-            html_content += f"""
+    return f"""
             <div class="tree-directory" style="margin-left: {level * 20}px;">
                 <div class="tree-directory-header {dir_selected_class}" data-dir-path="{html.escape(dir_path)}">
                     <div class="directory-checkbox" onclick="toggleDirectory(this.parentElement, event)">
@@ -363,32 +355,29 @@ def render_file_tree_html(tree: Dict[str, Any], included_files: Set[str], prefix
                     <span class="directory-name">{html.escape(dir_name)}</span>
                     <span class="file-count">({selected_count}/{file_count})</span>
                 </div>
-                <div class="tree-directory-content" style="display: none;">
-                    {render_file_tree_html(dir_tree, included_files, f"{prefix}{dir_name}/", level + 1)}
-                </div>
-            </div>
-            """
+                """
+
+
+def _render_file_html(file_info, included_files: Set[str], level: int) -> str:
+    """Render HTML for a single file."""
+    is_selected = file_info.rel in included_files
+    file_icon = get_file_icon(file_info.rel)
     
-    # Render files
-    for file_info in sorted(tree.get('_files', []), key=lambda f: f.rel):
-        is_selected = file_info.rel in included_files
-        file_icon = get_file_icon(file_info.rel)
-        
-        # Format file metadata using the same helper as the original
-        file_meta = []
-        if file_info.size:
-            file_meta.append(bytes_human(file_info.size))
-        if file_info.token_estimate:
-            file_meta.append(f"~{file_info.token_estimate} tokens")
-        
-        file_meta_str = " • ".join(file_meta) if file_meta else ""
-        reason_text = ""
-        
-        if not is_selected and file_info.decision.reason != "ok":
-            reason_text = f" ({file_info.decision.reason})"
-        
-        indent = level * 20
-        html_content += f"""
+    # Format file metadata
+    file_meta = []
+    if file_info.size:
+        file_meta.append(bytes_human(file_info.size))
+    if file_info.token_estimate:
+        file_meta.append(f"~{file_info.token_estimate} tokens")
+    
+    file_meta_str = " • ".join(file_meta) if file_meta else ""
+    reason_text = ""
+    
+    if not is_selected and file_info.decision.reason != "ok":
+        reason_text = f" ({file_info.decision.reason})"
+    
+    indent = level * 20
+    return f"""
         <div class="file-item {'selected' if is_selected else ''}" 
              style="margin-left: {indent + 20}px;"
              data-path="{html.escape(file_info.rel)}"
@@ -407,6 +396,28 @@ def render_file_tree_html(tree: Dict[str, Any], included_files: Set[str], prefix
             </div>
         </div>
         """
+
+def render_file_tree_html(tree: Dict[str, Any], included_files: Set[str], prefix: str = "", level: int = 0) -> str:
+    """Render a file tree as HTML with collapsible directories."""
+    html_content = ""
+    
+    # Render directories first
+    for dir_name in sorted(tree.get('_directories', {}).keys()):
+        dir_tree = tree['_directories'][dir_name]
+        file_count = _count_files_in_tree(dir_tree)
+        
+        if file_count > 0:  # Only show directories that contain files
+            selected_count = _count_selected_files_in_tree(dir_tree, f"{prefix}{dir_name}/", included_files)
+            dir_path = f"{prefix}{dir_name}/"
+            
+            html_content += _render_directory_html(dir_name, dir_path, selected_count, file_count, level)
+            html_content += f'<div class="tree-directory-content" style="display: none;">'
+            html_content += render_file_tree_html(dir_tree, included_files, dir_path, level + 1)
+            html_content += '</div></div>'
+    
+    # Render files
+    for file_info in sorted(tree.get('_files', []), key=lambda f: f.rel):
+        html_content += _render_file_html(file_info, included_files, level)
     
     return html_content
 

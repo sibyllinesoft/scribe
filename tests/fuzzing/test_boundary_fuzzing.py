@@ -498,10 +498,10 @@ class TestBoundaryConditionFuzzing:
         assert selector_success_rate > 0.6, f"Numerical edge case handling insufficient: {selector_success_rate:.2%}"
     
     def test_encoding_boundary_conditions(self, fuzzer_engine):
-        """Test encoding and Unicode boundary conditions."""
-        
-        # Various encoding boundary cases
-        encoding_test_cases = [
+
+    def _get_encoding_test_cases(self):
+        """Define encoding boundary test cases."""
+        return [
             # UTF-8 boundary conditions
             {
                 'name': 'utf8_boundaries',
@@ -545,94 +545,128 @@ class TestBoundaryConditionFuzzing:
                 ]
             }
         ]
-        
-        # Test with tokenizer and chunker
-        tokenizer_target = PackRepoTokenizerTarget()
-        chunker_target = PackRepoChunkerTarget()
-        
+
+    def _run_encoding_tests(self, test_cases, tokenizer_target, chunker_target):
+        """Run encoding tests on all test cases."""
         encoding_results = []
         
-        for test_case in encoding_test_cases:
+        for test_case in test_cases:
             case_name = test_case['name']
             
             for i, text in enumerate(test_case['texts']):
                 # Test tokenizer
-                try:
-                    tokenizer_input = {
-                        'text': text,
-                        'tokenizer': 'cl100k'
-                    }
-                    token_count = tokenizer_target.execute(tokenizer_input)
-                    
-                    encoding_results.append({
-                        'case': case_name,
-                        'text_id': i,
-                        'target': 'tokenizer',
-                        'success': True,
-                        'result': token_count
-                    })
-                    
-                except Exception as e:
-                    encoding_results.append({
-                        'case': case_name,
-                        'text_id': i,
-                        'target': 'tokenizer',
-                        'success': False,
-                        'error': str(e)[:100]
-                    })
+                tokenizer_result = self._test_tokenizer_encoding(text, tokenizer_target, case_name, i)
+                encoding_results.append(tokenizer_result)
                 
                 # Test chunker
-                try:
-                    chunker_input = {
-                        'content': text,
-                        'file_path': f'{case_name}_{i}.txt',
-                        'config': {}
-                    }
-                    chunks = chunker_target.execute(chunker_input)
-                    
-                    encoding_results.append({
-                        'case': case_name,
-                        'text_id': i,
-                        'target': 'chunker',
-                        'success': True,
-                        'result': len(chunks)
-                    })
-                    
-                except Exception as e:
-                    encoding_results.append({
-                        'case': case_name,
-                        'text_id': i,
-                        'target': 'chunker',
-                        'success': False,
-                        'error': str(e)[:100]
-                    })
+                chunker_result = self._test_chunker_encoding(text, chunker_target, case_name, i)
+                encoding_results.append(chunker_result)
         
-        # Analyze encoding results by case and target
+        return encoding_results
+
+    def _test_tokenizer_encoding(self, text, tokenizer_target, case_name, text_id):
+        """Test tokenizer with specific text."""
+        try:
+            tokenizer_input = {
+                'text': text,
+                'tokenizer': 'cl100k'
+            }
+            token_count = tokenizer_target.execute(tokenizer_input)
+            
+            return {
+                'case': case_name,
+                'text_id': text_id,
+                'target': 'tokenizer',
+                'success': True,
+                'result': token_count
+            }
+            
+        except Exception as e:
+            return {
+                'case': case_name,
+                'text_id': text_id,
+                'target': 'tokenizer',
+                'success': False,
+                'error': str(e)[:100]
+            }
+
+    def _test_chunker_encoding(self, text, chunker_target, case_name, text_id):
+        """Test chunker with specific text."""
+        try:
+            chunker_input = {
+                'content': text,
+                'file_path': f'{case_name}_{text_id}.txt',
+                'config': {}
+            }
+            chunks = chunker_target.execute(chunker_input)
+            
+            return {
+                'case': case_name,
+                'text_id': text_id,
+                'target': 'chunker',
+                'success': True,
+                'result': len(chunks)
+            }
+            
+        except Exception as e:
+            return {
+                'case': case_name,
+                'text_id': text_id,
+                'target': 'chunker',
+                'success': False,
+                'error': str(e)[:100]
+            }
+
+    def _analyze_encoding_results(self, encoding_results, test_cases):
+        """Analyze encoding test results and perform assertions."""
         print(f"Encoding boundary conditions test results:")
         
-        for test_case in encoding_test_cases:
+        for test_case in test_cases:
             case_name = test_case['name']
             case_results = [r for r in encoding_results if r['case'] == case_name]
             
             tokenizer_results = [r for r in case_results if r['target'] == 'tokenizer']
             chunker_results = [r for r in case_results if r['target'] == 'chunker']
             
-            tokenizer_success = sum(1 for r in tokenizer_results if r['success']) / len(tokenizer_results) if tokenizer_results else 1.0
-            chunker_success = sum(1 for r in chunker_results if r['success']) / len(chunker_results) if chunker_results else 1.0
+            tokenizer_success = self._calculate_success_rate(tokenizer_results)
+            chunker_success = self._calculate_success_rate(chunker_results)
             
             print(f"  {case_name}:")
             print(f"    Tokenizer success: {tokenizer_success:.2%}")
             print(f"    Chunker success: {chunker_success:.2%}")
             
-            # Different expectations for different cases
-            if case_name == 'utf8_boundaries':
-                # Should handle valid UTF-8 boundaries well
-                assert tokenizer_success > 0.8, f"UTF-8 boundary tokenizer handling insufficient: {tokenizer_success:.2%}"
-                assert chunker_success > 0.8, f"UTF-8 boundary chunker handling insufficient: {chunker_success:.2%}"
-            elif case_name in ['control_chars', 'mixed_validity']:
-                # Control chars and mixed validity might have lower success rates
-                assert tokenizer_success > 0.5, f"{case_name} tokenizer handling too poor: {tokenizer_success:.2%}"
-                assert chunker_success > 0.5, f"{case_name} chunker handling too poor: {chunker_success:.2%}"
+            self._assert_success_rates(case_name, tokenizer_success, chunker_success)
+
+    def _calculate_success_rate(self, results):
+        """Calculate success rate for a list of results."""
+        if not results:
+            return 1.0
+        return sum(1 for r in results if r['success']) / len(results)
+
+    def _assert_success_rates(self, case_name, tokenizer_success, chunker_success):
+        """Assert appropriate success rates based on test case type."""
+        if case_name == 'utf8_boundaries':
+            # Should handle valid UTF-8 boundaries well
+            assert tokenizer_success > 0.8, f"UTF-8 boundary tokenizer handling insufficient: {tokenizer_success:.2%}"
+            assert chunker_success > 0.8, f"UTF-8 boundary chunker handling insufficient: {chunker_success:.2%}"
+        elif case_name in ['control_chars', 'mixed_validity']:
+            # Control chars and mixed validity might have lower success rates
+            assert tokenizer_success > 0.5, f"{case_name} tokenizer handling too poor: {tokenizer_success:.2%}"
+            assert chunker_success > 0.5, f"{case_name} chunker handling too poor: {chunker_success:.2%}"
+    """Test encoding and Unicode boundary conditions."""
+    
+    # Get encoding test cases
+    encoding_test_cases = self._get_encoding_test_cases()
+    
+    # Test with tokenizer and chunker
+    tokenizer_target = PackRepoTokenizerTarget()
+    chunker_target = PackRepoChunkerTarget()
+    
+    # Run tests and collect results
+    encoding_results = self._run_encoding_tests(encoding_test_cases, tokenizer_target, chunker_target)
+    
+    # Analyze and assert results
+    self._analyze_encoding_results(encoding_results, encoding_test_cases)
     
     def test_memory_boundary_conditions(self, fuzzer_engine):
         """Test memory-related boundary conditions."""
