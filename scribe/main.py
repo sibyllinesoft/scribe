@@ -31,12 +31,12 @@ import markdown
 from tqdm import tqdm
 
 # Import from our modules
-from scribe.glob_patterns import (
+from .glob_patterns import (
     parse_comma_separated_globs, 
     should_include_path, 
     match_glob_pattern
 )
-from scribe.git_utils import (
+from .git_utils import (
     run, 
     parse_gitignore_patterns, 
     should_ignore_path, 
@@ -44,7 +44,7 @@ from scribe.git_utils import (
     git_clone, 
     git_head_commit
 )
-from scribe.file_analysis import (
+from .file_analysis import (
     RenderDecision, 
     FileInfo, 
     bytes_human, 
@@ -55,11 +55,11 @@ from scribe.file_analysis import (
     load_file_content,
     collect_files
 )
-from scribe.tree_utils import (
+from .tree_utils import (
     generate_tree_fallback, 
     try_tree_command
 )
-from scribe.output_formats import (
+from .output_formats import (
     slugify,
     get_file_icon,
     generate_cxml_text,
@@ -68,7 +68,7 @@ from scribe.output_formats import (
     read_text,
     derive_temp_output_path
 )
-from scribe.fastpath import (
+from .fastpath import (
     should_use_intelligent_mode,
     select_files_fastpath,
     FASTPATH_AVAILABLE

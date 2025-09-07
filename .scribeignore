@@ -38,7 +38,3 @@ logs/
 
 # UV lock file
 uv.lock
-
-# Git
-.git/
-.gitignore

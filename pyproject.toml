@@ -3,11 +3,11 @@ requires = ["setuptools >= 61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
+license = { file = "LICENSE" }
 name = "sibylline-scribe"
 version = "1.1.0"
 description = "Advanced repository intelligence system for LLM code analysis with 20-35% improvement in Q&A accuracy"
 readme = "README.md"
-license = "0BSD"
 authors = [
     {name = "Scribe Research Team", email = "contact@scribe.ai"},
 ]
