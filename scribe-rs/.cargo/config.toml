@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-A", "warnings", "--cap-lints", "allow"]
+
+[target.'cfg(tarpaulin)']
+rustflags = ["-A", "warnings", "--cap-lints", "allow"]

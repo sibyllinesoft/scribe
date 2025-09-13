@@ -1,0 +1,107 @@
+[package]
+name = "scribe"
+version = "0.1.0"
+edition = "2021"
+authors = ["Nathan Rice <nathan@sibylline.dev>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sibyllinesoft/scribe"
+homepage = "https://github.com/sibyllinesoft/scribe"
+documentation = "https://docs.rs/scribe"
+description = "Advanced code analysis and repository exploration library with AI-powered insights"
+keywords = ["code-analysis", "ast", "repository", "documentation", "developer-tools"]
+categories = ["development-tools", "text-processing", "parsing"]
+readme = "README.md"
+exclude = ["workspace.toml"]
+
+[features]
+default = ["core", "analysis", "graph", "scanner", "patterns", "selection"]
+
+# Core features
+core = ["dep:scribe-core"]
+analysis = ["core", "dep:scribe-analysis"]
+graph = ["core", "analysis", "dep:scribe-graph"]
+scanner = ["core", "dep:scribe-scanner"]
+patterns = ["core", "dep:scribe-patterns"]
+selection = ["core", "analysis", "graph", "dep:scribe-selection"]
+
+# Convenience feature groups
+full = ["default"]
+minimal = ["core"]
+fast = ["core", "scanner", "patterns"]
+comprehensive = ["core", "analysis", "graph", "scanner", "patterns", "selection"]
+
+[dependencies]
+# Sub-crate dependencies with optional features
+scribe-core = { path = "./scribe-core", version = "0.1.0", optional = true }
+scribe-analysis = { path = "./scribe-analysis", version = "0.1.0", optional = true }
+scribe-graph = { path = "./scribe-graph", version = "0.1.0", optional = true }
+scribe-scanner = { path = "./scribe-scanner", version = "0.1.0", optional = true }
+scribe-patterns = { path = "./scribe-patterns", version = "0.1.0", optional = true }
+scribe-selection = { path = "./scribe-selection", version = "0.1.0", optional = true }
+
+# Core dependencies used by multiple crates
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+rayon = "1.8"
+thiserror = "1.0"
+anyhow = "1.0"
+
+# File system and path handling
+walkdir = "2.4"
+ignore = "0.4"
+globset = "0.4"
+
+# String processing and pattern matching
+regex = "1.10"
+tree-sitter = "0.20"
+memchr = "2.6"
+log = "0.4"
+
+# Async and concurrency
+futures = "0.3"
+async-trait = "0.1"
+
+# Data structures
+indexmap = "2.0"
+petgraph = "0.6"
+dashmap = "5.5"
+
+# Performance and optimization
+once_cell = "1.19"
+parking_lot = "0.12"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+tokio-test = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.bench]
+debug = true
+
+# Disable warnings as errors for development
+[lints.rust]
+warnings = "warn"
+
+[[bench]]
+name = "main_benchmarks"
+harness = false
+required-features = ["default"]
+
+[[example]]
+name = "basic_usage"
+required-features = ["default"]
+
+[[example]]
+name = "selective_features"
+required-features = ["core", "scanner"]

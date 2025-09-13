@@ -1,0 +1,54 @@
+[package]
+name = "scribe-selection"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Intelligent code selection and context extraction for Scribe"
+
+[dependencies]
+# Local dependencies
+scribe-core = { version = "0.1.0", path = "../scribe-core" }
+
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Async processing
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Data structures
+indexmap = { workspace = true }
+dashmap = { workspace = true }
+
+# Performance
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+
+# Regex and logging
+regex = "1.10"
+
+# Random number generation
+fastrand = "2.0"
+
+# AST parsing with tree-sitter
+tree-sitter = { workspace = true }
+tree-sitter-python = "0.20"
+tree-sitter-javascript = "0.20"
+tree-sitter-typescript = "0.20"
+tree-sitter-go = "0.20" 
+tree-sitter-rust = "0.20"
+
+[dev-dependencies]
+criterion = { workspace = true }
+

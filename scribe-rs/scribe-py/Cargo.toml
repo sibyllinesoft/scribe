@@ -1,0 +1,47 @@
+[package]
+name = "scribe-py"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Python bindings for the Scribe code analysis library"
+publish = false
+
+[lib]
+name = "scribe_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Local dependencies
+scribe-core = { version = "0.1.0", path = "../scribe-core" }
+scribe-analysis = { version = "0.1.0", path = "../scribe-analysis" }
+scribe-graph = { version = "0.1.0", path = "../scribe-graph" }
+scribe-scanner = { version = "0.1.0", path = "../scribe-scanner" }
+scribe-patterns = { version = "0.1.0", path = "../scribe-patterns" }
+scribe-selection = { version = "0.1.0", path = "../scribe-selection" }
+
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+# Python bindings  
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
+pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+
+# Async runtime
+tokio-util = "0.7"
+futures = "0.3"
+
+[dev-dependencies]
+tempfile = "3.0"
+# Python testing is handled via pytest in pyproject.toml
+
+[build-dependencies]
+pyo3-build-config = "0.20"
