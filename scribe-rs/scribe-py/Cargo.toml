@@ -18,12 +18,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.1.0", path = "../scribe-core" }
-scribe-analysis = { version = "0.1.0", path = "../scribe-analysis" }
-scribe-graph = { version = "0.1.0", path = "../scribe-graph" }
-scribe-scanner = { version = "0.1.0", path = "../scribe-scanner" }
-scribe-patterns = { version = "0.1.0", path = "../scribe-patterns" }
-scribe-selection = { version = "0.1.0", path = "../scribe-selection" }
+scribe-core = { version = "0.2.0", path = "../scribe-core" }
+scribe-analysis = { version = "0.2.0", path = "../scribe-analysis" }
+scribe-graph = { version = "0.2.0", path = "../scribe-graph" }
+scribe-scanner = { version = "0.2.0", path = "../scribe-scanner" }
+scribe-patterns = { version = "0.2.0", path = "../scribe-patterns" }
+scribe-selection = { version = "0.2.0", path = "../scribe-selection" }
 
 # Workspace dependencies
 serde = { workspace = true }

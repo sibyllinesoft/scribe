@@ -13,7 +13,7 @@ description = "Intelligent code selection and context extraction for Scribe"
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.1.0", path = "../scribe-core" }
+scribe-core = { version = "0.2.0", path = "../scribe-core" }
 
 # Workspace dependencies
 serde = { workspace = true }
