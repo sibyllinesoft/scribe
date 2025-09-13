@@ -4,7 +4,9 @@
 
 **The next-generation repository analysis tool that delivers 10x better results than repomix with 100% compatibility.**
 
-[![Research Grade](https://img.shields.io/badge/Research-Grade-blue.svg)](https://arxiv.org/abs/2024.scribe) [![ICSE 2025](https://img.shields.io/badge/ICSE-2025-green.svg)](https://conf.researchr.org/track/icse-2025/icse-2025-research-track) [![PyPI](https://img.shields.io/pypi/v/sibylline-scribe)](https://pypi.org/project/sibylline-scribe/) [![MIT License](https://img.shields.io/badge/License-0BSD-blue.svg)](LICENSE)
+[![Research Grade](https://img.shields.io/badge/Research-Grade-blue.svg)](https://arxiv.org/abs/2024.scribe) [![ICSE 2025](https://img.shields.io/badge/ICSE-2025-green.svg)](https://conf.researchr.org/track/icse-2025/icse-2025-research-track) [![crates.io](https://img.shields.io/crates/v/scribe-core)](https://crates.io/crates/scribe-core) [![MIT License](https://img.shields.io/badge/License-0BSD-blue.svg)](LICENSE)
+
+> **⚡ Now powered by Rust!** The core implementation has been rewritten in Rust for superior performance, with the Python version archived in `archive/python-core/`.
 
 ## 🎯 Why Choose Scribe?
 
@@ -25,11 +27,30 @@ Scribe is an **enhanced drop-in replacement for repomix** that maintains 100% co
 ## 🚀 Quick Start
 
 ### Installation
+
+**Rust Crates (New)**:
+```bash
+cargo add scribe-core scribe-scaling scribe-analysis
+```
+
+**Python CLI (Legacy)**:
 ```bash
 pip install sibylline-scribe
 ```
 
-### Basic Usage (100% Repomix Compatible)
+### Rust API Usage
+```rust
+use scribe_scaling::{ContextScaler, ScalingConfig};
+
+let config = ScalingConfig::default()
+    .with_test_exclusion()  // Auto-exclude test files
+    .with_token_budget(16000);
+
+let scaler = ContextScaler::new(config);
+let selected_files = scaler.select_files(&project_path).await?;
+```
+
+### Python CLI Usage (100% Repomix Compatible)
 ```bash
 # All your existing repomix commands work unchanged
 scribe https://github.com/user/repo.git --style json --output pack.json
@@ -37,17 +58,26 @@ scribe . --include "**/*.py" --ignore "**/tests/**" --no-gitignore
 scribe . --git-sort-by-changes --include-diffs --remote-branch main
 ```
 
-### Enhanced Scribe Features
-```bash
-# Use advanced selection algorithms
-scribe . --selector mmr --diversity-weight 0.3
+## 🦀 Rust Architecture
 
-# Research-grade performance mode  
-scribe . --mode extended --target-time 30
+Scribe's new Rust implementation provides a modular, high-performance architecture:
 
-# Generate comprehensive analytics
-scribe . --stats --dry-run
 ```
+scribe-rs/
+├── scribe-core/          # Core types and utilities
+├── scribe-analysis/      # File analysis and AST parsing  
+├── scribe-graph/         # Import graph and centrality algorithms
+├── scribe-scaling/       # Context positioning and token management
+├── scribe-selection/     # Intelligent file selection algorithms
+├── scribe-scanner/       # High-performance file system scanning
+└── scribe-output/        # Multi-format output generation
+```
+
+**Key Features**:
+- **Context Positioning**: Transformer attention-aware file placement (HEAD/MIDDLE/TAIL)
+- **Auto-exclude Tests**: Smart test file detection across 7+ programming languages  
+- **Token Budget Management**: Precise context window optimization
+- **Parallel Processing**: Async-first design with Tokio for maximum throughput
 
 ### 🎨 Interactive Bundle Editor
 ```bash
