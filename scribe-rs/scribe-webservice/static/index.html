@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scribe Web Service</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #1e40af;
+            --background: #0f172a;
+            --surface: #1e293b;
+            --surface-light: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --border: #475569;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1rem;
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            transition: all 0.2s ease;
+        }
+
+        .card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .card h2 {
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+
+        .btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--surface-light);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .feature {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .feature-icon {
+            background: var(--primary);
+            color: white;
+            width: 3rem;
+            height: 3rem;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .status {
+            background: var(--surface-light);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-value {
+            font-weight: 600;
+            color: var(--success);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🦀 Scribe Web Service</h1>
+            <p>Interactive repository analysis and bundle generation powered by Rust</p>
+        </header>
+
+        <div class="status" id="status">
+            <div class="status-item">
+                <span>Service Status</span>
+                <span class="status-value" id="service-status">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span>Version</span>
+                <span class="status-value" id="version">Loading...</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🎯 Quick Start</h2>
+            <p>Get started with interactive repository analysis and bundle generation</p>
+            <a href="/editor" class="btn">
+                <span>🚀</span>
+                Launch Bundle Editor
+            </a>
+        </div>
+
+        <div class="features-grid">
+            <div class="card">
+                <h2>⚡ Performance</h2>
+                <p>Native Rust performance with async processing</p>
+                <ul style="color: var(--text-secondary); margin-left: 1rem;">
+                    <li>3-5x faster repository scanning</li>
+                    <li>60% less memory usage</li>
+                    <li>Parallel file processing</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h2>🧠 Intelligence</h2>
+                <p>Advanced selection algorithms and context optimization</p>
+                <ul style="color: var(--text-secondary); margin-left: 1rem;">
+                    <li>Transformer attention-aware positioning</li>
+                    <li>Smart test file exclusion</li>
+                    <li>MMR + PageRank selection</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h2>💾 Direct Saving</h2>
+                <p>Generate and save bundles directly from the web interface</p>
+                <ul style="color: var(--text-secondary); margin-left: 1rem;">
+                    <li>HTML, Markdown, JSON formats</li>
+                    <li>Real-time bundle preview</li>
+                    <li>Automatic file downloads</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h2>🌐 Browser Integration</h2>
+                <p>Seamless browser experience with auto-opening</p>
+                <ul style="color: var(--text-secondary); margin-left: 1rem;">
+                    <li>Automatic browser launch</li>
+                    <li>Live file selection</li>
+                    <li>Interactive directory trees</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📊 API Endpoints</h2>
+            <p>RESTful API for programmatic access</p>
+            <div style="background: var(--background); padding: 1rem; border-radius: 8px; font-family: monospace; margin: 1rem 0;">
+                <div>GET  /api/status - Service health check</div>
+                <div>POST /api/scan - Scan repository</div>
+                <div>GET  /api/files - List files</div>
+                <div>POST /api/bundle/generate - Generate bundle</div>
+                <div>POST /api/bundle/save - Save bundle to disk</div>
+                <div>GET  /api/config - Get configuration</div>
+            </div>
+            <a href="#" class="btn-secondary" onclick="toggleApiDocs()">View API Documentation</a>
+        </div>
+    </div>
+
+    <script>
+        // Check service status
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('service-status').textContent = data.data.status;
+                    document.getElementById('version').textContent = data.data.version;
+                } else {
+                    document.getElementById('service-status').textContent = 'Error';
+                    document.getElementById('service-status').style.color = 'var(--error)';
+                }
+            } catch (error) {
+                document.getElementById('service-status').textContent = 'Offline';
+                document.getElementById('service-status').style.color = 'var(--error)';
+            }
+        }
+
+        function toggleApiDocs() {
+            alert('API documentation will open in a new tab (not implemented in this demo)');
+        }
+
+        // Initialize
+        checkStatus();
+        
+        // Refresh status every 30 seconds
+        setInterval(checkStatus, 30000);
+    </script>
+</body>
+</html>

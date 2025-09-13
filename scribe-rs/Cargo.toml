@@ -7,6 +7,7 @@ members = [
     "scribe-patterns", 
     "scribe-selection",
     "scribe-scaling",
+    "scribe-webservice",
 ]
 default-members = ["scribe-core"]
 resolver = "2"

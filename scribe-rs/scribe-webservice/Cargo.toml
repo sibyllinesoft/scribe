@@ -1,0 +1,63 @@
+[package]
+name = "scribe-webservice"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Web service interface for Scribe repository analysis"
+
+[dependencies]
+# Local dependencies
+scribe-core = { version = "0.2.0", path = "../scribe-core" }
+scribe-scaling = { version = "0.2.0", path = "../scribe-scaling" }
+scribe-selection = { version = "0.2.0", path = "../scribe-selection" }
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tokio = { workspace = true, features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# File system
+walkdir = "2.4"
+tempfile = "3.8"
+
+# Browser opening
+open = "5.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = "3.8"
+# Testing framework
+tokio-test = "0.4"
+# HTTP testing
+axum-test = "14.0"
+# Additional test utilities
+serde_json = { workspace = true }
+# For mocking and test utilities
+mockall = "0.12"
+# For async utilities in tests
+futures-util = "0.3"

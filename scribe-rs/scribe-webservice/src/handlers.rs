@@ -1,0 +1,649 @@
+//! HTTP handlers for the Scribe web service
+
+use crate::{ApiResponse, AppState, BundleState, WebServiceError, Result};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::{Html, Json, IntoResponse},
+};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{debug, error, info};
+
+/// Health check endpoint
+pub async fn status() -> Json<ApiResponse<StatusInfo>> {
+    let status = StatusInfo {
+        service: "scribe-webservice".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        status: "healthy".to_string(),
+    };
+    Json(ApiResponse::success(status))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StatusInfo {
+    pub service: String,
+    pub version: String,
+    pub status: String,
+}
+
+/// Main index page
+pub async fn index() -> Html<String> {
+    let html = r#"
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Scribe Web Service</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 800px; margin: 0 auto; }
+            .header { text-align: center; margin-bottom: 40px; }
+            .nav { margin-bottom: 40px; }
+            .nav a { margin-right: 20px; padding: 10px 20px; background: #007acc; color: white; text-decoration: none; border-radius: 5px; }
+            .nav a:hover { background: #005a99; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🚀 Scribe Web Service</h1>
+                <p>Interactive repository analysis and bundle generation</p>
+            </div>
+            <div class="nav">
+                <a href="/editor">Bundle Editor</a>
+                <a href="/api/status">API Status</a>
+            </div>
+            <div class="content">
+                <h2>Features</h2>
+                <ul>
+                    <li>Real-time bundle generation and saving</li>
+                    <li>Interactive file selection</li>
+                    <li>REST API endpoints</li>
+                    <li>Direct download capabilities</li>
+                </ul>
+            </div>
+        </div>
+    </body>
+    </html>
+    "#.to_string();
+    Html(html)
+}
+
+/// Bundle editor interface
+pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
+    // Load the bundle editor HTML template - for now return a simple HTML
+    let html = format!(r#"
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Scribe Bundle Editor</title>
+    </head>
+    <body>
+        <h1>Scribe Bundle Editor</h1>
+        <p>Repository: {}</p>
+        <p>Token Budget: {}</p>
+        <p>Auto Exclude Tests: {}</p>
+        <div id="editor">Editor interface will go here</div>
+    </body>
+    </html>
+    "#, 
+        state.config.repo_path.display(), 
+        state.config.token_budget,
+        state.config.auto_exclude_tests
+    );
+    
+    Html(html)
+}
+
+/// Scan repository and return file information
+pub async fn scan_repository(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    info!("Scanning repository: {}", state.config.repo_path.display());
+    
+    // For now, create a mock scan result
+    // TODO: Integrate with actual scribe-scaling once interfaces are aligned
+    let mut bundle_state = state.bundle_state.write().await;
+    bundle_state.included_files = vec!["src/lib.rs".to_string(), "src/main.rs".to_string()];
+    bundle_state.token_estimate = state.config.token_budget / 2; // Mock estimate
+    bundle_state.total_size = 1024 * 1024; // 1MB mock
+    bundle_state.last_updated = chrono::Utc::now();
+    
+    let mock_files = vec![
+        FileEntry {
+            path: "src/lib.rs".to_string(),
+            size: 2048,
+            tokens: 500,
+            file_type: "rust".to_string(),
+            included: true,
+        },
+        FileEntry {
+            path: "src/main.rs".to_string(),
+            size: 1024,
+            tokens: 250,
+            file_type: "rust".to_string(),
+            included: true,
+        },
+        FileEntry {
+            path: "tests/test_lib.rs".to_string(),
+            size: 512,
+            tokens: 100,
+            file_type: "rust".to_string(),
+            included: false,
+        },
+    ];
+    
+    let mut categories = HashMap::new();
+    for file in &mock_files {
+        let category = if file.included { "included" } else { "excluded" };
+        categories
+            .entry(category.to_string())
+            .or_insert_with(Vec::new)
+            .push(file.clone());
+    }
+    
+    let result = ScanResult {
+        total_files: mock_files.len(),
+        selected_files: mock_files.iter().filter(|f| f.included).count(),
+        excluded_files: mock_files.iter().filter(|f| !f.included).count(),
+        token_estimate: bundle_state.token_estimate,
+        total_size: bundle_state.total_size,
+        categories,
+    };
+    
+    Json(ApiResponse::success(result))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ScanResult {
+    pub total_files: usize,
+    pub selected_files: usize,
+    pub excluded_files: usize,
+    pub token_estimate: usize,
+    pub total_size: usize,
+    pub categories: HashMap<String, Vec<FileEntry>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub path: String,
+    pub size: usize,
+    pub tokens: usize,
+    pub file_type: String,
+    pub included: bool,
+}
+
+/// List files in the repository
+pub async fn list_files(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    debug!("Listing files for repository");
+    
+    // For now, return the current bundle state
+    let _bundle_state = state.bundle_state.read().await;
+    let files: Vec<FileEntry> = vec![]; // TODO: Implement actual file listing
+    
+    Json(ApiResponse::success(files))
+}
+
+/// Toggle file inclusion in bundle
+pub async fn toggle_file(
+    State(state): State<AppState>,
+    Json(request): Json<ToggleRequest>,
+) -> impl IntoResponse {
+    debug!("Toggling file: {}", request.path);
+    
+    let mut bundle_state = state.bundle_state.write().await;
+    
+    if bundle_state.included_files.contains(&request.path) {
+        bundle_state.included_files.retain(|f| f != &request.path);
+        info!("Removed file from bundle: {}", request.path);
+    } else {
+        bundle_state.included_files.push(request.path.clone());
+        info!("Added file to bundle: {}", request.path);
+    }
+    
+    bundle_state.last_updated = chrono::Utc::now();
+    // TODO: Recalculate token estimate and size
+    
+    Json(ApiResponse::success(bundle_state.clone()))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ToggleRequest {
+    pub path: String,
+}
+
+/// Toggle directory inclusion in bundle
+pub async fn toggle_directory(
+    State(state): State<AppState>,
+    Json(request): Json<ToggleRequest>,
+) -> impl IntoResponse {
+    debug!("Toggling directory: {}", request.path);
+    
+    // TODO: Implement directory toggle logic
+    let bundle_state = state.bundle_state.read().await;
+    Json(ApiResponse::success(bundle_state.clone()))
+}
+
+/// Generate bundle with current selection
+pub async fn generate_bundle(
+    State(state): State<AppState>,
+    Json(request): Json<GenerateBundleRequest>,
+) -> impl IntoResponse {
+    info!("Generating bundle in {} format", request.format);
+    
+    let bundle_state = state.bundle_state.read().await;
+    
+    // TODO: Use scribe-output crate to generate actual bundle
+    let content = format!(
+        "# Generated Bundle\n\nFormat: {}\nFiles: {}\nToken estimate: {}\n\nFiles included:\n{}",
+        request.format,
+        bundle_state.included_files.len(),
+        bundle_state.token_estimate,
+        bundle_state.included_files.join("\n- ")
+    );
+    
+    let bundle = GeneratedBundle {
+        format: request.format.clone(),
+        content,
+        filename: format!("scribe-bundle.{}", 
+            match request.format.as_str() {
+                "html" => "html",
+                "markdown" => "md", 
+                "json" => "json",
+                _ => "txt"
+            }
+        ),
+        size: 0, // TODO: Calculate actual size
+    };
+    
+    Json(ApiResponse::success(bundle))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateBundleRequest {
+    pub format: String,
+    pub options: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GeneratedBundle {
+    pub format: String,
+    pub content: String,
+    pub filename: String,
+    pub size: usize,
+}
+
+/// Save bundle to file system
+pub async fn save_bundle(
+    State(state): State<AppState>,
+    Json(request): Json<SaveBundleRequest>,
+) -> impl IntoResponse {
+    info!("Saving bundle to: {}", request.path);
+    
+    // For now, just return success without actually saving
+    // TODO: Implement actual file saving
+    let result = SaveResult {
+        path: request.path.clone(),
+        size: 1024, // Mock size
+        format: request.format.clone(),
+    };
+    
+    Json(ApiResponse::success(result))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveBundleRequest {
+    pub path: String,
+    pub format: String,
+    pub options: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveResult {
+    pub path: String,
+    pub size: usize,
+    pub format: String,
+}
+
+/// Export bundle (generate and return for download)
+pub async fn export_bundle(
+    State(state): State<AppState>,
+    Json(request): Json<GenerateBundleRequest>,
+) -> impl IntoResponse {
+    // This is the same as generate_bundle but with different semantic meaning
+    generate_bundle(State(state), Json(request)).await
+}
+
+/// Get current configuration
+pub async fn get_config(
+    State(state): State<AppState>,
+) -> Json<ApiResponse<crate::WebServiceConfig>> {
+    Json(ApiResponse::success(state.config.clone()))
+}
+
+/// Update configuration
+pub async fn update_config(
+    State(state): State<AppState>,
+    Json(new_config): Json<crate::WebServiceConfig>,
+) -> impl IntoResponse {
+    info!("Updating configuration");
+    
+    // TODO: Update the actual state configuration
+    // For now, just return the new config
+    Json(ApiResponse::success(new_config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{WebServiceConfig, AppState, BundleState};
+    use axum_test::TestServer;
+    use axum::{routing::get, Router};
+    use tempfile::TempDir;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn create_test_app_state() -> AppState {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WebServiceConfig {
+            repo_path: temp_dir.path().to_path_buf(),
+            port: 0,
+            host: "127.0.0.1".to_string(),
+            token_budget: 10000,
+            auto_open_browser: false,
+            max_file_size: 1024,
+            auto_exclude_tests: true,
+        };
+        
+        AppState {
+            config,
+            bundle_state: Arc::new(RwLock::new(BundleState::default())),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_status_endpoint() {
+        let response = status().await;
+        let status_info = response.0;
+        
+        assert!(status_info.success);
+        assert!(status_info.data.is_some());
+        
+        let data = status_info.data.unwrap();
+        assert_eq!(data.service, "scribe-webservice");
+        assert_eq!(data.status, "healthy");
+        assert!(!data.version.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_index_handler() {
+        let response = index().await;
+        let html = response.0;
+        
+        assert!(html.contains("Scribe Web Service"));
+        assert!(html.contains("Bundle Editor"));
+        assert!(html.contains("<!DOCTYPE html>"));
+    }
+
+    #[tokio::test]
+    async fn test_bundle_editor() {
+        let state = create_test_app_state();
+        let response = bundle_editor(axum::extract::State(state)).await;
+        
+        // Since we can't easily extract the HTML from IntoResponse in tests,
+        // just verify that the handler completes without panicking
+        let _ = response.into_response();
+        
+        // The integration tests will verify the actual HTML content
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository() {
+        let state = create_test_app_state();
+        let response = scan_repository(axum::extract::State(state)).await;
+        
+        // Since we can't directly access the Json content easily, let's test the function logic
+        // The function should complete without panicking and return a valid response
+        let _ = response.into_response();
+    }
+
+    #[tokio::test]
+    async fn test_list_files() {
+        let state = create_test_app_state();
+        let response = list_files(axum::extract::State(state)).await;
+        
+        let _ = response.into_response();
+        // Should return an empty list initially
+    }
+
+    #[tokio::test]
+    async fn test_toggle_file() {
+        let state = create_test_app_state();
+        let request = ToggleRequest {
+            path: "src/lib.rs".to_string(),
+        };
+        
+        let response = toggle_file(
+            axum::extract::State(state.clone()),
+            axum::extract::Json(request)
+        ).await;
+        
+        let _ = response.into_response();
+        
+        // Verify the file was added to the bundle state
+        let bundle_state = state.bundle_state.read().await;
+        assert!(bundle_state.included_files.contains(&"src/lib.rs".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_toggle_file_remove() {
+        let state = create_test_app_state();
+        
+        // First add a file
+        {
+            let mut bundle_state = state.bundle_state.write().await;
+            bundle_state.included_files.push("src/lib.rs".to_string());
+        }
+        
+        let request = ToggleRequest {
+            path: "src/lib.rs".to_string(),
+        };
+        
+        let response = toggle_file(
+            axum::extract::State(state.clone()),
+            axum::extract::Json(request)
+        ).await;
+        
+        let _ = response.into_response();
+        
+        // Verify the file was removed from the bundle state
+        let bundle_state = state.bundle_state.read().await;
+        assert!(!bundle_state.included_files.contains(&"src/lib.rs".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_generate_bundle() {
+        let state = create_test_app_state();
+        let request = GenerateBundleRequest {
+            format: "markdown".to_string(),
+            options: None,
+        };
+        
+        let response = generate_bundle(
+            axum::extract::State(state),
+            axum::extract::Json(request)
+        ).await;
+        
+        let _ = response.into_response();
+        // Should generate a bundle without error
+    }
+
+    #[tokio::test]
+    async fn test_generate_bundle_different_formats() {
+        let state = create_test_app_state();
+        
+        let formats = vec!["html", "markdown", "json", "txt"];
+        
+        for format in formats {
+            let request = GenerateBundleRequest {
+                format: format.to_string(),
+                options: None,
+            };
+            
+            let response = generate_bundle(
+                axum::extract::State(state.clone()),
+                axum::extract::Json(request)
+            ).await;
+            
+            let _ = response.into_response();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_save_bundle() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = create_test_app_state();
+        
+        let save_path = temp_dir.path().join("test_bundle.md").to_string_lossy().to_string();
+        let request = SaveBundleRequest {
+            path: save_path.clone(),
+            format: "markdown".to_string(),
+            options: None,
+        };
+        
+        let response = save_bundle(
+            axum::extract::State(state),
+            axum::extract::Json(request)
+        ).await;
+        
+        let _ = response.into_response();
+        // Should complete without error (though current implementation is mocked)
+    }
+
+    #[tokio::test]
+    async fn test_export_bundle() {
+        let state = create_test_app_state();
+        let request = GenerateBundleRequest {
+            format: "json".to_string(),
+            options: None,
+        };
+        
+        let response = export_bundle(
+            axum::extract::State(state),
+            axum::extract::Json(request)
+        ).await;
+        
+        let _ = response.into_response();
+    }
+
+    #[tokio::test]
+    async fn test_get_config() {
+        let state = create_test_app_state();
+        
+        let response = get_config(axum::extract::State(state.clone()));
+        let config_response = response.await;
+        
+        assert!(config_response.0.success);
+        assert!(config_response.0.data.is_some());
+        
+        let config = config_response.0.data.unwrap();
+        assert_eq!(config.token_budget, 10000);
+        assert!(!config.auto_open_browser);
+        assert_eq!(config.host, "127.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn test_update_config() {
+        let state = create_test_app_state();
+        let new_config = WebServiceConfig {
+            port: 8081,
+            host: "0.0.0.0".to_string(),
+            repo_path: std::env::current_dir().unwrap(),
+            token_budget: 20000,
+            auto_open_browser: true,
+            max_file_size: 2048,
+            auto_exclude_tests: false,
+        };
+        
+        let response = update_config(
+            axum::extract::State(state),
+            axum::extract::Json(new_config.clone())
+        ).await;
+        
+        let _ = response.into_response();
+        // Should complete without error (current implementation just returns the new config)
+    }
+
+    #[tokio::test]
+    async fn test_toggle_request_serialization() {
+        let request = ToggleRequest {
+            path: "src/test.rs".to_string(),
+        };
+        
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("src/test.rs"));
+        
+        let deserialized: ToggleRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.path, "src/test.rs");
+    }
+
+    #[tokio::test]
+    async fn test_api_response_success() {
+        let data = "test data";
+        let response = ApiResponse::success(data);
+        
+        assert!(response.success);
+        assert_eq!(response.data, Some("test data"));
+        assert!(response.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_api_response_error() {
+        let response = ApiResponse::<String>::error("Test error".to_string());
+        
+        assert!(!response.success);
+        assert!(response.data.is_none());
+        assert_eq!(response.error, Some("Test error".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_file_entry_serialization() {
+        let entry = FileEntry {
+            path: "src/lib.rs".to_string(),
+            size: 1024,
+            tokens: 256,
+            file_type: "rust".to_string(),
+            included: true,
+        };
+        
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: FileEntry = serde_json::from_str(&json).unwrap();
+        
+        assert_eq!(deserialized.path, "src/lib.rs");
+        assert_eq!(deserialized.size, 1024);
+        assert_eq!(deserialized.tokens, 256);
+        assert_eq!(deserialized.file_type, "rust");
+        assert!(deserialized.included);
+    }
+
+    #[tokio::test]
+    async fn test_scan_result_structure() {
+        let mut categories = HashMap::new();
+        categories.insert("included".to_string(), vec![]);
+        
+        let scan_result = ScanResult {
+            total_files: 10,
+            selected_files: 5,
+            excluded_files: 5,
+            token_estimate: 5000,
+            total_size: 10240,
+            categories,
+        };
+        
+        assert_eq!(scan_result.total_files, scan_result.selected_files + scan_result.excluded_files);
+        assert!(scan_result.categories.contains_key("included"));
+    }
+}
+

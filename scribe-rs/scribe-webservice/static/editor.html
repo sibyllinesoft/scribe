@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scribe Bundle Editor</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #1e40af;
+            --background: #0f172a;
+            --surface: #1e293b;
+            --surface-light: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --border: #475569;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            line-height: 1.6;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 400px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-light);
+        }
+
+        .sidebar-header h1 {
+            font-size: 1.2rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .repo-path {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-family: monospace;
+            background: var(--background);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+
+        .controls {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn:disabled {
+            background: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .btn-success {
+            background: var(--success);
+        }
+
+        .btn-warning {
+            background: var(--warning);
+        }
+
+        .btn-small {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+        }
+
+        .stats {
+            background: var(--background);
+            padding: 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: var(--success);
+        }
+
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+
+        .category {
+            margin-bottom: 1rem;
+        }
+
+        .category-header {
+            padding: 0.5rem;
+            background: var(--surface-light);
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .category-count {
+            background: var(--background);
+            color: var(--text-muted);
+            padding: 0.1rem 0.4rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+        }
+
+        .file-item {
+            padding: 0.4rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: background 0.2s ease;
+            font-family: monospace;
+        }
+
+        .file-item:hover {
+            background: var(--surface-light);
+        }
+
+        .file-item.included {
+            background: rgba(16, 185, 129, 0.1);
+            border-left: 3px solid var(--success);
+        }
+
+        .file-item.excluded {
+            background: rgba(100, 116, 139, 0.1);
+            color: var(--text-muted);
+        }
+
+        .file-path {
+            flex: 1;
+            word-break: break-all;
+        }
+
+        .file-info {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            margin-left: 0.5rem;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .main-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .format-selector {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        select {
+            background: var(--surface-light);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 0.5rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+        }
+
+        .preview-area {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            background: var(--background);
+        }
+
+        .preview-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            min-height: 400px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .status-bar {
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .status-message {
+            color: var(--text-secondary);
+        }
+
+        .status-message.success {
+            color: var(--success);
+        }
+
+        .status-message.error {
+            color: var(--error);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid var(--text-muted);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+            }
+            
+            .main-content {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>Bundle Editor</h1>
+                <div class="repo-path" id="repo-path">{{REPO_PATH}}</div>
+            </div>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <button class="btn" id="scan-btn" onclick="scanRepository()">🔍 Scan Repository</button>
+                    <button class="btn btn-small" onclick="refreshFiles()">⟳</button>
+                </div>
+                
+                <div class="stats" id="stats">
+                    <div class="stat-item">
+                        <span>Files</span>
+                        <span class="stat-value" id="file-count">0 / 0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Tokens</span>
+                        <span class="stat-value" id="token-count">{{TOKEN_BUDGET}}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Size</span>
+                        <span class="stat-value" id="size-count">0 MB</span>
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="auto-exclude-tests" {{#if AUTO_EXCLUDE_TESTS}}checked{{/if}}>
+                        Auto-exclude tests
+                    </label>
+                </div>
+            </div>
+            
+            <div class="file-list" id="file-list">
+                <div class="category">
+                    <div class="category-header">
+                        <span>📋 Click "Scan Repository" to begin</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="main-header">
+                <h2>Bundle Preview</h2>
+                <div class="format-selector">
+                    <label>Format:</label>
+                    <select id="format-select" onchange="updatePreview()">
+                        <option value="markdown">Markdown</option>
+                        <option value="html">HTML</option>
+                        <option value="json">JSON</option>
+                        <option value="cxml">CXML</option>
+                    </select>
+                    <button class="btn btn-success" onclick="generateBundle()">💾 Save Bundle</button>
+                </div>
+            </div>
+            
+            <div class="preview-area">
+                <div class="preview-content" id="preview-content">
+                    Select files from the sidebar and choose a format to preview your bundle.
+                    
+                    The preview will show you exactly what will be generated when you save the bundle.
+                </div>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-message" id="status-message">Ready</div>
+                <div id="last-update">Never updated</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let bundleState = {
+            includedFiles: [],
+            excludedFiles: {},
+            tokenEstimate: parseInt('{{TOKEN_BUDGET}}'),
+            totalSize: 0,
+            lastUpdated: new Date()
+        };
+
+        let isScanning = false;
+
+        // Scan repository
+        async function scanRepository() {
+            if (isScanning) return;
+            
+            isScanning = true;
+            const scanBtn = document.getElementById('scan-btn');
+            scanBtn.innerHTML = '<span class="loading"></span>Scanning...';
+            scanBtn.disabled = true;
+            
+            setStatusMessage('Scanning repository...', 'info');
+            
+            try {
+                const response = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayScanResults(data.data);
+                    setStatusMessage(`Scan complete: ${data.data.selected_files} files selected`, 'success');
+                } else {
+                    throw new Error(data.error || 'Scan failed');
+                }
+            } catch (error) {
+                console.error('Scan failed:', error);
+                setStatusMessage(`Scan failed: ${error.message}`, 'error');
+            } finally {
+                isScanning = false;
+                scanBtn.innerHTML = '🔍 Scan Repository';
+                scanBtn.disabled = false;
+            }
+        }
+
+        // Display scan results
+        function displayScanResults(results) {
+            bundleState.tokenEstimate = results.token_estimate;
+            bundleState.totalSize = results.total_size;
+            bundleState.lastUpdated = new Date();
+            
+            // Update stats
+            document.getElementById('file-count').textContent = 
+                `${results.selected_files} / ${results.total_files}`;
+            document.getElementById('token-count').textContent = 
+                results.token_estimate.toLocaleString();
+            document.getElementById('size-count').textContent = 
+                (results.total_size / 1024 / 1024).toFixed(2) + ' MB';
+            
+            // Display file categories
+            const fileList = document.getElementById('file-list');
+            fileList.innerHTML = '';
+            
+            for (const [category, files] of Object.entries(results.categories)) {
+                if (files.length === 0) continue;
+                
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'category';
+                
+                const categoryIcon = getCategoryIcon(category);
+                const categoryName = getCategoryName(category);
+                
+                categoryDiv.innerHTML = `
+                    <div class="category-header" onclick="toggleCategory('${category}')">
+                        <span>${categoryIcon} ${categoryName}</span>
+                        <span class="category-count">${files.length}</span>
+                    </div>
+                    <div class="category-files" id="category-${category}">
+                        ${files.map(file => `
+                            <div class="file-item ${file.included ? 'included' : 'excluded'}" 
+                                 onclick="toggleFile('${file.path}')">
+                                <span class="file-path">${file.path}</span>
+                                <span class="file-info">${formatSize(file.size)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                fileList.appendChild(categoryDiv);
+            }
+            
+            updatePreview();
+            document.getElementById('last-update').textContent = 
+                `Updated ${bundleState.lastUpdated.toLocaleTimeString()}`;
+        }
+
+        // Toggle file inclusion
+        async function toggleFile(filePath) {
+            try {
+                const response = await fetch('/api/files/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: filePath })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Refresh the display
+                    await refreshFiles();
+                    setStatusMessage(`Toggled ${filePath}`, 'success');
+                } else {
+                    throw new Error(data.error || 'Toggle failed');
+                }
+            } catch (error) {
+                console.error('Toggle failed:', error);
+                setStatusMessage(`Failed to toggle file: ${error.message}`, 'error');
+            }
+        }
+
+        // Generate and save bundle
+        async function generateBundle() {
+            const format = document.getElementById('format-select').value;
+            
+            try {
+                setStatusMessage('Generating bundle...', 'info');
+                
+                const response = await fetch('/api/bundle/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: `scribe-bundle.${getFileExtension(format)}`,
+                        format: format,
+                        options: {}
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    setStatusMessage(`Bundle saved: ${data.data.path} (${formatSize(data.data.size)})`, 'success');
+                    
+                    // Also trigger download in browser
+                    const exportResponse = await fetch('/api/bundle/export', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ format: format })
+                    });
+                    
+                    const exportData = await exportResponse.json();
+                    if (exportData.success) {
+                        downloadBundle(exportData.data);
+                    }
+                } else {
+                    throw new Error(data.error || 'Bundle generation failed');
+                }
+            } catch (error) {
+                console.error('Bundle generation failed:', error);
+                setStatusMessage(`Bundle generation failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Download bundle as file
+        function downloadBundle(bundleData) {
+            const blob = new Blob([bundleData.content], { 
+                type: getContentType(bundleData.format) 
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = bundleData.filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Update preview
+        async function updatePreview() {
+            const format = document.getElementById('format-select').value;
+            
+            try {
+                const response = await fetch('/api/bundle/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ format: format })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('preview-content').textContent = data.data.content;
+                } else {
+                    throw new Error(data.error || 'Preview generation failed');
+                }
+            } catch (error) {
+                console.error('Preview update failed:', error);
+                document.getElementById('preview-content').textContent = 
+                    `Preview failed: ${error.message}`;
+            }
+        }
+
+        // Refresh files
+        async function refreshFiles() {
+            // Re-scan if we have data
+            if (bundleState.lastUpdated) {
+                await scanRepository();
+            }
+        }
+
+        // Utility functions
+        function getCategoryIcon(category) {
+            const icons = {
+                'included': '✅',
+                'excluded': '❌',
+                'too_large': '📦',
+                'binary': '🔧',
+                'test': '🧪'
+            };
+            return icons[category] || '📄';
+        }
+
+        function getCategoryName(category) {
+            const names = {
+                'included': 'Included Files',
+                'excluded': 'Excluded Files', 
+                'too_large': 'Too Large',
+                'binary': 'Binary Files',
+                'test': 'Test Files'
+            };
+            return names[category] || category;
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+
+        function getFileExtension(format) {
+            const extensions = {
+                'markdown': 'md',
+                'html': 'html',
+                'json': 'json',
+                'cxml': 'xml'
+            };
+            return extensions[format] || 'txt';
+        }
+
+        function getContentType(format) {
+            const types = {
+                'markdown': 'text/markdown',
+                'html': 'text/html',
+                'json': 'application/json',
+                'cxml': 'application/xml'
+            };
+            return types[format] || 'text/plain';
+        }
+
+        function setStatusMessage(message, type = 'info') {
+            const statusEl = document.getElementById('status-message');
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${type}`;
+        }
+
+        function toggleCategory(category) {
+            const categoryFiles = document.getElementById(`category-${category}`);
+            if (categoryFiles.style.display === 'none') {
+                categoryFiles.style.display = 'block';
+            } else {
+                categoryFiles.style.display = 'none';
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            setStatusMessage('Ready to scan repository');
+        });
+    </script>
+</body>
+</html>
