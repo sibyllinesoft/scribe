@@ -12,7 +12,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 use scribe_scaling::{ScalingEngine, ScalingConfig};
-use scribe_scaling::selector::{ScalingSelector, SelectionAlgorithm};
+use scribe_selection::{ScalingSelector, SelectionAlgorithm};
 
 /// Test that 1k token budget selects ~2 files as expected by original scribe
 #[tokio::test]
@@ -197,7 +197,7 @@ async fn test_selection_algorithm_variants() {
     let token_budget = 5000;
     
     // Test V1 Baseline algorithm
-    let mut selector_v1 = ScalingSelector::new(scribe_scaling::ScalingSelectionConfig {
+    let mut selector_v1 = ScalingSelector::new(scribe_selection::ScalingSelectionConfig {
         token_budget,
         selection_algorithm: SelectionAlgorithm::V1Baseline,
         enable_quotas: false,
@@ -206,16 +206,16 @@ async fn test_selection_algorithm_variants() {
     let result_v1 = selector_v1.select_and_process(repo_path).await.unwrap();
     
     // Test V2 Quotas algorithm  
-    let mut selector_v2 = ScalingSelector::new(scribe_scaling::ScalingSelectionConfig {
+    let mut selector_v2 = ScalingSelector::new(scribe_selection::ScalingSelectionConfig {
         token_budget,
-        selection_algorithm: SelectionAlgorithm::V2Quotas,
+        selection_algorithm: SelectionAlgorithm::V3Centrality,
         enable_quotas: true,
         scaling_config: scribe_scaling::ScalingConfig::default(),
     });
     let result_v2 = selector_v2.select_and_process(repo_path).await.unwrap();
     
     // Test V5 Integrated algorithm
-    let mut selector_v5 = ScalingSelector::new(scribe_scaling::ScalingSelectionConfig {
+    let mut selector_v5 = ScalingSelector::new(scribe_selection::ScalingSelectionConfig {
         token_budget,
         selection_algorithm: SelectionAlgorithm::V5Integrated,
         enable_quotas: true,

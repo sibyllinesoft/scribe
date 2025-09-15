@@ -6,6 +6,8 @@
 
 pub mod heuristics;
 pub mod ast_import_parser;
+pub mod complexity;
+pub mod language_support;
 
 // Legacy modules (kept for compatibility)
 pub mod ast;
@@ -32,11 +34,31 @@ pub use heuristics::{
     import_matches_file,
 };
 
+// Re-export complexity analysis types
+pub use complexity::{
+    ComplexityAnalyzer,
+    ComplexityMetrics as ComplexityAnalysisMetrics,
+    ComplexityConfig,
+    ComplexityThresholds,
+    LanguageSpecificMetrics,
+};
+
+// Re-export language support types
+pub use language_support::{
+    AstLanguage, LanguageTier, LanguageFeatures,
+    FunctionExtractor, FunctionInfo, ClassInfo,
+    DocumentationAnalyzer, DocumentationCoverage,
+    SymbolAnalyzer, SymbolUsage, SymbolType,
+    LanguageMetrics, LanguageSpecificComplexity,
+    LanguageSupport, LanguageAnalysisResult,
+    analyze_file_language,
+};
+
 // Legacy re-exports
 pub use ast::{AstNode, AstWalker};
 pub use parser::{Parser, ParseResult};
 pub use analyzer::{CodeAnalyzer, AnalysisResult};
-pub use metrics::{Metrics, ComplexityMetrics};
+pub use metrics::{Metrics, ComplexityMetrics as LegacyComplexityMetrics};
 pub use symbols::{Symbol, SymbolTable};
 
 use scribe_core::Result;

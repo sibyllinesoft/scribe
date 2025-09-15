@@ -11,36 +11,45 @@
 //! - **Memory-efficient adjacency list representation** for large graphs (10k+ nodes)
 //! - **Fast degree queries** and statistics calculation
 
-use std::collections::{HashMap, HashSet, BTreeSet};
+use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
-use indexmap::IndexMap;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use scribe_core::{Result, error::ScribeError};
 
-/// Node identifier type for the dependency graph
+/// Internal node identifier type for efficient graph operations (usize for array indexing)
+pub type InternalNodeId = usize;
+
+/// External node identifier type for the dependency graph (file paths)
 pub type NodeId = String;
 
 /// Edge weight type (unused in unweighted PageRank, but reserved for extensions)
 pub type EdgeWeight = f64;
 
 /// Efficient dependency graph representation optimized for PageRank computation
+/// Uses integer-based internal representation for massive performance improvements
 #[derive(Debug, Clone)]
 pub struct DependencyGraph {
-    /// Forward adjacency list: file -> files it imports
-    forward_edges: IndexMap<NodeId, BTreeSet<NodeId>>,
+    /// Forward adjacency list: internal_id -> set of internal_ids it imports
+    forward_edges: Vec<HashSet<InternalNodeId>>,
     
-    /// Reverse adjacency list: file -> files that import it (for PageRank)
-    reverse_edges: IndexMap<NodeId, BTreeSet<NodeId>>,
+    /// Reverse adjacency list: internal_id -> set of internal_ids that import it (for PageRank)
+    reverse_edges: Vec<HashSet<InternalNodeId>>,
     
-    /// All nodes in the graph (includes isolated nodes)
-    nodes: BTreeSet<NodeId>,
+    /// Mapping from file path to internal node ID
+    path_to_id: HashMap<NodeId, InternalNodeId>,
     
-    /// Node metadata cache
-    node_cache: HashMap<NodeId, NodeMetadata>,
+    /// Mapping from internal node ID to file path
+    id_to_path: Vec<NodeId>,
+    
+    /// Node metadata cache (indexed by internal ID)
+    node_metadata: Vec<Option<NodeMetadata>>,
     
     /// Graph statistics cache (invalidated on mutations)
     stats_cache: Option<GraphStatistics>,
+    
+    /// Next available internal node ID
+    next_id: InternalNodeId,
 }
 
 /// Metadata associated with each node in the graph
@@ -86,66 +95,74 @@ impl DependencyGraph {
     /// Create a new empty dependency graph
     pub fn new() -> Self {
         Self {
-            forward_edges: IndexMap::new(),
-            reverse_edges: IndexMap::new(),
-            nodes: BTreeSet::new(),
-            node_cache: HashMap::new(),
+            forward_edges: Vec::new(),
+            reverse_edges: Vec::new(),
+            path_to_id: HashMap::new(),
+            id_to_path: Vec::new(),
+            node_metadata: Vec::new(),
             stats_cache: None,
+            next_id: 0,
         }
     }
     
     /// Create with initial capacity hint for performance optimization
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            forward_edges: IndexMap::with_capacity(capacity),
-            reverse_edges: IndexMap::with_capacity(capacity),
-            nodes: BTreeSet::new(),
-            node_cache: HashMap::with_capacity(capacity),
+            forward_edges: Vec::with_capacity(capacity),
+            reverse_edges: Vec::with_capacity(capacity),
+            path_to_id: HashMap::with_capacity(capacity),
+            id_to_path: Vec::with_capacity(capacity),
+            node_metadata: Vec::with_capacity(capacity),
             stats_cache: None,
+            next_id: 0,
         }
     }
     
     /// Add a node to the graph (can exist without edges)
-    pub fn add_node(&mut self, node_id: NodeId) -> Result<()> {
-        self.nodes.insert(node_id.clone());
-        
-        // Initialize empty adjacency lists if not present
-        self.forward_edges.entry(node_id.clone()).or_insert_with(BTreeSet::new);
-        self.reverse_edges.entry(node_id.clone()).or_insert_with(BTreeSet::new);
-        
-        // Add default metadata if not present
-        if !self.node_cache.contains_key(&node_id) {
-            self.node_cache.insert(node_id.clone(), NodeMetadata::new(node_id));
+    pub fn add_node(&mut self, node_id: NodeId) -> Result<InternalNodeId> {
+        // Check if node already exists
+        if let Some(&existing_id) = self.path_to_id.get(&node_id) {
+            return Ok(existing_id);
         }
+        
+        let internal_id = self.next_id;
+        self.next_id += 1;
+        
+        // Add to mappings
+        self.path_to_id.insert(node_id.clone(), internal_id);
+        self.id_to_path.push(node_id.clone());
+        
+        // Initialize empty adjacency lists
+        self.forward_edges.push(HashSet::new());
+        self.reverse_edges.push(HashSet::new());
+        
+        // Add default metadata
+        self.node_metadata.push(Some(NodeMetadata::new(node_id)));
         
         // Invalidate cache
         self.stats_cache = None;
         
-        Ok(())
+        Ok(internal_id)
     }
     
     /// Add a node with metadata
-    pub fn add_node_with_metadata(&mut self, node_id: NodeId, metadata: NodeMetadata) -> Result<()> {
-        self.add_node(node_id.clone())?;
-        self.node_cache.insert(node_id, metadata);
-        Ok(())
+    pub fn add_node_with_metadata(&mut self, node_id: NodeId, metadata: NodeMetadata) -> Result<InternalNodeId> {
+        let internal_id = self.add_node(node_id)?;
+        self.node_metadata[internal_id] = Some(metadata);
+        Ok(internal_id)
     }
     
     /// Add an import edge: from_file imports to_file
     pub fn add_edge(&mut self, from_node: NodeId, to_node: NodeId) -> Result<()> {
-        // Ensure both nodes exist
-        self.add_node(from_node.clone())?;
-        self.add_node(to_node.clone())?;
+        // Ensure both nodes exist and get their internal IDs
+        let from_id = self.add_node(from_node)?;
+        let to_id = self.add_node(to_node)?;
         
-        // Add forward edge: from_node -> to_node
-        if let Some(forward_set) = self.forward_edges.get_mut(&from_node) {
-            forward_set.insert(to_node.clone());
-        }
+        // Add forward edge: from_id -> to_id
+        self.forward_edges[from_id].insert(to_id);
         
-        // Add reverse edge: to_node <- from_node
-        if let Some(reverse_set) = self.reverse_edges.get_mut(&to_node) {
-            reverse_set.insert(from_node);
-        }
+        // Add reverse edge: to_id <- from_id
+        self.reverse_edges[to_id].insert(from_id);
         
         // Invalidate cache
         self.stats_cache = None;
@@ -163,33 +180,35 @@ impl DependencyGraph {
     
     /// Remove a node and all its edges
     pub fn remove_node(&mut self, node_id: &NodeId) -> Result<bool> {
-        if !self.nodes.contains(node_id) {
-            return Ok(false);
-        }
-        
-        // Remove from nodes set
-        self.nodes.remove(node_id);
+        let internal_id = match self.path_to_id.get(node_id) {
+            Some(&id) => id,
+            None => return Ok(false),
+        };
         
         // Get outgoing edges to clean up reverse references
-        if let Some(outgoing) = self.forward_edges.shift_remove(node_id) {
-            for target in &outgoing {
-                if let Some(reverse_set) = self.reverse_edges.get_mut(target) {
-                    reverse_set.remove(node_id);
-                }
-            }
+        let outgoing = self.forward_edges[internal_id].clone();
+        for target_id in &outgoing {
+            self.reverse_edges[*target_id].remove(&internal_id);
         }
         
         // Get incoming edges to clean up forward references  
-        if let Some(incoming) = self.reverse_edges.shift_remove(node_id) {
-            for source in &incoming {
-                if let Some(forward_set) = self.forward_edges.get_mut(source) {
-                    forward_set.remove(node_id);
-                }
-            }
+        let incoming = self.reverse_edges[internal_id].clone();
+        for source_id in &incoming {
+            self.forward_edges[*source_id].remove(&internal_id);
         }
         
+        // Clear the adjacency lists for this node
+        self.forward_edges[internal_id].clear();
+        self.reverse_edges[internal_id].clear();
+        
         // Remove metadata
-        self.node_cache.remove(node_id);
+        self.node_metadata[internal_id] = None;
+        
+        // Remove from path mapping (but keep internal_id for consistency)
+        self.path_to_id.remove(node_id);
+        
+        // Note: We don't remove from id_to_path to maintain index consistency
+        // Instead, we'll need to handle None cases when iterating
         
         // Invalidate cache
         self.stats_cache = None;
@@ -199,17 +218,18 @@ impl DependencyGraph {
     
     /// Remove an edge between two nodes
     pub fn remove_edge(&mut self, from_node: &NodeId, to_node: &NodeId) -> Result<bool> {
-        let forward_removed = if let Some(forward_set) = self.forward_edges.get_mut(from_node) {
-            forward_set.remove(to_node)
-        } else {
-            false
+        let from_id = match self.path_to_id.get(from_node) {
+            Some(&id) => id,
+            None => return Ok(false),
         };
         
-        let reverse_removed = if let Some(reverse_set) = self.reverse_edges.get_mut(to_node) {
-            reverse_set.remove(from_node)
-        } else {
-            false
+        let to_id = match self.path_to_id.get(to_node) {
+            Some(&id) => id,
+            None => return Ok(false),
         };
+        
+        let forward_removed = self.forward_edges[from_id].remove(&to_id);
+        let reverse_removed = self.reverse_edges[to_id].remove(&from_id);
         
         if forward_removed || reverse_removed {
             self.stats_cache = None;
@@ -220,35 +240,44 @@ impl DependencyGraph {
     
     /// Check if a node exists in the graph
     pub fn contains_node(&self, node_id: &NodeId) -> bool {
-        self.nodes.contains(node_id)
+        self.path_to_id.contains_key(node_id)
     }
     
     /// Check if an edge exists between two nodes
     pub fn contains_edge(&self, from_node: &NodeId, to_node: &NodeId) -> bool {
-        self.forward_edges
-            .get(from_node)
-            .map_or(false, |edges| edges.contains(to_node))
+        match (self.path_to_id.get(from_node), self.path_to_id.get(to_node)) {
+            (Some(&from_id), Some(&to_id)) => {
+                self.forward_edges[from_id].contains(&to_id)
+            }
+            _ => false,
+        }
     }
     
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
-        self.nodes.len()
+        self.path_to_id.len()
     }
     
     /// Get the total number of edges in the graph
     pub fn edge_count(&self) -> usize {
-        self.forward_edges.values().map(|edges| edges.len()).sum()
+        self.forward_edges.iter().map(|edges| edges.len()).sum()
     }
     
     /// Get all nodes in the graph
     pub fn nodes(&self) -> impl Iterator<Item = &NodeId> {
-        self.nodes.iter()
+        self.path_to_id.keys()
     }
     
     /// Get all edges in the graph as (from, to) pairs
-    pub fn edges(&self) -> impl Iterator<Item = (&NodeId, &NodeId)> {
-        self.forward_edges.iter()
-            .flat_map(|(from, targets)| targets.iter().map(move |to| (from, to)))
+    pub fn edges(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.forward_edges.iter().enumerate()
+            .flat_map(move |(from_id, targets)| {
+                let from_path = self.id_to_path[from_id].clone();
+                targets.iter().map(move |&to_id| {
+                    let to_path = self.id_to_path[to_id].clone();
+                    (from_path.clone(), to_path)
+                })
+            })
     }
 }
 
@@ -256,12 +285,18 @@ impl DependencyGraph {
 impl DependencyGraph {
     /// Get in-degree of a node (number of files that import this node)
     pub fn in_degree(&self, node_id: &NodeId) -> usize {
-        self.reverse_edges.get(node_id).map_or(0, |edges| edges.len())
+        match self.path_to_id.get(node_id) {
+            Some(&internal_id) => self.reverse_edges[internal_id].len(),
+            None => 0,
+        }
     }
     
     /// Get out-degree of a node (number of files this node imports)
     pub fn out_degree(&self, node_id: &NodeId) -> usize {
-        self.forward_edges.get(node_id).map_or(0, |edges| edges.len())
+        match self.path_to_id.get(node_id) {
+            Some(&internal_id) => self.forward_edges[internal_id].len(),
+            None => 0,
+        }
     }
     
     /// Get total degree of a node (in + out)
@@ -270,25 +305,47 @@ impl DependencyGraph {
     }
     
     /// Get nodes that this node imports (outgoing edges)
-    pub fn outgoing_neighbors(&self, node_id: &NodeId) -> Option<&BTreeSet<NodeId>> {
-        self.forward_edges.get(node_id)
+    pub fn outgoing_neighbors(&self, node_id: &NodeId) -> Option<Vec<&NodeId>> {
+        match self.path_to_id.get(node_id) {
+            Some(&internal_id) => {
+                let neighbors: Vec<&NodeId> = self.forward_edges[internal_id]
+                    .iter()
+                    .map(|&target_id| &self.id_to_path[target_id])
+                    .collect();
+                Some(neighbors)
+            }
+            None => None,
+        }
     }
     
     /// Get nodes that import this node (incoming edges) - important for PageRank
-    pub fn incoming_neighbors(&self, node_id: &NodeId) -> Option<&BTreeSet<NodeId>> {
-        self.reverse_edges.get(node_id)
+    pub fn incoming_neighbors(&self, node_id: &NodeId) -> Option<Vec<&NodeId>> {
+        match self.path_to_id.get(node_id) {
+            Some(&internal_id) => {
+                let neighbors: Vec<&NodeId> = self.reverse_edges[internal_id]
+                    .iter()
+                    .map(|&source_id| &self.id_to_path[source_id])
+                    .collect();
+                Some(neighbors)
+            }
+            None => None,
+        }
     }
     
     /// Get both incoming and outgoing neighbors
     pub fn all_neighbors(&self, node_id: &NodeId) -> HashSet<&NodeId> {
         let mut neighbors = HashSet::new();
         
-        if let Some(outgoing) = self.forward_edges.get(node_id) {
-            neighbors.extend(outgoing.iter());
-        }
-        
-        if let Some(incoming) = self.reverse_edges.get(node_id) {
-            neighbors.extend(incoming.iter());
+        if let Some(&internal_id) = self.path_to_id.get(node_id) {
+            // Add outgoing neighbors
+            for &target_id in &self.forward_edges[internal_id] {
+                neighbors.insert(&self.id_to_path[target_id]);
+            }
+            
+            // Add incoming neighbors
+            for &source_id in &self.reverse_edges[internal_id] {
+                neighbors.insert(&self.id_to_path[source_id]);
+            }
         }
         
         neighbors
@@ -307,51 +364,100 @@ impl DependencyGraph {
             total_degree: self.degree(node_id),
         })
     }
+    
+    /// Internal API: Get internal node ID for path (for PageRank optimization)
+    pub(crate) fn get_internal_id(&self, node_id: &NodeId) -> Option<InternalNodeId> {
+        self.path_to_id.get(node_id).copied()
+    }
+    
+    /// Internal API: Get path for internal ID
+    pub(crate) fn get_path(&self, internal_id: InternalNodeId) -> Option<&NodeId> {
+        self.id_to_path.get(internal_id)
+    }
+    
+    /// Internal API: Get incoming neighbors by internal ID (for PageRank)
+    pub(crate) fn incoming_neighbors_by_id(&self, internal_id: InternalNodeId) -> Option<&HashSet<InternalNodeId>> {
+        self.reverse_edges.get(internal_id)
+    }
+    
+    /// Internal API: Get out-degree by internal ID (for PageRank)
+    pub(crate) fn out_degree_by_id(&self, internal_id: InternalNodeId) -> usize {
+        self.forward_edges.get(internal_id).map_or(0, |edges| edges.len())
+    }
+    
+    /// Internal API: Get total number of active nodes (for PageRank)
+    pub(crate) fn internal_node_count(&self) -> usize {
+        self.path_to_id.len()
+    }
+    
+    /// Internal API: Iterator over all internal node IDs with their paths
+    pub(crate) fn internal_nodes(&self) -> impl Iterator<Item = (InternalNodeId, &NodeId)> {
+        self.path_to_id.iter().map(|(path, &id)| (id, path))
+    }
 }
 
 /// Node metadata and information queries
 impl DependencyGraph {
     /// Get metadata for a node
     pub fn node_metadata(&self, node_id: &NodeId) -> Option<&NodeMetadata> {
-        self.node_cache.get(node_id)
+        match self.path_to_id.get(node_id) {
+            Some(&internal_id) => self.node_metadata[internal_id].as_ref(),
+            None => None,
+        }
     }
     
     /// Set metadata for a node
     pub fn set_node_metadata(&mut self, node_id: NodeId, metadata: NodeMetadata) -> Result<()> {
-        if !self.contains_node(&node_id) {
-            return Err(ScribeError::invalid_operation(
+        match self.path_to_id.get(&node_id) {
+            Some(&internal_id) => {
+                self.node_metadata[internal_id] = Some(metadata);
+                Ok(())
+            }
+            None => Err(ScribeError::invalid_operation(
                 format!("Node {} does not exist in graph", node_id),
-                "set_node_metadata"
-            ));
+                "set_node_metadata".to_string()
+            )),
         }
-        
-        self.node_cache.insert(node_id, metadata);
-        Ok(())
     }
     
     /// Get all entrypoint nodes
     pub fn entrypoint_nodes(&self) -> Vec<&NodeId> {
-        self.node_cache.iter()
-            .filter_map(|(id, meta)| if meta.is_entrypoint { Some(id) } else { None })
+        self.node_metadata.iter().enumerate()
+            .filter_map(|(internal_id, meta_opt)| {
+                if let Some(meta) = meta_opt {
+                    if meta.is_entrypoint {
+                        return Some(&self.id_to_path[internal_id]);
+                    }
+                }
+                None
+            })
             .collect()
     }
     
     /// Get all test nodes
     pub fn test_nodes(&self) -> Vec<&NodeId> {
-        self.node_cache.iter()
-            .filter_map(|(id, meta)| if meta.is_test { Some(id) } else { None })
+        self.node_metadata.iter().enumerate()
+            .filter_map(|(internal_id, meta_opt)| {
+                if let Some(meta) = meta_opt {
+                    if meta.is_test {
+                        return Some(&self.id_to_path[internal_id]);
+                    }
+                }
+                None
+            })
             .collect()
     }
     
     /// Get nodes by language
     pub fn nodes_by_language(&self, language: &str) -> Vec<&NodeId> {
-        self.node_cache.iter()
-            .filter_map(|(id, meta)| {
-                if meta.language.as_deref() == Some(language) {
-                    Some(id)
-                } else {
-                    None
+        self.node_metadata.iter().enumerate()
+            .filter_map(|(internal_id, meta_opt)| {
+                if let Some(meta) = meta_opt {
+                    if meta.language.as_deref() == Some(language) {
+                        return Some(&self.id_to_path[internal_id]);
+                    }
                 }
+                None
             })
             .collect()
     }
@@ -360,28 +466,40 @@ impl DependencyGraph {
 /// Specialized operations for PageRank computation
 impl DependencyGraph {
     /// Get all nodes with their reverse edge neighbors (for PageRank iteration)
-    pub fn pagerank_iterator(&self) -> impl Iterator<Item = (&NodeId, Option<&BTreeSet<NodeId>>)> {
-        self.nodes.iter().map(move |node| {
-            (node, self.reverse_edges.get(node))
+    pub fn pagerank_iterator(&self) -> impl Iterator<Item = (&NodeId, Option<Vec<&NodeId>>)> + '_ {
+        self.path_to_id.iter().map(|(node_path, &internal_id)| {
+            let incoming: Option<Vec<&NodeId>> = if !self.reverse_edges[internal_id].is_empty() {
+                Some(self.reverse_edges[internal_id]
+                    .iter()
+                    .map(|&source_id| &self.id_to_path[source_id])
+                    .collect())
+            } else {
+                Some(Vec::new())
+            };
+            (node_path, incoming)
         })
     }
     
     /// Get dangling nodes (nodes with no outgoing edges)
     pub fn dangling_nodes(&self) -> Vec<&NodeId> {
-        self.nodes.iter()
-            .filter(|&node| self.out_degree(node) == 0)
+        self.path_to_id.iter()
+            .filter(|(_, &internal_id)| self.forward_edges[internal_id].is_empty())
+            .map(|(node_path, _)| node_path)
             .collect()
     }
     
     /// Get strongly connected components (simplified estimation for statistics)
     pub fn estimate_scc_count(&self) -> usize {
-        if self.nodes.is_empty() {
+        if self.path_to_id.is_empty() {
             return 0;
         }
         
         // Count nodes with both in and out edges (likely in cycles)
-        let potential_scc_nodes = self.nodes.iter()
-            .filter(|&node| self.in_degree(node) > 0 && self.out_degree(node) > 0)
+        let potential_scc_nodes = self.path_to_id.iter()
+            .filter(|(_, &internal_id)| {
+                !self.reverse_edges[internal_id].is_empty() && 
+                !self.forward_edges[internal_id].is_empty()
+            })
             .count();
         
         // Rough estimate: most SCCs are small, assume average size of 3
@@ -392,19 +510,20 @@ impl DependencyGraph {
         };
         
         // Add isolated nodes and simple chains
-        let isolated_nodes = self.nodes.len() - potential_scc_nodes;
+        let isolated_nodes = self.path_to_id.len() - potential_scc_nodes;
         estimated_scc + isolated_nodes
     }
     
     /// Check if the graph is strongly connected (simplified check)
     pub fn is_strongly_connected(&self) -> bool {
-        if self.nodes.is_empty() {
+        if self.path_to_id.is_empty() {
             return true;
         }
         
         // Simplified check: all nodes have both in and out edges
-        self.nodes.iter().all(|node| {
-            self.in_degree(node) > 0 && self.out_degree(node) > 0
+        self.path_to_id.iter().all(|(_, &internal_id)| {
+            !self.reverse_edges[internal_id].is_empty() && 
+            !self.forward_edges[internal_id].is_empty()
         })
     }
 }
@@ -413,12 +532,26 @@ impl DependencyGraph {
 impl DependencyGraph {
     /// Create a thread-safe concurrent graph for parallel operations
     pub fn into_concurrent(self) -> ConcurrentDependencyGraph {
+        // Convert Vec<HashSet> to DashMap representation for concurrency
+        let forward_edges = DashMap::new();
+        let reverse_edges = DashMap::new();
+        
+        for (internal_id, edge_set) in self.forward_edges.into_iter().enumerate() {
+            forward_edges.insert(internal_id, edge_set);
+        }
+        
+        for (internal_id, edge_set) in self.reverse_edges.into_iter().enumerate() {
+            reverse_edges.insert(internal_id, edge_set);
+        }
+        
         ConcurrentDependencyGraph {
-            forward_edges: DashMap::from_iter(self.forward_edges),
-            reverse_edges: DashMap::from_iter(self.reverse_edges),
-            nodes: RwLock::new(self.nodes),
-            node_cache: DashMap::from_iter(self.node_cache),
+            forward_edges,
+            reverse_edges,
+            path_to_id: DashMap::from_iter(self.path_to_id),
+            id_to_path: RwLock::new(self.id_to_path),
+            node_metadata: RwLock::new(self.node_metadata),
             stats_cache: RwLock::new(self.stats_cache),
+            next_id: RwLock::new(self.next_id),
         }
     }
 }
@@ -426,55 +559,104 @@ impl DependencyGraph {
 /// Thread-safe concurrent version of DependencyGraph
 #[derive(Debug)]
 pub struct ConcurrentDependencyGraph {
-    forward_edges: DashMap<NodeId, BTreeSet<NodeId>>,
-    reverse_edges: DashMap<NodeId, BTreeSet<NodeId>>,
-    nodes: RwLock<BTreeSet<NodeId>>,
-    node_cache: DashMap<NodeId, NodeMetadata>,
+    forward_edges: DashMap<InternalNodeId, HashSet<InternalNodeId>>,
+    reverse_edges: DashMap<InternalNodeId, HashSet<InternalNodeId>>,
+    path_to_id: DashMap<NodeId, InternalNodeId>,
+    id_to_path: RwLock<Vec<NodeId>>,
+    node_metadata: RwLock<Vec<Option<NodeMetadata>>>,
     stats_cache: RwLock<Option<GraphStatistics>>,
+    next_id: RwLock<InternalNodeId>,
 }
 
 impl ConcurrentDependencyGraph {
     /// Add a node concurrently
-    pub fn add_node(&self, node_id: NodeId) -> Result<()> {
-        {
-            let mut nodes = self.nodes.write();
-            nodes.insert(node_id.clone());
+    pub fn add_node(&self, node_id: NodeId) -> Result<InternalNodeId> {
+        // Check if node already exists
+        if let Some(existing_id) = self.path_to_id.get(&node_id) {
+            return Ok(*existing_id);
         }
         
-        self.forward_edges.entry(node_id.clone()).or_insert_with(BTreeSet::new);
-        self.reverse_edges.entry(node_id.clone()).or_insert_with(BTreeSet::new);
+        let internal_id = {
+            let mut next_id = self.next_id.write();
+            let id = *next_id;
+            *next_id += 1;
+            id
+        };
         
-        if !self.node_cache.contains_key(&node_id) {
-            self.node_cache.insert(node_id.clone(), NodeMetadata::new(node_id));
+        // Add to mappings
+        self.path_to_id.insert(node_id.clone(), internal_id);
+        {
+            let mut id_to_path = self.id_to_path.write();
+            id_to_path.push(node_id.clone());
+        }
+        
+        // Initialize empty adjacency lists
+        self.forward_edges.insert(internal_id, HashSet::new());
+        self.reverse_edges.insert(internal_id, HashSet::new());
+        
+        // Add default metadata
+        {
+            let mut metadata = self.node_metadata.write();
+            metadata.push(Some(NodeMetadata::new(node_id)));
         }
         
         // Invalidate stats cache
         *self.stats_cache.write() = None;
         
-        Ok(())
+        Ok(internal_id)
     }
     
     /// Get in-degree concurrently
     pub fn in_degree(&self, node_id: &NodeId) -> usize {
-        self.reverse_edges.get(node_id).map_or(0, |entry| entry.len())
+        match self.path_to_id.get(node_id) {
+            Some(internal_id) => {
+                self.reverse_edges.get(&internal_id).map_or(0, |entry| entry.len())
+            }
+            None => 0,
+        }
     }
     
     /// Get out-degree concurrently  
     pub fn out_degree(&self, node_id: &NodeId) -> usize {
-        self.forward_edges.get(node_id).map_or(0, |entry| entry.len())
+        match self.path_to_id.get(node_id) {
+            Some(internal_id) => {
+                self.forward_edges.get(&internal_id).map_or(0, |entry| entry.len())
+            }
+            None => 0,
+        }
     }
     
     /// Convert back to single-threaded graph
     pub fn into_sequential(self) -> DependencyGraph {
-        let nodes = self.nodes.into_inner();
+        let id_to_path = self.id_to_path.into_inner();
+        let node_metadata = self.node_metadata.into_inner();
         let stats_cache = self.stats_cache.into_inner();
+        let next_id = self.next_id.into_inner();
+        
+        // Convert DashMap back to Vec
+        let mut forward_edges = vec![HashSet::new(); next_id];
+        let mut reverse_edges = vec![HashSet::new(); next_id];
+        
+        for (internal_id, edge_set) in self.forward_edges.into_iter() {
+            if internal_id < forward_edges.len() {
+                forward_edges[internal_id] = edge_set;
+            }
+        }
+        
+        for (internal_id, edge_set) in self.reverse_edges.into_iter() {
+            if internal_id < reverse_edges.len() {
+                reverse_edges[internal_id] = edge_set;
+            }
+        }
         
         DependencyGraph {
-            forward_edges: self.forward_edges.into_iter().collect(),
-            reverse_edges: self.reverse_edges.into_iter().collect(),
-            nodes,
-            node_cache: self.node_cache.into_iter().collect(),
+            forward_edges,
+            reverse_edges,
+            path_to_id: self.path_to_id.into_iter().collect(),
+            id_to_path,
+            node_metadata,
             stats_cache,
+            next_id,
         }
     }
 }

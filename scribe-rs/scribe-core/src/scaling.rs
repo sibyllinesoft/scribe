@@ -125,8 +125,9 @@ impl ConfigPresets {
         ScalingConfig {
             streaming: StreamingConfig {
                 enable_streaming: false, // Small repos don't need streaming
-                chunk_size: 1000,
+                concurrency_limit: 4,
                 memory_limit: 100 * 1024 * 1024, // 100MB
+                selection_heap_size: 1000,
             },
             caching: CacheConfig {
                 enable_persistent_cache: true,
@@ -161,6 +162,8 @@ impl ConfigPresets {
             token_budget: Some(5000), // Small budget for personal projects
             enable_intelligent_selection: true,
             selection_algorithm: Some("v2_quotas".to_string()),
+            enable_context_positioning: false,
+            positioning_query: None,
         }
     }
     
@@ -169,8 +172,9 @@ impl ConfigPresets {
         ScalingConfig {
             streaming: StreamingConfig {
                 enable_streaming: true,
-                chunk_size: 500,
+                concurrency_limit: 8,
                 memory_limit: 200 * 1024 * 1024, // 200MB
+                selection_heap_size: 5000,
             },
             signatures: SignatureConfig {
                 default_level: SignatureLevel::Detailed,
@@ -196,8 +200,9 @@ impl ConfigPresets {
         ScalingConfig {
             streaming: StreamingConfig {
                 enable_streaming: true,
-                chunk_size: 100,
+                concurrency_limit: 16,
                 memory_limit: 500 * 1024 * 1024, // 500MB
+                selection_heap_size: 10000,
             },
             caching: CacheConfig {
                 enable_persistent_cache: true,
@@ -232,6 +237,8 @@ impl ConfigPresets {
             token_budget: None, // Unlimited budget for enterprise
             enable_intelligent_selection: true,
             selection_algorithm: Some("v5_integrated".to_string()),
+            enable_context_positioning: true,
+            positioning_query: None,
         }
     }
 }

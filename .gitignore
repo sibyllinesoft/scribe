@@ -157,3 +157,69 @@ scribe-bundle-editor*.html
 *~
 
 .serena/
+
+# Rust build artifacts
+scribe-rs/target/
+
+# Rust test outputs and analysis files
+scribe-rs/*.html
+scribe-rs/*.xml
+scribe-rs/*.json
+scribe-rs/perf.data*
+scribe-rs/scribe-output.*
+scribe-rs/scribe-analysis.*
+scribe-rs/valknut.*
+scribe-rs/test-*.html
+scribe-rs/test-*.xml
+scribe-rs/test-*.txt
+scribe-rs/test-*.json
+scribe-rs/beautiful-final.html
+scribe-rs/external-template-test.html
+scribe-rs/scribe-enhanced-test.html
+scribe-rs/scribe-rs.html
+
+# Rust debug and development files
+scribe-rs/debug_*.rs
+scribe-rs/optimization_test.rs
+scribe-rs/performance_test.rs
+scribe-rs/test_*.rs
+scribe-rs/repomix-output.xml
+
+# Rust frontend build artifacts
+scribe-rs/frontend/
+scribe-rs/build_frontend.sh
+scribe-rs/validate_bundle.js
+
+# Rust example outputs
+scribe-rs/examples/debug_*.rs
+scribe-rs/examples/test_*.rs
+
+# Rust module temporary files
+scribe-rs/scribe-core/examples/
+scribe-rs/scribe-core/src/tokenization.rs
+scribe-rs/scribe-analysis/src/complexity.rs
+scribe-rs/scribe-analysis/src/heuristics/enhanced_scoring.rs
+scribe-rs/scribe-analysis/src/language_support/
+scribe-rs/scribe-scanner/src/aho_corasick_reference_index.rs
+scribe-rs/scribe-scanner/src/compact_data.rs
+scribe-rs/scribe-scanner/src/filtering.rs
+scribe-rs/scribe-scanner/src/git_batch.rs
+scribe-rs/scribe-scanner/src/incremental.rs
+scribe-rs/scribe-scanner/src/optimized_scanner.rs
+scribe-rs/scribe-scanner/src/parallel.rs
+scribe-rs/scribe-scanner/src/performance.rs
+scribe-rs/scribe-scaling/tests/performance_regression_tests.rs
+scribe-rs/scribe-selection/repomix-output.xml
+
+# Rust binary outputs
+scribe-rs/src/bin/
+
+# Rust templates and documentation
+scribe-rs/templates/
+scribe-rs/FRONTEND_BUNDLE_SETUP.md
+
+# Root level clutter from Rust development
+RUST_PARITY_TODO.md
+test-installed.xml
+test_optimizations.rs
+tiktoken_test.rs

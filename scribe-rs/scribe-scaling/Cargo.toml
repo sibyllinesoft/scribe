@@ -42,6 +42,7 @@ num_cpus = "1.16"
 walkdir = "2.4"
 tree-sitter = "0.20"
 regex = "1.10"
+petgraph = "0.6"
 
 [dev-dependencies]
 criterion.workspace = true

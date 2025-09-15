@@ -3,11 +3,13 @@
 //! This example shows how to use Scribe with all features enabled
 //! to analyze a repository and get the most important files.
 
-use scribe::prelude::*;
+use scribe_analyzer::{analyze_repository, Config};
+use scribe_core::*;
+use scribe_patterns::*;
 use std::path::Path;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     env_logger::init();
     
@@ -61,7 +63,7 @@ async fn main() -> Result<()> {
     // Display analysis metadata
     println!("\n📊 Analysis Details:");
     println!("===================");
-    println!("Version: {}", scribe::VERSION);
+    println!("Version: {}", scribe_analyzer::VERSION);
     println!("Files analyzed: {}", analysis.file_count());
     println!("Scribe version: {}", analysis.metadata.scribe_version);
     println!("Features used: {}", analysis.metadata.features_enabled.join(", "));
@@ -90,8 +92,8 @@ async fn main() -> Result<()> {
         println!("========================");
         
         // Create different pattern matchers
-        let mut source_matcher = scribe::patterns::presets::source_code()?;
-        let mut doc_matcher = scribe::patterns::presets::documentation()?;
+        let mut source_matcher = scribe_patterns::presets::source_code()?;
+        let mut doc_matcher = scribe_patterns::presets::documentation()?;
         
         let source_files = analysis.files.iter()
             .filter(|f| {

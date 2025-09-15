@@ -98,13 +98,13 @@ fn bench_small_repository(c: &mut Criterion) {
         BenchmarkId::new("small_repository", "100_files"),
         &repo_path,
         |b, path| {
-            b.iter(|| {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
+            // Create runtime ONCE, outside the measurement loop
+            b.to_async(tokio::runtime::Runtime::new().unwrap())
+                .iter(|| async {
+                    // This is what we're actually measuring
                     let mut engine = ScalingEngine::new(black_box(config.clone())).await.unwrap();
-                    engine.process_repository(black_box(path)).await.unwrap()
+                    black_box(engine.process_repository(black_box(path)).await.unwrap())
                 })
-            })
         },
     );
 }
@@ -118,13 +118,13 @@ fn bench_medium_repository(c: &mut Criterion) {
         BenchmarkId::new("medium_repository", "1000_files"),
         &repo_path,
         |b, path| {
-            b.iter(|| {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
+            // Create runtime ONCE, outside the measurement loop
+            b.to_async(tokio::runtime::Runtime::new().unwrap())
+                .iter(|| async {
+                    // This is what we're actually measuring
                     let mut engine = ScalingEngine::new(black_box(config.clone())).await.unwrap();
-                    engine.process_repository(black_box(path)).await.unwrap()
+                    black_box(engine.process_repository(black_box(path)).await.unwrap())
                 })
-            })
         },
     );
 }
@@ -207,7 +207,7 @@ fn bench_caching_effectiveness(c: &mut Criterion) {
     let mut group = c.benchmark_group("caching_effectiveness");
     group.sample_size(10);
     
-    // First run (cold cache)
+    // Test cold cache (new engine each time)
     group.bench_with_input(
         BenchmarkId::new("cold_cache", "1000_files"),
         &repo_path,
@@ -216,29 +216,38 @@ fn bench_caching_effectiveness(c: &mut Criterion) {
                 .iter(|| async {
                     // Create new engine each time to ensure cold cache
                     let mut engine = ScalingEngine::new(black_box(ScalingConfig::default())).await.unwrap();
-                    engine.process_repository(black_box(path)).await.unwrap()
+                    black_box(engine.process_repository(black_box(path)).await.unwrap())
                 })
         },
     );
     
-    // Warm cache run
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
-        engine.process_repository(&repo_path).await.unwrap(); // Warm up cache
-        
-        group.bench_with_input(
-            BenchmarkId::new("warm_cache", "1000_files"),
-            &repo_path,
-            |b, path| {
-                b.to_async(tokio::runtime::Runtime::new().unwrap())
-                    .iter(|| async {
-                        let mut engine = ScalingEngine::new(black_box(ScalingConfig::default())).await.unwrap();
-                        engine.process_repository(black_box(path)).await.unwrap()
-                    })
-            },
-        );
-    });
+    // Test warm cache (reuse engine)
+    group.bench_with_input(
+        BenchmarkId::new("warm_cache", "1000_files"),
+        &repo_path,
+        |b, path| {
+            // Create the runtime and engine OUTSIDE the benchmark
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            
+            b.to_async(rt)
+                .iter_setup(
+                    || {
+                        // Setup: create and warm up the engine
+                        let rt = tokio::runtime::Handle::current();
+                        rt.block_on(async {
+                            let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
+                            // Warm up the cache with a small operation
+                            let _ = engine.process_repository(path).await;
+                            engine
+                        })
+                    },
+                    |mut engine| async move {
+                        // Measured code: should benefit from warm cache
+                        black_box(engine.process_repository(black_box(path)).await.unwrap())
+                    }
+                )
+        },
+    );
     
     group.finish();
 }

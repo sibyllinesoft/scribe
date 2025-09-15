@@ -23,6 +23,7 @@
 pub mod template_detection;
 pub mod scoring;
 pub mod import_analysis;
+pub mod enhanced_scoring;
 
 pub use scoring::{
     HeuristicScorer, 
@@ -44,6 +45,15 @@ pub use import_analysis::{
     ImportGraph,
     CentralityCalculator,
     import_matches_file,
+};
+
+pub use enhanced_scoring::{
+    EnhancedHeuristicScorer,
+    EnhancedScoreComponents,
+    EnhancedWeights,
+    AdaptiveFactors,
+    RepositoryCharacteristics,
+    ProjectType,
 };
 
 use scribe_core::Result;

@@ -26,6 +26,9 @@ globset = "0.4"
 # String processing
 memchr = "2.6"
 
+# Tokenization
+tiktoken-rs = "0.7.0"
+
 # Data structures
 indexmap = "2.0"
 dashmap = "5.5"
@@ -40,6 +43,7 @@ tokio = { version = "1.0", features = ["full"] }
 
 # Scaling optimizations
 scribe-scaling = { path = "../scribe-scaling", version = "0.2.0", optional = true }
+aho-corasick = "1.1"
 
 [features]
 default = []

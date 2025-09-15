@@ -129,7 +129,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = default_scaling_config();
-        assert!(config.streaming.chunk_size > 0);
+        assert!(config.streaming.concurrency_limit > 0);
+        assert!(config.streaming.selection_heap_size > 0);
         assert!(config.caching.enable_persistent_cache);
         assert!(config.parallel.max_concurrent_tasks > 0);
     }

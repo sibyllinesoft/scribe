@@ -1,1 +1,0 @@
-# Scribe Test Suite

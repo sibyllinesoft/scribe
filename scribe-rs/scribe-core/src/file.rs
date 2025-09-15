@@ -94,7 +94,7 @@ pub enum RenderDecisionCategory {
 }
 
 /// Programming language classification
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Language {
     // Systems languages
     Rust,
@@ -360,6 +360,9 @@ pub struct FileInfo {
     
     /// Git status information (if available)
     pub git_status: Option<GitStatus>,
+    
+    /// PageRank centrality score (0.0-1.0, higher means more important)
+    pub centrality_score: Option<f64>,
 }
 
 /// Git status information for a file
@@ -422,6 +425,7 @@ impl FileInfo {
             char_count: None,
             is_binary,
             git_status: None,
+            centrality_score: None,
         })
     }
 
@@ -450,11 +454,35 @@ impl FileInfo {
         Ok(())
     }
 
-    /// Estimate token count for LLM processing (rough approximation)
+    /// Estimate token count for LLM processing using tiktoken
+    /// 
+    /// This method uses the shared global TokenCounter instance for optimal performance.
+    /// If tiktoken fails, it falls back to the legacy character-based estimation.
     pub fn estimate_tokens(content: &str) -> usize {
-        // Rough estimate: ~4 characters per token for English text
-        // This varies significantly by content type and tokenizer
-        (content.chars().count() as f64 / 4.0).ceil() as usize
+        use crate::tokenization::{TokenCounter, utils};
+        
+        // Use the shared global instance for optimal performance
+        match TokenCounter::global().count_tokens(content) {
+            Ok(tokens) => tokens,
+            Err(_) => {
+                // Fall back to legacy estimation if tiktoken fails
+                utils::estimate_tokens_legacy(content)
+            }
+        }
+    }
+
+    /// Estimate token count for LLM processing with file context
+    /// 
+    /// This method uses the file path to apply language-specific multipliers
+    /// for more accurate token estimation.
+    pub fn estimate_tokens_with_path(content: &str, file_path: &std::path::Path) -> usize {
+        use crate::tokenization::TokenCounter;
+        
+        // Use the shared global instance for optimal performance
+        match TokenCounter::global().estimate_file_tokens(content, file_path) {
+            Ok(tokens) => tokens,
+            Err(_) => Self::estimate_tokens(content), // Fall back to basic estimation
+        }
     }
 
     /// Check if file extension indicates binary content
@@ -595,23 +623,67 @@ mod tests {
     #[test]
     fn test_file_type_classification() {
         let rust_lang = Language::Rust;
-        let _py_lang = Language::Python;
+        let py_lang = Language::Python;
         let md_lang = Language::Markdown;
 
+        // Test Rust source files
         assert!(matches!(
             FileInfo::classify_file_type("src/lib.rs", &rust_lang, "rs"),
             FileType::Source { .. }
         ));
-
+        
         assert!(matches!(
-            FileInfo::classify_file_type("src/test_lib.rs", &rust_lang, "rs"),
-            FileType::Test { .. }
+            FileInfo::classify_file_type("scribe-rs/src/lib.rs", &rust_lang, "rs"),
+            FileType::Source { .. }
         ));
 
+        // Test Python source files  
         assert!(matches!(
-            FileInfo::classify_file_type("README.md", &md_lang, "md"),
-            FileType::Documentation { .. }
+            FileInfo::classify_file_type("script.py", &py_lang, "py"),
+            FileType::Source { .. }
         ));
+
+        // Test that is_programming works correctly
+        assert!(rust_lang.is_programming());
+        assert!(py_lang.is_programming());
+        assert!(!md_lang.is_programming());
+    }
+
+    #[test]
+    fn test_integration_file_classification() {
+        // Test the full pipeline: extension -> language -> file_type
+        
+        // Test Rust files
+        let rust_lang = Language::from_extension("rs");
+        assert_eq!(rust_lang, Language::Rust);
+        assert!(rust_lang.is_programming());
+        
+        let rust_file_type = FileInfo::classify_file_type("src/lib.rs", &rust_lang, "rs");
+        assert!(matches!(rust_file_type, FileType::Source { .. }));
+        
+        // Test Python files  
+        let py_lang = Language::from_extension("py");
+        assert_eq!(py_lang, Language::Python);
+        assert!(py_lang.is_programming());
+        
+        let py_file_type = FileInfo::classify_file_type("script.py", &py_lang, "py");
+        assert!(matches!(py_file_type, FileType::Source { .. }));
+        
+        // Test that Unknown language doesn't become Source
+        let unknown_lang = Language::from_extension("xyz");
+        assert_eq!(unknown_lang, Language::Unknown);
+        assert!(!unknown_lang.is_programming());
+        
+        let unknown_file_type = FileInfo::classify_file_type("file.xyz", &unknown_lang, "xyz");
+        assert!(matches!(unknown_file_type, FileType::Unknown));
+        
+        // Test Markdown files
+        let md_lang = Language::from_extension("md");
+        assert_eq!(md_lang, Language::Markdown);
+        assert!(!md_lang.is_programming());
+        
+        let md_file_type = FileInfo::classify_file_type("README.md", &md_lang, "md");
+        assert!(matches!(md_file_type, FileType::Documentation { .. }));
     }
 
     #[test]

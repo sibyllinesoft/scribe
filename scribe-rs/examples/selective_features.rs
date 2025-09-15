@@ -4,9 +4,9 @@
 //! enabled, which is useful for applications that only need file discovery
 //! without complex analysis.
 
-use scribe::core::{Config, FileInfo, Result, Language, FileType, bytes_to_human};
-use scribe::core::{normalize_path, truncate, mean, median, generate_hash, duration_to_human};
-use scribe::scanner::{Scanner, ScanOptions};
+use scribe_core::{Config, FileInfo, Result, Language, FileType, bytes_to_human};
+use scribe_core::{normalize_path, truncate, mean, median, generate_hash, duration_to_human};
+use scribe_scanner::{Scanner, ScanOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
 /// Analyze and display file type distribution
 fn analyze_file_types(files: &[FileInfo]) {
     use std::collections::HashMap;
-    use scribe::core::{Language, FileType};
+    use scribe_core::{Language, FileType};
     
     println!("📋 File Type Analysis:");
     println!("=====================");
@@ -136,7 +136,7 @@ fn show_file_distribution(files: &[FileInfo]) {
 
 /// Demonstrate core utility functions
 fn demonstrate_core_utilities() {
-    use scribe::core::utils::*;
+    use scribe_core::*;
     
     println!("🛠️  Core Utilities Demo:");
     println!("=======================");

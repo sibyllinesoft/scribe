@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
+use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
@@ -14,7 +15,7 @@ use crate::types::HeuristicWeights;
 use crate::file::Language;
 
 /// Main configuration structure for Scribe
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct Config {
     /// General settings
     pub general: GeneralConfig,
@@ -141,13 +142,12 @@ impl Config {
     }
 
     /// Create a configuration hash for cache invalidation
+    /// This is now highly optimized using direct hashing instead of JSON serialization
     pub fn compute_hash(&self) -> String {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let serialized = serde_json::to_string(self).unwrap_or_default();
+        
         let mut hasher = DefaultHasher::new();
-        serialized.hash(&mut hasher);
+        self.hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
 }
@@ -169,6 +169,22 @@ pub struct GeneralConfig {
     
     /// Working directory override
     pub working_dir: Option<PathBuf>,
+}
+
+// Custom Hash implementation for GeneralConfig to handle PathBuf properly
+impl Hash for GeneralConfig {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.verbosity.hash(state);
+        self.show_progress.hash(state);
+        self.use_colors.hash(state);
+        self.max_threads.hash(state);
+        // Hash PathBuf as string for platform consistency
+        if let Some(ref path) = self.working_dir {
+            path.to_string_lossy().hash(state);
+        } else {
+            None::<String>.hash(state);
+        }
+    }
 }
 
 impl Default for GeneralConfig {
@@ -227,6 +243,31 @@ pub struct FilteringConfig {
     
     /// Additional ignore files to respect
     pub ignore_files: Vec<PathBuf>,
+}
+
+// Custom Hash implementation for FilteringConfig to handle PathBuf properly
+impl Hash for FilteringConfig {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.include_patterns.hash(state);
+        self.exclude_patterns.hash(state);
+        self.max_file_size.hash(state);
+        self.min_file_size.hash(state);
+        // Hash HashSet contents by iterating over sorted elements
+        let mut include_langs: Vec<_> = self.include_languages.iter().collect();
+        include_langs.sort();
+        include_langs.hash(state);
+        
+        let mut exclude_langs: Vec<_> = self.exclude_languages.iter().collect();
+        exclude_langs.sort();
+        exclude_langs.hash(state);
+        self.follow_symlinks.hash(state);
+        self.include_hidden.hash(state);
+        self.respect_gitignore.hash(state);
+        // Hash PathBuf vector as string vector for platform consistency
+        for path in &self.ignore_files {
+            path.to_string_lossy().hash(state);
+        }
+    }
 }
 
 impl Default for FilteringConfig {
@@ -333,6 +374,32 @@ pub struct AnalysisConfig {
     
     /// Cache TTL in seconds
     pub cache_ttl: u64,
+    
+    /// Token budget for intelligent file selection
+    pub token_budget: Option<usize>,
+}
+
+// Custom Hash implementation for AnalysisConfig to handle PathBuf properly
+impl Hash for AnalysisConfig {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.analyze_content.hash(state);
+        self.compute_tokens.hash(state);
+        self.count_lines.hash(state);
+        self.detect_binary_content.hash(state);
+        // Hash HashMap contents by iterating over sorted key-value pairs
+        let mut lang_overrides: Vec<_> = self.language_overrides.iter().collect();
+        lang_overrides.sort_by_key(|(k, _)| *k);
+        lang_overrides.hash(state);
+        
+        let mut custom_exts: Vec<_> = self.custom_extensions.iter().collect();
+        custom_exts.sort_by_key(|(k, _)| *k);
+        custom_exts.hash(state);
+        self.enable_caching.hash(state);
+        // Hash PathBuf as string for platform consistency
+        self.cache_dir.to_string_lossy().hash(state);
+        self.cache_ttl.hash(state);
+        self.token_budget.hash(state);
+    }
 }
 
 impl Default for AnalysisConfig {
@@ -347,6 +414,7 @@ impl Default for AnalysisConfig {
             enable_caching: false,
             cache_dir: PathBuf::from(".scribe-cache"),
             cache_ttl: 3600, // 1 hour
+            token_budget: None,
         }
     }
 }
@@ -385,6 +453,19 @@ pub struct ScoringConfig {
     pub normalize_scores: bool,
 }
 
+// Custom Hash implementation for ScoringConfig
+impl Hash for ScoringConfig {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.weights.hash(state);
+        self.enable_advanced.hash(state);
+        self.custom_rules.hash(state);
+        // Hash f64 as bits for consistent hashing
+        self.min_score_threshold.to_bits().hash(state);
+        self.max_results.hash(state);
+        self.normalize_scores.hash(state);
+    }
+}
+
 impl Default for ScoringConfig {
     fn default() -> Self {
         Self {
@@ -411,7 +492,7 @@ impl ScoringConfig {
 }
 
 /// Custom scoring rule
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct CustomScoringRule {
     /// Rule name/description
     pub name: String,
@@ -436,8 +517,33 @@ pub enum ScoreModifier {
     ConditionalBonus { condition: String, bonus: f64 },
 }
 
+// Custom Hash implementation for ScoreModifier to handle f64 fields properly
+impl Hash for ScoreModifier {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            ScoreModifier::Add(value) => {
+                0u8.hash(state); // discriminant
+                value.to_bits().hash(state);
+            }
+            ScoreModifier::Multiply(value) => {
+                1u8.hash(state); // discriminant
+                value.to_bits().hash(state);
+            }
+            ScoreModifier::Set(value) => {
+                2u8.hash(state); // discriminant
+                value.to_bits().hash(state);
+            }
+            ScoreModifier::ConditionalBonus { condition, bonus } => {
+                3u8.hash(state); // discriminant
+                condition.hash(state);
+                bonus.to_bits().hash(state);
+            }
+        }
+    }
+}
+
 /// Performance and resource configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct PerformanceConfig {
     /// Maximum memory usage in MB (0 = unlimited)
     pub max_memory_mb: usize,
@@ -506,7 +612,7 @@ impl PerformanceConfig {
 }
 
 /// Git integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct GitConfig {
     /// Whether to use git information
     pub enabled: bool,
@@ -557,7 +663,7 @@ impl GitConfig {
 }
 
 /// Feature flags for experimental features
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct FeatureFlags {
     /// Enable PageRank centrality computation
     pub centrality_enabled: bool,
@@ -576,6 +682,9 @@ pub struct FeatureFlags {
     
     /// Enable experimental scoring algorithms
     pub experimental_scoring: bool,
+    
+    /// Enable scaling optimizations for large repositories
+    pub scaling_enabled: bool,
 }
 
 impl Default for FeatureFlags {
@@ -587,6 +696,7 @@ impl Default for FeatureFlags {
             semantic_analysis: false,
             ml_features: false,
             experimental_scoring: false,
+            scaling_enabled: false,
         }
     }
 }
@@ -624,13 +734,16 @@ impl FeatureFlags {
         if self.experimental_scoring {
             features.push("experimental_scoring");
         }
+        if self.scaling_enabled {
+            features.push("scaling");
+        }
         
         features
     }
 }
 
 /// Output format configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct OutputConfig {
     /// Output format
     pub format: OutputFormat,
@@ -655,7 +768,7 @@ pub struct OutputConfig {
 }
 
 /// Output format options
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum OutputFormat {
     Json,
     JsonLines,

@@ -371,7 +371,7 @@ impl ContentAnalyzer {
 
     /// Analyze a file and extract comprehensive content information
     pub async fn analyze_file(&self, path: &Path) -> Result<ContentStats> {
-        let content = fs::read_to_string(path)
+        let content = tokio::fs::read_to_string(path).await
             .map_err(|e| ScribeError::io(format!("Failed to read file {}: {}", path.display(), e), e))?;
 
         let language = self.detect_language_from_path(path);

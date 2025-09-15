@@ -117,6 +117,14 @@ pub enum ScribeError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
+    /// Tokenization errors (tiktoken integration, encoding issues)
+    #[error("Tokenization error: {message}")]
+    Tokenization {
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
     /// Scaling optimization errors (when scaling feature is enabled)
     #[cfg(feature = "scaling")]
     #[error("Scaling error: {message}")]
@@ -282,6 +290,25 @@ impl ScribeError {
         Self::Parse {
             message: message.into(),
             file: None,
+            source: Some(source),
+        }
+    }
+
+    /// Create a new tokenization error
+    pub fn tokenization<S: Into<String>>(message: S) -> Self {
+        Self::Tokenization {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// Create a new tokenization error with source
+    pub fn tokenization_with_source<S: Into<String>>(
+        message: S,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
+        Self::Tokenization {
+            message: message.into(),
             source: Some(source),
         }
     }

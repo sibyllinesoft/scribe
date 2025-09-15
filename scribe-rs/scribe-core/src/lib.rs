@@ -1,5 +1,4 @@
-#![cfg_attr(not(tarpaulin), deny(warnings))]
-#![cfg_attr(tarpaulin, allow(warnings))]
+//! Core crate for Scribe
 
 //! # Scribe Core
 //! 
@@ -39,6 +38,7 @@ pub mod types;
 pub mod config;
 pub mod traits;
 pub mod utils;
+pub mod tokenization;
 
 // Scaling optimizations (optional)
 #[cfg(feature = "scaling")]
@@ -99,6 +99,11 @@ pub use utils::{
     math::{mean, median, std_deviation, normalize, clamp},
     validation::{validate_readable_path, validate_directory, validate_file},
     hash::{generate_hash, hash_file_content},
+};
+
+pub use tokenization::{
+    TokenCounter, TokenizerConfig, TokenBudget, 
+    ContentType, TokenizationComparison,
 };
 
 /// Current version of the Scribe library

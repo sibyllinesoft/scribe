@@ -71,8 +71,9 @@ impl ScalingConfig {
         Self {
             streaming: StreamingConfig {
                 enable_streaming: false,
-                chunk_size: 1000,
+                concurrency_limit: 2,
                 memory_limit: 50 * 1024 * 1024, // 50MB
+                selection_heap_size: 1000,
             },
             parallel: ParallelConfig {
                 max_concurrent_tasks: 2,
@@ -93,8 +94,9 @@ impl ScalingConfig {
         Self {
             streaming: StreamingConfig {
                 enable_streaming: true,
-                chunk_size: 100,
+                concurrency_limit: 8,
                 memory_limit: 500 * 1024 * 1024, // 500MB
+                selection_heap_size: 10000,
             },
             parallel: ParallelConfig {
                 max_concurrent_tasks: 16,
@@ -200,43 +202,37 @@ impl ScalingEngine {
             return self.process_with_intelligent_selection(path).await;
         }
 
-        // Basic file discovery using walkdir
-        let mut files = Vec::new();
-        let mut total_size = 0u64;
+        // Use optimized streaming file discovery
+        info!("Using optimized streaming file discovery for basic processing");
         
-        for entry in walkdir::WalkDir::new(path)
-            .follow_links(false)
-            .max_depth(10) 
-        {
-            match entry {
-                Ok(entry) => {
-                    if entry.file_type().is_file() {
-                        let (size, modified) = match entry.metadata() {
-                            Ok(metadata) => {
-                                let size = metadata.len();
-                                let modified = metadata.modified().unwrap_or_else(|_| std::time::SystemTime::now());
-                                (size, modified)
-                            }
-                            Err(_) => (0, std::time::SystemTime::now()),
-                        };
-                        
-                        let metadata = FileMetadata {
-                            path: entry.path().to_path_buf(),
-                            size,
-                            modified,
-                            language: detect_language(&entry.path()),
-                            file_type: classify_file_type(&entry.path()),
-                        };
-                        
-                        total_size += metadata.size;
-                        files.push(metadata);
-                    }
-                }
-                Err(e) => {
-                    warn!("Skipping file due to error: {}", e);
-                }
-            }
-        }
+        // Create a streaming selector even for basic processing to avoid memory issues
+        let streaming_config = crate::streaming::StreamingConfig {
+            enable_streaming: true,
+            concurrency_limit: self.config.parallel.max_concurrent_tasks,
+            memory_limit: self.config.streaming.memory_limit,
+            selection_heap_size: 50000, // Large heap for full discovery
+        };
+        
+        let streaming_selector = crate::streaming::StreamingSelector::new(streaming_config);
+        
+        // For basic processing, we want all files (within reason), so use very high limits
+        let target_count = 50000; // Reasonable limit to prevent memory explosion
+        let token_budget = 1_000_000; // Very high budget to include most files
+        
+        // Simple scoring that doesn't filter much
+        let score_fn = |_file: &FileMetadata| -> f64 { 1.0 };
+        let token_fn = |file: &FileMetadata| -> usize { (file.size / 4) as usize };
+        
+        let scored_files = streaming_selector
+            .select_files_streaming(path, target_count, token_budget, score_fn, token_fn)
+            .await?;
+        
+        let files: Vec<FileMetadata> = scored_files
+            .into_iter()
+            .map(|scored| scored.metadata)
+            .collect();
+        
+        let total_size: u64 = files.iter().map(|f| f.size).sum();
 
         let processing_time = start_time.elapsed();
         

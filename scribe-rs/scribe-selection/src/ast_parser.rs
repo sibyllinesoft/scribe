@@ -640,23 +640,150 @@ impl AstParser {
     
     /// Extract signatures for other languages (similar pattern)
     fn extract_javascript_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        // Similar implementation for JavaScript
-        Ok(Vec::new()) // Simplified for now
+        let query_str = r#"
+            (function_declaration
+                name: (identifier) @name
+            ) @function
+
+            (arrow_function) @function
+
+            (class_declaration
+                name: (identifier) @name
+            ) @class
+
+            (import_statement) @import
+            (export_statement) @export
+        "#;
+
+        let query = Query::new(AstLanguage::JavaScript.tree_sitter_language(), query_str)
+            .map_err(|e| ScribeError::parse(format!("Invalid JavaScript signature query: {}", e)))?;
+
+        let root_node = tree.root_node();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let matches = cursor.matches(&query, root_node, content.as_bytes());
+
+        let mut signatures = Vec::new();
+        for match_ in matches {
+            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            signatures.push(signature);
+        }
+
+        Ok(signatures)
     }
     
     fn extract_typescript_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        // Similar implementation for TypeScript
-        Ok(Vec::new()) // Simplified for now
+        let query_str = r#"
+            (function_declaration
+                name: (identifier) @name
+            ) @function
+
+            (interface_declaration
+                name: (type_identifier) @name
+            ) @interface
+
+            (type_alias_declaration
+                name: (type_identifier) @name
+            ) @type
+
+            (class_declaration
+                name: (identifier) @name
+            ) @class
+
+            (import_statement) @import
+            (export_statement) @export
+        "#;
+
+        let query = Query::new(AstLanguage::TypeScript.tree_sitter_language(), query_str)
+            .map_err(|e| ScribeError::parse(format!("Invalid TypeScript signature query: {}", e)))?;
+
+        let root_node = tree.root_node();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let matches = cursor.matches(&query, root_node, content.as_bytes());
+
+        let mut signatures = Vec::new();
+        for match_ in matches {
+            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            signatures.push(signature);
+        }
+
+        Ok(signatures)
     }
     
     fn extract_go_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        // Similar implementation for Go
-        Ok(Vec::new()) // Simplified for now
+        let query_str = r#"
+            (function_declaration
+                name: (identifier) @name
+            ) @function
+
+            (type_declaration
+                (type_spec
+                    name: (type_identifier) @name
+                )
+            ) @type
+
+            (import_declaration) @import
+            (package_clause) @package
+        "#;
+
+        let query = Query::new(AstLanguage::Go.tree_sitter_language(), query_str)
+            .map_err(|e| ScribeError::parse(format!("Invalid Go signature query: {}", e)))?;
+
+        let root_node = tree.root_node();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let matches = cursor.matches(&query, root_node, content.as_bytes());
+
+        let mut signatures = Vec::new();
+        for match_ in matches {
+            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            signatures.push(signature);
+        }
+
+        Ok(signatures)
     }
     
     fn extract_rust_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        // Similar implementation for Rust
-        Ok(Vec::new()) // Simplified for now
+        let query_str = r#"
+            (function_item
+                name: (identifier) @name
+            ) @function
+
+            (impl_item
+                type: (type_identifier) @type_name
+            ) @impl
+
+            (struct_item
+                name: (type_identifier) @name
+            ) @struct
+
+            (enum_item
+                name: (type_identifier) @name
+            ) @enum
+
+            (trait_item
+                name: (type_identifier) @name
+            ) @trait
+
+            (mod_item
+                name: (identifier) @name
+            ) @module
+
+            (use_declaration) @use
+        "#;
+
+        let query = Query::new(AstLanguage::Rust.tree_sitter_language(), query_str)
+            .map_err(|e| ScribeError::parse(format!("Invalid Rust signature query: {}", e)))?;
+
+        let root_node = tree.root_node();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let matches = cursor.matches(&query, root_node, content.as_bytes());
+
+        let mut signatures = Vec::new();
+        for match_ in matches {
+            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            signatures.push(signature);
+        }
+
+        Ok(signatures)
     }
     
     /// Extract signature from a query match

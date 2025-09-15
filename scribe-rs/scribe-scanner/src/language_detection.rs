@@ -7,7 +7,7 @@
 //! - Filename pattern matching (e.g., Makefile, Dockerfile)
 //! - Statistical content analysis for ambiguous cases
 
-use scribe_core::{Language, Result};
+use scribe_core::{Language, Result, ScribeError};
 use std::path::Path;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
@@ -33,13 +33,22 @@ pub enum DetectionStrategy {
 pub struct CustomDetectionRules {
     pub extension_overrides: HashMap<String, Language>,
     pub filename_patterns: HashMap<String, Language>,
-    pub content_signatures: Vec<ContentSignature>,
+    pub content_signatures: Vec<ContentSignatureConfig>,
     pub priority_languages: Vec<Language>,
 }
 
 /// Content signature for language detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ContentSignature {
+    pub language: Language,
+    pub patterns: Vec<regex::Regex>,
+    pub weight: f32,
+    pub required_matches: usize,
+}
+
+/// Serializable version of ContentSignature for configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentSignatureConfig {
     pub language: Language,
     pub patterns: Vec<String>,
     pub weight: f32,
@@ -422,62 +431,86 @@ impl LanguageDetector {
         }
     }
 
-    /// Initialize content signatures for language detection
+    /// Initialize content signatures for language detection with pre-compiled regexes
     fn initialize_content_signatures(&mut self) {
         // Python signatures
-        let python_sigs = vec![
-            ContentSignature {
-                language: Language::Python,
-                patterns: vec![
-                    r"def\s+\w+\s*\(".to_string(),
-                    r"import\s+\w+".to_string(),
-                    r"from\s+\w+\s+import".to_string(),
-                    r"class\s+\w+\s*\(".to_string(),
-                    r"__\w+__".to_string(),
-                ],
-                weight: 0.9,
-                required_matches: 2,
-            }
+        let python_patterns = vec![
+            r"def\s+\w+\s*\(",
+            r"import\s+\w+",
+            r"from\s+\w+\s+import",
+            r"class\s+\w+\s*\(",
+            r"__\w+__",
         ];
-        self.content_signatures.insert(Language::Python, python_sigs);
+        if let Ok(compiled_patterns) = self.compile_patterns(python_patterns) {
+            let python_sigs = vec![
+                ContentSignature {
+                    language: Language::Python,
+                    patterns: compiled_patterns,
+                    weight: 0.9,
+                    required_matches: 2,
+                }
+            ];
+            self.content_signatures.insert(Language::Python, python_sigs);
+        }
 
         // JavaScript signatures
-        let js_sigs = vec![
-            ContentSignature {
-                language: Language::JavaScript,
-                patterns: vec![
-                    r"function\s+\w+\s*\(".to_string(),
-                    r"const\s+\w+\s*=".to_string(),
-                    r"let\s+\w+\s*=".to_string(),
-                    r"=>\s*\{".to_string(),
-                    r"require\s*\(".to_string(),
-                    r"console\.log\s*\(".to_string(),
-                ],
-                weight: 0.8,
-                required_matches: 2,
-            }
+        let js_patterns = vec![
+            r"function\s+\w+\s*\(",
+            r"const\s+\w+\s*=",
+            r"let\s+\w+\s*=",
+            r"=>\s*\{",
+            r"require\s*\(",
+            r"console\.log\s*\(",
         ];
-        self.content_signatures.insert(Language::JavaScript, js_sigs);
+        if let Ok(compiled_patterns) = self.compile_patterns(js_patterns) {
+            let js_sigs = vec![
+                ContentSignature {
+                    language: Language::JavaScript,
+                    patterns: compiled_patterns,
+                    weight: 0.8,
+                    required_matches: 2,
+                }
+            ];
+            self.content_signatures.insert(Language::JavaScript, js_sigs);
+        }
 
         // Rust signatures
-        let rust_sigs = vec![
-            ContentSignature {
-                language: Language::Rust,
-                patterns: vec![
-                    r"fn\s+\w+\s*\(".to_string(),
-                    r"use\s+[\w:]+".to_string(),
-                    r"struct\s+\w+".to_string(),
-                    r"impl\s+[\w<>]+".to_string(),
-                    r"let\s+mut\s+\w+".to_string(),
-                    r"match\s+\w+\s*\{".to_string(),
-                ],
-                weight: 0.95,
-                required_matches: 2,
-            }
+        let rust_patterns = vec![
+            r"fn\s+\w+\s*\(",
+            r"use\s+[\w:]+",
+            r"struct\s+\w+",
+            r"impl\s+[\w<>]+",
+            r"let\s+mut\s+\w+",
+            r"match\s+\w+\s*\{",
         ];
-        self.content_signatures.insert(Language::Rust, rust_sigs);
+        if let Ok(compiled_patterns) = self.compile_patterns(rust_patterns) {
+            let rust_sigs = vec![
+                ContentSignature {
+                    language: Language::Rust,
+                    patterns: compiled_patterns,
+                    weight: 0.95,
+                    required_matches: 2,
+                }
+            ];
+            self.content_signatures.insert(Language::Rust, rust_sigs);
+        }
 
         // Add more signatures for other languages...
+    }
+    
+    /// Compile regex patterns, logging errors but not failing
+    fn compile_patterns(&self, patterns: Vec<&str>) -> Result<Vec<regex::Regex>> {
+        let mut compiled = Vec::new();
+        for pattern in patterns {
+            match regex::Regex::new(pattern) {
+                Ok(regex) => compiled.push(regex),
+                Err(e) => {
+                    log::warn!("Failed to compile regex pattern '{}': {}", pattern, e);
+                    return Err(ScribeError::pattern(format!("Failed to compile regex pattern: {}", e), pattern.to_string()));
+                }
+            }
+        }
+        Ok(compiled)
     }
 
     /// Initialize AST parsers for content analysis
@@ -581,23 +614,40 @@ impl LanguageDetector {
         self.detect_by_extension(path)
     }
 
-    /// Detect language with content analysis
+    /// Detect language with content analysis using extension-first optimization
     fn detect_with_content_analysis(&mut self, path: &Path, content: &str) -> DetectionResult {
         let mut candidates = Vec::new();
         let mut evidence = Vec::new();
 
-        // Start with extension-based detection
+        // Start with extension-based detection (highest priority)
         let extension_lang = self.detect_by_extension_and_filename(path);
         if extension_lang != Language::Unknown {
-            candidates.push((extension_lang.clone(), 0.7));
+            candidates.push((extension_lang.clone(), 0.8));
             evidence.push(DetectionEvidence {
                 evidence_type: EvidenceType::Extension,
                 description: format!("File extension suggests: {:?}", extension_lang),
-                weight: 0.7,
+                weight: 0.8,
             });
+            
+            // For files with clear extensions, we can have high confidence and skip expensive analysis
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let confident_extensions = ["rs", "py", "js", "ts", "go", "java", "cpp", "c"];
+                if confident_extensions.contains(&ext) {
+                    // Quick validation with lightweight content check
+                    if self.quick_content_validation(&extension_lang, content) {
+                        return DetectionResult {
+                            language: extension_lang,
+                            confidence: 0.95,
+                            detection_method: DetectionMethod::FileExtension,
+                            alternatives: vec![],
+                            evidence,
+                        };
+                    }
+                }
+            }
         }
 
-        // Check shebang
+        // Check shebang (highest confidence when present)
         if let Some(shebang_lang) = self.detect_by_shebang(content) {
             candidates.push((shebang_lang.clone(), 0.95));
             evidence.push(DetectionEvidence {
@@ -607,8 +657,8 @@ impl LanguageDetector {
             });
         }
 
-        // Check content signatures
-        let signature_results = self.analyze_content_signatures(content);
+        // Check content signatures (optimized)
+        let signature_results = self.analyze_content_signatures_optimized(content, &extension_lang);
         for (lang, confidence) in signature_results {
             candidates.push((lang.clone(), confidence));
             evidence.push(DetectionEvidence {
@@ -618,19 +668,84 @@ impl LanguageDetector {
             });
         }
 
-        // Check import patterns
-        let import_results = self.analyze_import_patterns(content);
-        for (lang, confidence) in import_results {
-            candidates.push((lang.clone(), confidence));
-            evidence.push(DetectionEvidence {
-                evidence_type: EvidenceType::Import,
-                description: format!("Import patterns match: {:?}", lang),
-                weight: confidence,
-            });
+        // Only do expensive import pattern analysis if we don't have high confidence yet
+        let max_confidence = candidates.iter().map(|(_, c)| *c).fold(0.0f32, f32::max);
+        if max_confidence < 0.8 {
+            let import_results = self.analyze_import_patterns(content);
+            for (lang, confidence) in import_results {
+                candidates.push((lang.clone(), confidence));
+                evidence.push(DetectionEvidence {
+                    evidence_type: EvidenceType::Import,
+                    description: format!("Import patterns match: {:?}", lang),
+                    weight: confidence,
+                });
+            }
         }
 
         // Aggregate results
         self.aggregate_detection_results(candidates, evidence)
+    }
+    
+    /// Quick content validation for extension-based detection
+    fn quick_content_validation(&self, language: &Language, content: &str) -> bool {
+        match language {
+            Language::Rust => content.contains("fn ") || content.contains("use ") || content.contains("struct "),
+            Language::Python => content.contains("def ") || content.contains("import ") || content.contains("class "),
+            Language::JavaScript => content.contains("function ") || content.contains("const ") || content.contains("var "),
+            Language::TypeScript => content.contains("interface ") || content.contains("type ") || content.contains(": "),
+            Language::Go => content.contains("func ") || content.contains("package ") || content.contains("import "),
+            Language::Java => content.contains("class ") || content.contains("public ") || content.contains("import "),
+            Language::C => content.contains("#include") || content.contains("int main") || content.contains("void "),
+            Language::Cpp => content.contains("#include") || content.contains("class ") || content.contains("namespace "),
+            _ => true, // For less common languages, skip validation
+        }
+    }
+    
+    /// Optimized content signature analysis that prioritizes the extension language
+    fn analyze_content_signatures_optimized(&self, content: &str, extension_lang: &Language) -> Vec<(Language, f32)> {
+        let mut results = Vec::new();
+        
+        // First try the extension language if available
+        if *extension_lang != Language::Unknown {
+            if let Some(signatures) = self.content_signatures.get(extension_lang) {
+                for signature in signatures {
+                    let matches = self.count_signature_matches(signature, content);
+                    if matches >= signature.required_matches {
+                        let confidence = (matches as f32 / signature.patterns.len() as f32) * signature.weight;
+                        results.push((extension_lang.clone(), confidence));
+                        
+                        // If we have high confidence with extension match, return early
+                        if confidence > 0.7 {
+                            return results;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If extension language didn't match well, try others
+        for (language, signatures) in &self.content_signatures {
+            if *language == *extension_lang {
+                continue; // Already checked above
+            }
+            
+            for signature in signatures {
+                let matches = self.count_signature_matches(signature, content);
+                if matches >= signature.required_matches {
+                    let confidence = (matches as f32 / signature.patterns.len() as f32) * signature.weight;
+                    results.push((language.clone(), confidence));
+                }
+            }
+        }
+        
+        results
+    }
+    
+    /// Count signature matches efficiently using pre-compiled regexes
+    fn count_signature_matches(&self, signature: &ContentSignature, content: &str) -> usize {
+        signature.patterns.iter()
+            .map(|regex| regex.find_iter(content).count())
+            .sum::<usize>()
     }
 
     /// Detect language with full statistical analysis
@@ -678,21 +793,24 @@ impl LanguageDetector {
             }
         }
 
-        // Check custom content signatures (using simple string matching instead of regex)
-        for signature in &rules.content_signatures {
-            let matches = signature.patterns.iter()
+        // Check custom content signatures 
+        for signature_config in &rules.content_signatures {
+            let matches = signature_config.patterns.iter()
                 .map(|pattern| {
-                    // Use simple string matching for custom patterns
-                    content.matches(pattern).count()
+                    // Try regex first, fallback to string matching
+                    match regex::Regex::new(pattern) {
+                        Ok(regex) => regex.find_iter(content).count(),
+                        Err(_) => content.matches(pattern).count(),
+                    }
                 })
                 .sum::<usize>();
             
-            if matches >= signature.required_matches {
-                candidates.push((signature.language.clone(), signature.weight));
+            if matches >= signature_config.required_matches {
+                candidates.push((signature_config.language.clone(), signature_config.weight));
                 evidence.push(DetectionEvidence {
                     evidence_type: EvidenceType::Syntax,
-                    description: format!("Custom signature matches for {:?}: {}", signature.language, matches),
-                    weight: signature.weight,
+                    description: format!("Custom signature matches for {:?}: {}", signature_config.language, matches),
+                    weight: signature_config.weight,
                 });
             }
         }
@@ -735,13 +853,7 @@ impl LanguageDetector {
                 let matches = signature.patterns.iter()
                     .map(|pattern| {
                         // Use regex matching for content signatures
-                        match Regex::new(pattern) {
-                            Ok(regex) => regex.find_iter(content).count(),
-                            Err(_) => {
-                                // Fallback to simple string matching if regex fails
-                                content.matches(pattern).count()
-                            }
-                        }
+                        pattern.find_iter(content).count()
                     })
                     .sum::<usize>();
 
@@ -755,54 +867,95 @@ impl LanguageDetector {
         results
     }
 
-    /// Analyze import patterns using AST parsing
+    /// Analyze import patterns using AST parsing with extension-first optimization
     fn analyze_import_patterns(&mut self, content: &str) -> Vec<(Language, f32)> {
         let mut results = Vec::new();
-        let mut trees: Vec<(Language, tree_sitter::Tree)> = Vec::new();
-
-        // First collect all parsed trees
-        for (language, parser) in &mut self.ast_parsers {
-            if let Some(tree) = parser.parse(content, None) {
-                trees.push((language.clone(), tree));
-            }
-        }
-
-        // Then analyze them without borrowing conflicts
-        for (language, tree) in trees {
-            let root_node = tree.root_node();
-            let import_count = self.count_import_nodes(&root_node, &language);
-            
-            if import_count > 0 {
-                // Higher confidence for more import statements
-                let confidence = (import_count as f32 / 10.0).min(0.9);
-                results.push((language, confidence));
+        
+        // Extension-first optimization: Try most likely languages first based on content analysis
+        let likely_languages = self.get_likely_languages_from_content(content);
+        
+        for language in likely_languages {
+            if let Some(parser) = self.ast_parsers.get_mut(&language) {
+                if let Some(tree) = parser.parse(content, None) {
+                    let root_node = tree.root_node();
+                    let import_count = self.count_import_nodes(&root_node, &language);
+                    
+                    if import_count > 0 {
+                        // Higher confidence for more import statements
+                        let confidence = (import_count as f32 / 10.0).min(0.9);
+                        results.push((language, confidence));
+                        
+                        // If we found imports and have high confidence, stop here
+                        if confidence > 0.7 {
+                            break;
+                        }
+                    }
+                }
             }
         }
 
         results
     }
+    
+    /// Get likely languages from quick content analysis (no AST parsing)
+    fn get_likely_languages_from_content(&self, content: &str) -> Vec<Language> {
+        let mut likely_languages = Vec::new();
+        
+        // Quick heuristic checks without regex compilation
+        if content.contains("def ") || content.contains("import ") || content.contains("from ") {
+            likely_languages.push(Language::Python);
+        }
+        if content.contains("fn ") || content.contains("use ") || content.contains("struct ") {
+            likely_languages.push(Language::Rust);
+        }
+        if content.contains("function ") || content.contains("const ") || content.contains("let ") {
+            likely_languages.push(Language::JavaScript);
+        }
+        if content.contains("interface ") || content.contains("type ") || content.contains(": string") {
+            likely_languages.push(Language::TypeScript);
+        }
+        if content.contains("func ") || content.contains("package ") {
+            likely_languages.push(Language::Go);
+        }
+        
+        // If no specific patterns found, try common languages
+        if likely_languages.is_empty() {
+            likely_languages = vec![
+                Language::JavaScript,
+                Language::Python,
+                Language::TypeScript,
+                Language::Rust,
+                Language::Go,
+            ];
+        }
+        
+        likely_languages
+    }
 
-    /// Perform AST-based structural analysis of content
+    /// Perform AST-based structural analysis of content with extension-first optimization
     fn statistical_analysis(&mut self, content: &str) -> Vec<(Language, f32)> {
         let mut results = Vec::new();
-        let mut analysis_data: Vec<(Language, tree_sitter::Tree, SyntaxAnalyzer)> = Vec::new();
-
-        // First collect all parsed trees and their analyzers
-        for (language, analyzer) in &self.syntax_analyzers {
-            if let Some(parser) = self.ast_parsers.get_mut(language) {
-                if let Some(tree) = parser.parse(content, None) {
-                    analysis_data.push((language.clone(), tree, analyzer.clone()));
+        
+        // Extension-first optimization: Only analyze likely languages
+        let likely_languages = self.get_likely_languages_from_content(content);
+        
+        for language in likely_languages {
+            if let Some(analyzer) = self.syntax_analyzers.get(&language) {
+                if let Some(parser) = self.ast_parsers.get_mut(&language) {
+                    if let Some(tree) = parser.parse(content, None) {
+                        let root_node = tree.root_node();
+                        let structural_score = self.calculate_structural_score(&root_node, analyzer);
+                        
+                        if structural_score > 0.0 {
+                            results.push((language, structural_score));
+                            
+                            // If we have a very high confidence match, stop here
+                            if structural_score > 0.8 {
+                                break;
+                            }
+                        }
+                    }
                 }
-            }
-        }
-
-        // Then analyze them without borrowing conflicts
-        for (language, tree, analyzer) in analysis_data {
-            let root_node = tree.root_node();
-            let structural_score = self.calculate_structural_score(&root_node, &analyzer);
-            
-            if structural_score > 0.0 {
-                results.push((language, structural_score));
             }
         }
 
@@ -1001,7 +1154,7 @@ mod tests {
 
     #[test]
     fn test_extension_detection() {
-        let mut detector = LanguageDetector::new();
+        let detector = LanguageDetector::new();
         
         assert_eq!(detector.detect_language(Path::new("test.rs")), Language::Rust);
         assert_eq!(detector.detect_language(Path::new("test.py")), Language::Python);
@@ -1011,6 +1164,26 @@ mod tests {
         assert_eq!(detector.detect_language(Path::new("test.go")), Language::Go);
         assert_eq!(detector.detect_language(Path::new("test.cpp")), Language::Cpp);
         assert_eq!(detector.detect_language(Path::new("test.c")), Language::C);
+    }
+
+    #[test] 
+    fn test_rust_files_are_programming() {
+        let detector = LanguageDetector::new();
+        
+        // Test various Rust files
+        let rust_files = [
+            "src/lib.rs",
+            "scribe-rs/src/lib.rs", 
+            "scribe-rs/scribe-core/src/lib.rs",
+            "main.rs",
+            "mod.rs"
+        ];
+        
+        for file_path in &rust_files {
+            let language = detector.detect_language(Path::new(file_path));
+            assert_eq!(language, Language::Rust, "Failed for file: {}", file_path);
+            assert!(language.is_programming(), "Rust should be programming language for file: {}", file_path);
+        }
     }
 
     #[test]

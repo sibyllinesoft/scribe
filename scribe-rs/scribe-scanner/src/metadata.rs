@@ -7,7 +7,7 @@ use scribe_core::{Result, ScribeError, bytes_to_human};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs;
-use std::cell::RefCell;
+use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 
 /// Comprehensive file metadata information
@@ -70,7 +70,7 @@ pub struct SizeDistribution {
 
 /// Metadata extractor with caching and optimization
 pub struct MetadataExtractor {
-    cache: RefCell<std::collections::HashMap<PathBuf, FileMetadata>>,
+    cache: DashMap<PathBuf, FileMetadata>,
     cache_enabled: bool,
 }
 
@@ -102,7 +102,7 @@ impl MetadataExtractor {
     /// Create a new metadata extractor
     pub fn new() -> Self {
         Self {
-            cache: RefCell::new(std::collections::HashMap::new()),
+            cache: DashMap::new(),
             cache_enabled: true,
         }
     }
@@ -110,7 +110,7 @@ impl MetadataExtractor {
     /// Create a metadata extractor without caching
     pub fn without_cache() -> Self {
         Self {
-            cache: RefCell::new(std::collections::HashMap::new()),
+            cache: DashMap::new(),
             cache_enabled: false,
         }
     }
@@ -119,7 +119,7 @@ impl MetadataExtractor {
     pub async fn extract_metadata(&self, path: &Path) -> Result<FileMetadata> {
         // Check cache first if enabled
         if self.cache_enabled {
-            if let Some(cached) = self.cache.borrow().get(path) {
+            if let Some(cached) = self.cache.get(path) {
                 return Ok(cached.clone());
             }
         }
@@ -128,7 +128,7 @@ impl MetadataExtractor {
 
         // Cache the result if caching is enabled
         if self.cache_enabled {
-            self.cache.borrow_mut().insert(path.to_path_buf(), metadata.clone());
+            self.cache.insert(path.to_path_buf(), metadata.clone());
         }
 
         Ok(metadata)
@@ -136,7 +136,7 @@ impl MetadataExtractor {
 
     /// Extract metadata without caching
     async fn extract_metadata_uncached(&self, path: &Path) -> Result<FileMetadata> {
-        let std_metadata = fs::symlink_metadata(path)
+        let std_metadata = tokio::fs::symlink_metadata(path).await
             .map_err(|e| ScribeError::io(format!("Failed to read metadata for {}: {}", path.display(), e), e))?;
 
         let size = std_metadata.len();
@@ -152,7 +152,7 @@ impl MetadataExtractor {
 
         // Check if it's a symlink and get target
         let (symlink, symlink_target) = if std_metadata.file_type().is_symlink() {
-            let target = fs::read_link(path).ok();
+            let target = tokio::fs::read_link(path).await.ok();
             (true, target)
         } else {
             (false, None)
@@ -241,13 +241,12 @@ impl MetadataExtractor {
 
     /// Clear the metadata cache
     pub fn clear_cache(&self) {
-        self.cache.borrow_mut().clear();
+        self.cache.clear();
     }
 
     /// Get cache statistics
     pub fn cache_stats(&self) -> (usize, usize) {
-        let cache = self.cache.borrow();
-        (cache.len(), cache.capacity())
+        (self.cache.len(), self.cache.capacity())
     }
 
     /// Check if a file is likely to be a text file based on metadata

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use rayon::prelude::*;
+use regex::RegexSet;
 
 use scribe_core::{ScribeError, Result as ScribeResult};
 use scribe_analysis::heuristics::ScanResult;
@@ -136,50 +138,54 @@ pub struct QuotaAllocation {
 }
 
 /// Detects file categories for quota allocation
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CategoryDetector {
-    config_patterns: Vec<&'static str>,
-    entry_patterns: Vec<&'static str>,
-    examples_patterns: Vec<&'static str>,
+    config_regex_set: RegexSet,
+    entry_regex_set: RegexSet, 
+    examples_regex_set: RegexSet,
 }
 
 impl Default for CategoryDetector {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("Failed to create CategoryDetector")
     }
 }
 
 impl CategoryDetector {
-    pub fn new() -> Self {
-        Self {
-            // Config file patterns
-            config_patterns: vec![
-                // Configuration files
-                ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-                // Build and dependency files  
-                "package.json", "requirements.txt", "pyproject.toml", "cargo.toml",
-                "setup.py", "setup.cfg", "makefile", "dockerfile", "docker-compose.yml",
-                // CI/CD configuration
-                ".github", ".gitlab-ci.yml", ".travis.yml", ".circleci",
-                // IDE and tool configuration
-                ".vscode", ".idea", ".editorconfig", "tsconfig.json", "tslint.json",
-                "eslint.json", ".eslintrc", ".prettierrc", "jest.config.js"
-            ],
-            
-            // Entry point patterns
-            entry_patterns: vec![
-                "main.py", "__main__.py", "app.py", "server.py", "index.py",
-                "main.js", "index.js", "app.js", "server.js", "index.ts", "main.ts",
-                "main.go", "main.rs", "lib.rs", "mod.rs"
-            ],
-            
-            // Example/demo patterns
-            examples_patterns: vec![
-                "example", "examples", "demo", "demos", "sample", "samples",
-                "tutorial", "tutorials", "test", "tests", "spec", "specs",
-                "benchmark", "benchmarks"
-            ],
-        }
+    pub fn new() -> Result<Self, regex::Error> {
+        // Config file patterns - escape regex special characters and convert to regex patterns
+        let config_patterns = vec![
+            // Configuration files (as regex patterns)
+            r"\.json$", r"\.yaml$", r"\.yml$", r"\.toml$", r"\.ini$", r"\.cfg$", r"\.conf$",
+            // Build and dependency files
+            r"package\.json$", r"requirements\.txt$", r"pyproject\.toml$", r"cargo\.toml$",
+            r"setup\.py$", r"setup\.cfg$", r"makefile$", r"dockerfile$", r"docker-compose\.yml$",
+            // CI/CD configuration
+            r"\.github", r"\.gitlab-ci\.yml$", r"\.travis\.yml$", r"\.circleci",
+            // IDE and tool configuration  
+            r"\.vscode", r"\.idea", r"\.editorconfig$", r"tsconfig\.json$", r"tslint\.json$",
+            r"eslint\.json$", r"\.eslintrc", r"\.prettierrc", r"jest\.config\.js$"
+        ];
+        
+        // Entry point patterns (exact filename matches)
+        let entry_patterns = vec![
+            r"main\.py$", r"__main__\.py$", r"app\.py$", r"server\.py$", r"index\.py$",
+            r"main\.js$", r"index\.js$", r"app\.js$", r"server\.js$", r"index\.ts$", r"main\.ts$",
+            r"main\.go$", r"main\.rs$", r"lib\.rs$", r"mod\.rs$"
+        ];
+        
+        // Example/demo patterns (directory or filename contains)
+        let examples_patterns = vec![
+            r"example", r"examples", r"demo", r"demos", r"sample", r"samples",
+            r"tutorial", r"tutorials", r"test", r"tests", r"spec", r"specs",
+            r"benchmark", r"benchmarks"
+        ];
+        
+        Ok(Self {
+            config_regex_set: RegexSet::new(&config_patterns)?,
+            entry_regex_set: RegexSet::new(&entry_patterns)?,
+            examples_regex_set: RegexSet::new(&examples_patterns)?,
+        })
     }
     
     /// Detect the category of a file based on its scan result
@@ -191,65 +197,27 @@ impl CategoryDetector {
             .unwrap_or("")
             .to_lowercase();
         
-        // Check for config files
-        if self.is_config_file(&path, &filename) {
+        // Check for config files using RegexSet
+        if self.config_regex_set.is_match(&path) || self.config_regex_set.is_match(&filename) {
             return FileCategory::Config;
         }
         
         // Check for entry points
-        if self.is_entry_file(&path, &filename, scan_result) {
+        if scan_result.is_entrypoint || self.entry_regex_set.is_match(&filename) {
             return FileCategory::Entry;
         }
         
-        // Check for examples
-        if self.is_examples_file(&path, &filename) {
+        // Check for examples using RegexSet
+        if self.examples_regex_set.is_match(&path) || self.examples_regex_set.is_match(&filename) {
             return FileCategory::Examples;
         }
         
         FileCategory::General
     }
-    
-    fn is_config_file(&self, path: &str, filename: &str) -> bool {
-        // Check file extensions and names
-        for pattern in &self.config_patterns {
-            if filename.contains(pattern) || path.contains(pattern) {
-                return true;
-            }
-        }
-        false
-    }
-    
-    fn is_entry_file(&self, path: &str, filename: &str, scan_result: &QuotaScanResult) -> bool {
-        // Check explicit entry point markers
-        if scan_result.is_entrypoint {
-            return true;
-        }
-        
-        // Check filename patterns
-        for pattern in &self.entry_patterns {
-            if filename == *pattern {
-                return true;
-            }
-        }
-        
-        // Check for main function or entry point indicators
-        // This would require content analysis - for now just use filename patterns
-        false
-    }
-    
-    fn is_examples_file(&self, path: &str, filename: &str) -> bool {
-        // Check if file is examples/demos/tests
-        for pattern in &self.examples_patterns {
-            if path.contains(pattern) || filename.contains(pattern) {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 /// Manages budget quotas and density-greedy selection
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct QuotaManager {
     pub total_budget: usize,
     pub detector: CategoryDetector,
@@ -257,7 +225,7 @@ pub struct QuotaManager {
 }
 
 impl QuotaManager {
-    pub fn new(total_budget: usize) -> Self {
+    pub fn new(total_budget: usize) -> ScribeResult<Self> {
         let mut category_quotas = HashMap::new();
         
         // Default quota configuration (research-optimized)
@@ -305,22 +273,23 @@ impl QuotaManager {
             )
         );
         
-        Self {
+        Ok(Self {
             total_budget,
-            detector: CategoryDetector::new(),
+            detector: CategoryDetector::new()
+                .map_err(|e| ScribeError::parse(format!("Failed to create category detector: {}", e)))?,
             category_quotas,
-        }
+        })
     }
     
-    /// Classify files into categories
-    pub fn classify_files(&self, scan_results: &[QuotaScanResult]) -> HashMap<FileCategory, Vec<QuotaScanResult>> {
+    /// Classify files into categories using references to avoid expensive cloning
+    pub fn classify_files<'a>(&self, scan_results: &'a [QuotaScanResult]) -> HashMap<FileCategory, Vec<&'a QuotaScanResult>> {
         let mut categorized = HashMap::new();
         
         for result in scan_results {
             let category = self.detector.detect_category(result);
             categorized.entry(category)
                 .or_insert_with(Vec::new)
-                .push(result.clone());
+                .push(result);
         }
         
         categorized
@@ -356,7 +325,7 @@ impl QuotaManager {
     /// Apply density-greedy selection algorithm with quotas
     pub fn select_files_density_greedy(
         &self,
-        categorized_files: &HashMap<FileCategory, Vec<QuotaScanResult>>,
+        categorized_files: &HashMap<FileCategory, Vec<&QuotaScanResult>>,
         heuristic_scores: &HashMap<String, f64>,
         adaptation_factor: f64,
     ) -> ScribeResult<(Vec<QuotaScanResult>, HashMap<FileCategory, QuotaAllocation>)> {
@@ -421,7 +390,7 @@ impl QuotaManager {
     /// Distribute remaining budget based on category demands and priorities
     fn distribute_remaining_budget(
         &self,
-        categorized_files: &HashMap<FileCategory, Vec<QuotaScanResult>>,
+        categorized_files: &HashMap<FileCategory, Vec<&QuotaScanResult>>,
         heuristic_scores: &HashMap<String, f64>,
         remaining_budget: usize,
     ) -> ScribeResult<HashMap<FileCategory, usize>> {
@@ -480,19 +449,20 @@ impl QuotaManager {
     fn select_category_files(
         &self,
         category: FileCategory,
-        files: &[QuotaScanResult],
+        files: &[&QuotaScanResult],
         allocated_budget: usize,
         quota: &CategoryQuota,
         heuristic_scores: &HashMap<String, f64>,
     ) -> ScribeResult<(Vec<QuotaScanResult>, QuotaAllocation)> {
-        // Calculate density scores for all files in category
-        let mut file_densities = Vec::new();
-        for file_result in files {
-            let heuristic_score = heuristic_scores.get(&file_result.path).unwrap_or(&0.0);
-            let density = self.calculate_density_score(file_result, *heuristic_score);
-            let estimated_tokens = self.estimate_tokens(file_result);
-            file_densities.push((file_result.clone(), density, *heuristic_score, estimated_tokens));
-        }
+        // Calculate density scores for all files in category using parallel processing
+        let mut file_densities: Vec<_> = files.par_iter()
+            .map(|file_result| {
+                let heuristic_score = heuristic_scores.get(&file_result.path).unwrap_or(&0.0);
+                let density = self.calculate_density_score(file_result, *heuristic_score);
+                let estimated_tokens = self.estimate_tokens(file_result);
+                (*file_result, density, *heuristic_score, estimated_tokens)
+            })
+            .collect();
         
         // Sort by density (descending)
         file_densities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -504,7 +474,7 @@ impl QuotaManager {
         
         for (file_result, density, importance, tokens) in &file_densities {
             if used_budget + tokens <= allocated_budget {
-                selected.push(file_result.clone());
+                selected.push((*file_result).clone());
                 used_budget += tokens;
                 total_importance += importance;
             } else if quota.recall_target > 0.0 {
@@ -515,7 +485,7 @@ impl QuotaManager {
                     quota.recall_target
                 )?;
                 if *importance >= importance_threshold && used_budget + tokens <= (allocated_budget as f64 * 1.05) as usize {
-                    selected.push(file_result.clone());
+                    selected.push((*file_result).clone());
                     used_budget += tokens;
                     total_importance += importance;
                 }
@@ -594,6 +564,136 @@ impl QuotaManager {
 }
 
 /// Create a QuotaManager instance
-pub fn create_quota_manager(total_budget: usize) -> QuotaManager {
+pub fn create_quota_manager(total_budget: usize) -> ScribeResult<QuotaManager> {
     QuotaManager::new(total_budget)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_category_detection_with_regex_set() {
+        let detector = CategoryDetector::new().expect("Failed to create CategoryDetector");
+        
+        // Test config file detection
+        let config_file = QuotaScanResult {
+            path: "package.json".to_string(),
+            relative_path: "package.json".to_string(),
+            depth: 0,
+            content: "{}".to_string(),
+            is_entrypoint: false,
+            priority_boost: 0.0,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: None,
+            is_docs: false,
+            is_readme: false,
+            is_test: false,
+            has_examples: false,
+        };
+        assert_eq!(detector.detect_category(&config_file), FileCategory::Config);
+        
+        // Test entry point detection
+        let entry_file = QuotaScanResult {
+            path: "src/main.rs".to_string(),
+            relative_path: "src/main.rs".to_string(),
+            depth: 1,
+            content: "fn main() {}".to_string(),
+            is_entrypoint: false,
+            priority_boost: 0.0,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: None,
+            is_docs: false,
+            is_readme: false,
+            is_test: false,
+            has_examples: false,
+        };
+        assert_eq!(detector.detect_category(&entry_file), FileCategory::Entry);
+        
+        // Test examples detection
+        let examples_file = QuotaScanResult {
+            path: "examples/demo.rs".to_string(),
+            relative_path: "examples/demo.rs".to_string(),
+            depth: 1,
+            content: "// demo".to_string(),
+            is_entrypoint: false,
+            priority_boost: 0.0,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: None,
+            is_docs: false,
+            is_readme: false,
+            is_test: false,
+            has_examples: false,
+        };
+        assert_eq!(detector.detect_category(&examples_file), FileCategory::Examples);
+        
+        // Test general file detection (should be Entry since lib.rs matches entry pattern)
+        let entry_lib_file = QuotaScanResult {
+            path: "src/lib.rs".to_string(),
+            relative_path: "src/lib.rs".to_string(),
+            depth: 1,
+            content: "pub mod utils;".to_string(),
+            is_entrypoint: false,
+            priority_boost: 0.0,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: None,
+            is_docs: false,
+            is_readme: false,
+            is_test: false,
+            has_examples: false,
+        };
+        assert_eq!(detector.detect_category(&entry_lib_file), FileCategory::Entry);
+        
+        // Test actual general file detection
+        let general_file = QuotaScanResult {
+            path: "src/utils.rs".to_string(),
+            relative_path: "src/utils.rs".to_string(),
+            depth: 1,
+            content: "pub fn helper() {}".to_string(),
+            is_entrypoint: false,
+            priority_boost: 0.0,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: None,
+            is_docs: false,
+            is_readme: false,
+            is_test: false,
+            has_examples: false,
+        };
+        assert_eq!(detector.detect_category(&general_file), FileCategory::General);
+    }
+    
+    #[test]
+    fn test_quota_manager_creation() {
+        let manager = QuotaManager::new(1000).expect("Failed to create QuotaManager");
+        assert_eq!(manager.total_budget, 1000);
+        assert_eq!(manager.category_quotas.len(), 4);
+    }
+    
+    #[test]
+    fn test_regex_patterns_directly() {
+        use regex::RegexSet;
+        
+        let entry_patterns = vec![
+            r"main\.py$", r"__main__\.py$", r"app\.py$", r"server\.py$", r"index\.py$",
+            r"main\.js$", r"index\.js$", r"app\.js$", r"server\.js$", r"index\.ts$", r"main\.ts$",
+            r"main\.go$", r"main\.rs$", r"lib\.rs$", r"mod\.rs$"
+        ];
+        
+        let regex_set = RegexSet::new(&entry_patterns).unwrap();
+        
+        // Test that lib.rs matches
+        assert!(regex_set.is_match("lib.rs"), "lib.rs should match entry patterns");
+        assert!(regex_set.is_match("main.rs"), "main.rs should match entry patterns");
+        
+        // Test filename extraction
+        let path = "src/lib.rs";
+        let filename = path.split('/').last().unwrap_or("").to_lowercase();
+        assert_eq!(filename, "lib.rs");
+        assert!(regex_set.is_match(&filename), "Extracted filename should match");
+    }
 }

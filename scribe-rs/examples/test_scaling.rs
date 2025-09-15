@@ -1,5 +1,9 @@
+// This example demonstrates the scaling functionality that is available via the --scaling CLI flag
+// To test this programmatically: cargo run --example test_scaling
+// To test via CLI with scaling: ./target/release/scribe --scaling .
+
 use std::time::Instant;
-use scribe_core::scaling::{ScalingEngine, ScalingConfig};
+use scribe_scaling::{ScalingEngine, ScalingConfig};
 use tokio;
 
 #[tokio::main]
@@ -18,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     for (name, config) in configs {
         println!("\n📊 Testing with {}", name);
-        println!("-".repeat(50));
+        println!("{}", "-".repeat(50));
         
         let start_time = Instant::now();
         
@@ -105,5 +109,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     println!("\n✅ Scaling Performance Test Complete!");
+    println!("\n💡 CLI Usage:");
+    println!("To use scaling optimizations in the Scribe CLI:");
+    println!("  ./target/release/scribe --scaling [repository_path]");
+    println!("  ./target/release/scribe --scaling --verbose . # For detailed output");
+    println!("\nScaling is now always compiled in but only activated with the --scaling flag!");
+    
     Ok(())
 }

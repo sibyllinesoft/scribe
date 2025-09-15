@@ -218,15 +218,35 @@ impl Scanner {
 
         log::info!("Discovered {} files for processing", file_paths.len());
 
+        // Load batch git status for performance if git integration is enabled
+        if let Some(ref git) = git_integrator {
+            if let Err(e) = git.load_batch_file_statuses().await {
+                log::debug!("Failed to load batch git statuses: {}", e);
+            }
+        }
+
         // Process files with appropriate strategy
-        let files = self.process_files_sequential(
-            file_paths,
-            &options,
-            metadata_extractor.as_ref(),
-            content_analyzer.as_ref(),
-            git_integrator.as_ref(),
-            &language_detector,
-        ).await?;
+        let files = if options.parallel_processing {
+            log::debug!("Processing files in parallel with concurrency={}", options.max_concurrency);
+            self.process_files_parallel(
+                file_paths,
+                &options,
+                metadata_extractor.as_ref(),
+                content_analyzer.as_ref(),
+                git_integrator.as_ref(),
+                &language_detector,
+            ).await?
+        } else {
+            log::debug!("Processing files sequentially");
+            self.process_files_sequential(
+                file_paths,
+                &options,
+                metadata_extractor.as_ref(),
+                content_analyzer.as_ref(),
+                git_integrator.as_ref(),
+                &language_detector,
+            ).await?
+        };
 
         log::info!(
             "Scanning completed in {:.2}s: {} files processed",
@@ -387,7 +407,7 @@ impl Scanner {
             return Ok(None);
         }
 
-        let metadata = std::fs::metadata(path)?;
+        let metadata = tokio::fs::metadata(path).await?;
         
         // Skip if file is too large
         if let Some(max_size) = options.max_file_size {
@@ -426,6 +446,7 @@ impl Scanner {
             char_count: None,
             is_binary: false, // Will be determined by binary detection
             git_status: None,
+            centrality_score: None, // Will be calculated during analysis phase
         };
 
         // Extract metadata if requested

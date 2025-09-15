@@ -190,8 +190,9 @@ async fn test_streaming_vs_batch_loading() {
     let streaming_config = ScalingConfig {
         streaming: scribe_scaling::streaming::StreamingConfig {
             enable_streaming: true,
-            chunk_size: 10,
+            concurrency_limit: 2,
             memory_limit: 10 * 1024 * 1024, // 10MB
+            selection_heap_size: 100,
         },
         ..ScalingConfig::default()
     };
@@ -203,8 +204,9 @@ async fn test_streaming_vs_batch_loading() {
     let batch_config = ScalingConfig {
         streaming: scribe_scaling::streaming::StreamingConfig {
             enable_streaming: false,
-            chunk_size: 1000,
+            concurrency_limit: 1,
             memory_limit: 100 * 1024 * 1024, // 100MB
+            selection_heap_size: 1000,
         },
         ..ScalingConfig::default()
     };

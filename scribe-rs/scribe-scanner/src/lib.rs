@@ -38,12 +38,30 @@ pub mod content;
 pub mod git_integration;
 pub mod language_detection;
 
+// Performance optimization modules
+pub mod filtering;
+// pub mod git_batch; // Temporarily disabled due to compilation issues
+pub mod parallel;
+// pub mod compact_data; // Temporarily disabled due to compilation issues
+// pub mod incremental; // Temporarily disabled due to compilation issues
+pub mod performance;
+pub mod aho_corasick_reference_index;
+
 // Re-export main types for convenience
 pub use scanner::{Scanner, ScanOptions, ScanResult, ScanProgress};
 pub use metadata::{FileMetadata, MetadataExtractor, SizeStats};
 pub use content::{ContentAnalyzer, ImportInfo, DocumentationInfo, ContentStats};
 pub use git_integration::{GitIntegrator, GitFileInfo, GitCommitInfo};
 pub use language_detection::{LanguageDetector, LanguageHints, DetectionStrategy};
+
+// Re-export performance optimization types
+pub use filtering::{FileFilter, DirectoryFilter, FilterResult, FilterReason};
+// pub use git_batch::{GitBatchProcessor, BulkStatusResult, CompactGitFileInfo}; // Temporarily disabled
+pub use parallel::{ParallelController, ParallelConfig, WorkItem, ParallelMetrics};
+// pub use compact_data::{CompactFileCollection, CompactFileInfo, CompactMetrics}; // Temporarily disabled
+// pub use incremental::{IncrementalScanner, IncrementalConfig, FileManifest}; // Temporarily disabled
+pub use performance::{PerformanceMonitor, PerformanceReport, PerfTimer, ErrorType, PERF_MONITOR, PerformanceSnapshot};
+pub use aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};
 
 use scribe_core::{Result, FileInfo};
 use std::path::Path;

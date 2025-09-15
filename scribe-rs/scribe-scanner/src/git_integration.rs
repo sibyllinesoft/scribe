@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::cell::RefCell;
+use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 use tokio::process::Command as AsyncCommand;
 
@@ -132,23 +132,25 @@ pub struct BranchHealth {
 /// Git operations cache for performance
 #[derive(Debug)]
 struct GitCache {
-    file_statuses: RefCell<HashMap<PathBuf, GitFileStatus>>,
-    commit_cache: RefCell<HashMap<String, GitCommitInfo>>,
-    blame_cache: RefCell<HashMap<PathBuf, GitBlameInfo>>,
-    files_discovered: RefCell<usize>,
-    cache_timestamp: RefCell<Option<SystemTime>>,
+    file_statuses: DashMap<PathBuf, GitFileStatus>,
+    commit_cache: DashMap<String, GitCommitInfo>,
+    blame_cache: DashMap<PathBuf, GitBlameInfo>,
+    files_discovered: parking_lot::RwLock<usize>,
+    cache_timestamp: parking_lot::RwLock<Option<SystemTime>>,
     cache_ttl: std::time::Duration,
+    batch_status_cache: DashMap<PathBuf, GitFileStatus>,
 }
 
 impl Default for GitCache {
     fn default() -> Self {
         Self {
-            file_statuses: RefCell::new(HashMap::new()),
-            commit_cache: RefCell::new(HashMap::new()),
-            blame_cache: RefCell::new(HashMap::new()),
-            files_discovered: RefCell::new(0),
-            cache_timestamp: RefCell::new(None),
+            file_statuses: DashMap::new(),
+            commit_cache: DashMap::new(),
+            blame_cache: DashMap::new(),
+            files_discovered: parking_lot::RwLock::new(0),
+            cache_timestamp: parking_lot::RwLock::new(None),
             cache_ttl: std::time::Duration::from_secs(300),
+            batch_status_cache: DashMap::new(),
         }
     }
 }
@@ -212,23 +214,80 @@ impl GitIntegrator {
             .collect();
 
         // Update cache
-        *self.cache.files_discovered.borrow_mut() = files.len();
-        *self.cache.cache_timestamp.borrow_mut() = Some(SystemTime::now());
+        *self.cache.files_discovered.write() = files.len();
+        *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
         log::debug!("Git discovered {} tracked files", files.len());
         Ok(files)
     }
 
+    /// Load all file statuses in a single batch operation for better performance
+    pub async fn load_batch_file_statuses(&self) -> Result<()> {
+        if !self.git_available {
+            return Ok(());
+        }
+
+        let output = AsyncCommand::new("git")
+            .arg("status")
+            .arg("--porcelain")
+            .arg("-z") // null-separated output for safety
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get batch file status: {}", e)))?;
+
+        if !output.status.success() {
+            log::warn!("Git status failed, batch status unavailable");
+            return Ok(());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut status_map: HashMap<String, Vec<char>> = HashMap::new();
+
+        for line in stdout.split('\0') {
+            if line.len() < 3 {
+                continue;
+            }
+            
+            let status_code = &line[..2];
+            let file_path = &line[3..];
+            
+            if file_path.is_empty() {
+                continue;
+            }
+
+            let status = match status_code {
+                " M" | "M " | "MM" => GitFileStatus::Modified,
+                "A " | " A" => GitFileStatus::Added,
+                "D " | " D" => GitFileStatus::Deleted,
+                "R " | " R" => GitFileStatus::Renamed,
+                "C " | " C" => GitFileStatus::Copied,
+                "??" => GitFileStatus::Untracked,
+                "!!" => GitFileStatus::Ignored,
+                _ => GitFileStatus::Unmodified,
+            };
+
+            let full_path = self.repo_path.join(file_path);
+            self.cache.batch_status_cache.insert(full_path, status);
+        }
+
+        *self.cache.cache_timestamp.write() = Some(SystemTime::now());
+
+        log::debug!("Loaded batch file statuses for {} files", self.cache.batch_status_cache.len());
+        
+        Ok(())
+    }
+
     /// Get detailed file information including git status
     pub async fn get_file_info(&self, file_path: &Path) -> Result<GitFileInfo> {
         // Check cache first
-        if let Some(cached_status) = self.cache.file_statuses.borrow().get(file_path) {
+        if let Some(cached_status) = self.cache.file_statuses.get(file_path) {
             if self.is_cache_valid() {
                 return Ok(GitFileInfo {
                     path: file_path.to_path_buf(),
                     status: cached_status.clone(),
                     last_commit: None, // Would need to implement commit lookup
-                    blame_info: self.cache.blame_cache.borrow().get(file_path).cloned(),
+                    blame_info: self.cache.blame_cache.get(file_path).map(|entry| entry.clone()),
                     changes_count: 0,
                     additions: 0,
                     deletions: 0,
@@ -245,8 +304,8 @@ impl GitIntegrator {
             .unwrap_or((0, 0, 0));
 
         // Cache the status and update timestamp
-        self.cache.file_statuses.borrow_mut().insert(file_path.to_path_buf(), status.clone());
-        *self.cache.cache_timestamp.borrow_mut() = Some(SystemTime::now());
+        self.cache.file_statuses.insert(file_path.to_path_buf(), status.clone());
+        *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
         Ok(GitFileInfo {
             path: file_path.to_path_buf(),
@@ -265,6 +324,16 @@ impl GitIntegrator {
             return Ok(GitFileStatus::Untracked);
         }
 
+        // Try to use batch cache first
+        if !self.cache.batch_status_cache.is_empty() {
+            if let Some(status) = self.cache.batch_status_cache.get(file_path) {
+                return Ok(status.clone());
+            }
+            // File not found in status map means it's unmodified (tracked but clean)
+            return Ok(GitFileStatus::Unmodified);
+        }
+
+        // Fallback to individual git call if batch cache not available
         let relative_path = file_path.strip_prefix(&self.repo_path)
             .map_err(|_| ScribeError::git("File not in repository".to_string()))?;
 
@@ -355,7 +424,7 @@ impl GitIntegrator {
         }
 
         // Check cache first
-        if let Some(cached_blame) = self.cache.blame_cache.borrow().get(file_path) {
+        if let Some(cached_blame) = self.cache.blame_cache.get(file_path) {
             if self.is_cache_valid() {
                 return Ok(cached_blame.clone());
             }
@@ -774,7 +843,7 @@ impl GitIntegrator {
 
     /// Check if cache is still valid
     fn is_cache_valid(&self) -> bool {
-        if let Some(cache_time) = *self.cache.cache_timestamp.borrow() {
+        if let Some(cache_time) = *self.cache.cache_timestamp.read() {
             SystemTime::now()
                 .duration_since(cache_time)
                 .map(|duration| duration < self.cache.cache_ttl)
@@ -786,15 +855,16 @@ impl GitIntegrator {
 
     /// Clear all caches
     pub fn clear_cache(&self) {
-        self.cache.file_statuses.borrow_mut().clear();
-        self.cache.commit_cache.borrow_mut().clear();
-        self.cache.blame_cache.borrow_mut().clear();
-        *self.cache.cache_timestamp.borrow_mut() = None;
+        self.cache.file_statuses.clear();
+        self.cache.commit_cache.clear();
+        self.cache.blame_cache.clear();
+        self.cache.batch_status_cache.clear();
+        *self.cache.cache_timestamp.write() = None;
     }
 
     /// Get number of files discovered through git
     pub fn files_discovered(&self) -> usize {
-        *self.cache.files_discovered.borrow()
+        *self.cache.files_discovered.read()
     }
 
     /// Check if git is available
@@ -806,6 +876,576 @@ impl GitIntegrator {
     pub fn repo_path(&self) -> &Path {
         &self.repo_path
     }
+}
+
+/// Git diff entry representing a single change
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitDiffEntry {
+    pub file_path: PathBuf,
+    pub change_type: DiffChangeType,
+    pub diff_content: String,
+    pub line_additions: usize,
+    pub line_deletions: usize,
+    pub commit_hash: Option<String>,
+    pub commit_message: Option<String>,
+    pub author: Option<String>,
+    pub timestamp: Option<u64>,
+    pub old_file_path: Option<PathBuf>, // For renames
+}
+
+/// Type of diff change
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DiffChangeType {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Copied,
+}
+
+/// Configuration for diff-based analysis
+#[derive(Debug, Clone)]
+pub struct DiffAnalysisConfig {
+    pub include_staged: bool,
+    pub include_unstaged: bool,
+    pub include_commits: Option<Vec<String>>,
+    pub commit_range: Option<String>,
+    pub branch_comparison: Option<String>,
+    pub max_commits: usize,
+    pub max_diff_size_kb: usize,
+    pub ignore_patterns: Vec<String>,
+    pub relevance_threshold: f64,
+    pub include_binary_diffs: bool,
+    pub include_generated_files: bool,
+    pub max_lines_per_diff: usize,
+}
+
+impl Default for DiffAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            include_staged: true,
+            include_unstaged: true,
+            include_commits: None,
+            commit_range: None,
+            branch_comparison: None,
+            max_commits: 50,
+            max_diff_size_kb: 100,
+            ignore_patterns: vec![
+                "*.lock".to_string(),
+                "*.log".to_string(),
+                "*.tmp".to_string(),
+                "*.cache".to_string(),
+                "node_modules/*".to_string(),
+                ".git/*".to_string(),
+                "__pycache__/*".to_string(),
+                "*.min.js".to_string(),
+                "*.min.css".to_string(),
+                "build/*".to_string(),
+                "dist/*".to_string(),
+            ],
+            relevance_threshold: 0.1,
+            include_binary_diffs: false,
+            include_generated_files: false,
+            max_lines_per_diff: 1000,
+        }
+    }
+}
+
+/// Diff analysis result containing all extracted changes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffAnalysisResult {
+    pub diffs: Vec<GitDiffEntry>,
+    pub total_files_changed: usize,
+    pub total_additions: usize,
+    pub total_deletions: usize,
+    pub commit_range_analyzed: Option<String>,
+    pub analysis_timestamp: u64,
+}
+
+impl GitIntegrator {
+    /// Perform comprehensive diff-based analysis
+    pub async fn analyze_diffs(&self, config: &DiffAnalysisConfig) -> Result<DiffAnalysisResult> {
+        if !self.git_available {
+            return Err(ScribeError::git("Git not available for diff analysis".to_string()));
+        }
+
+        let mut all_diffs = Vec::new();
+
+        // Extract staged diffs
+        if config.include_staged {
+            let staged_diffs = self.extract_staged_diffs(config).await?;
+            all_diffs.extend(staged_diffs);
+        }
+
+        // Extract unstaged diffs
+        if config.include_unstaged {
+            let unstaged_diffs = self.extract_unstaged_diffs(config).await?;
+            all_diffs.extend(unstaged_diffs);
+        }
+
+        // Extract diffs from specific commits
+        if let Some(ref commits) = config.include_commits {
+            for commit_hash in commits {
+                let commit_diffs = self.extract_commit_diffs(commit_hash, config).await?;
+                all_diffs.extend(commit_diffs);
+            }
+        }
+
+        // Extract diffs from commit range
+        if let Some(ref range) = config.commit_range {
+            let range_diffs = self.extract_range_diffs(range, config).await?;
+            all_diffs.extend(range_diffs);
+        }
+
+        // Extract diffs from branch comparison
+        if let Some(ref branch_comp) = config.branch_comparison {
+            let branch_diffs = self.extract_branch_comparison_diffs(branch_comp, config).await?;
+            all_diffs.extend(branch_diffs);
+        }
+
+        // Apply filtering
+        all_diffs = self.filter_diffs(all_diffs, config).await?;
+
+        // Calculate summary statistics
+        let total_files_changed = all_diffs.len();
+        let total_additions = all_diffs.iter().map(|d| d.line_additions).sum();
+        let total_deletions = all_diffs.iter().map(|d| d.line_deletions).sum();
+
+        let analysis_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(DiffAnalysisResult {
+            diffs: all_diffs,
+            total_files_changed,
+            total_additions,
+            total_deletions,
+            commit_range_analyzed: config.commit_range.clone(),
+            analysis_timestamp,
+        })
+    }
+
+    /// Extract staged diffs (changes ready to be committed)
+    async fn extract_staged_diffs(&self, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+        let output = AsyncCommand::new("git")
+            .arg("diff")
+            .arg("--cached")
+            .arg("--numstat")
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get staged diffs: {}", e)))?;
+
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        self.parse_numstat_output(&stdout, DiffSource::Staged).await
+    }
+
+    /// Extract unstaged diffs (working directory changes)
+    async fn extract_unstaged_diffs(&self, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+        let output = AsyncCommand::new("git")
+            .arg("diff")
+            .arg("--numstat")
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get unstaged diffs: {}", e)))?;
+
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        self.parse_numstat_output(&stdout, DiffSource::Unstaged).await
+    }
+
+    /// Extract diffs from a specific commit
+    async fn extract_commit_diffs(&self, commit_hash: &str, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+        let output = AsyncCommand::new("git")
+            .arg("show")
+            .arg("--numstat")
+            .arg("--name-status")
+            .arg("--pretty=format:%H|%an|%at|%s")
+            .arg(commit_hash)
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get commit diffs: {}", e)))?;
+
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        self.parse_commit_diff_output(&stdout, commit_hash).await
+    }
+
+    /// Extract diffs from a commit range
+    async fn extract_range_diffs(&self, range: &str, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+        let output = AsyncCommand::new("git")
+            .arg("log")
+            .arg("--numstat")
+            .arg("--name-status")
+            .arg("--pretty=format:%H|%an|%at|%s")
+            .arg(format!("--max-count={}", config.max_commits))
+            .arg(range)
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get range diffs: {}", e)))?;
+
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        log::debug!("Git log output for range {}: '{}'", range, stdout);
+        self.parse_log_diff_output(&stdout).await
+    }
+
+    /// Extract diffs from branch comparison
+    async fn extract_branch_comparison_diffs(&self, branch_comp: &str, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+        let output = AsyncCommand::new("git")
+            .arg("diff")
+            .arg("--numstat")
+            .arg(branch_comp)
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get branch comparison diffs: {}", e)))?;
+
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        self.parse_numstat_output(&stdout, DiffSource::BranchComparison).await
+    }
+
+    /// Parse git numstat output format
+    async fn parse_numstat_output(&self, output: &str, source: DiffSource) -> Result<Vec<GitDiffEntry>> {
+        let mut diffs = Vec::new();
+        
+        for line in output.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Parse numstat format: additions deletions filename
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                // Handle binary files (shown as - -)
+                let additions = if parts[0] == "-" { 0 } else { parts[0].parse::<usize>().unwrap_or(0) };
+                let deletions = if parts[1] == "-" { 0 } else { parts[1].parse::<usize>().unwrap_or(0) };
+                let file_path = PathBuf::from(parts[2]);
+
+                // Get the actual diff content
+                let diff_content = self.get_file_diff_content(&file_path, &source).await?;
+
+                // Determine change type
+                let change_type = self.determine_change_type(&file_path, &source).await?;
+
+                diffs.push(GitDiffEntry {
+                    file_path,
+                    change_type,
+                    diff_content,
+                    line_additions: additions,
+                    line_deletions: deletions,
+                    commit_hash: None,
+                    commit_message: None,
+                    author: None,
+                    timestamp: None,
+                    old_file_path: None,
+                });
+            }
+        }
+
+        Ok(diffs)
+    }
+
+    /// Parse commit diff output with metadata
+    async fn parse_commit_diff_output(&self, output: &str, commit_hash: &str) -> Result<Vec<GitDiffEntry>> {
+        let lines: Vec<&str> = output.lines().collect();
+        let mut diffs = Vec::new();
+        
+        if lines.is_empty() {
+            return Ok(diffs);
+        }
+
+        // Parse commit metadata from first line
+        let (commit_info, author, timestamp, message) = if let Some(first_line) = lines.first() {
+            if first_line.contains('|') && first_line.split('|').count() >= 4 {
+                let parts: Vec<&str> = first_line.split('|').collect();
+                (
+                    Some(parts[0].to_string()),
+                    Some(parts[1].to_string()),
+                    parts[2].parse::<u64>().ok(),
+                    Some(parts[3].to_string()),
+                )
+            } else {
+                (Some(commit_hash.to_string()), None, None, None)
+            }
+        } else {
+            (Some(commit_hash.to_string()), None, None, None)
+        };
+
+        // Parse file changes (skip metadata line)
+        for line in lines.iter().skip(1) {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Parse numstat format: additions\tdeletions\tfilename
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let additions = if parts[0] == "-" { 0 } else { parts[0].parse::<usize>().unwrap_or(0) };
+                let deletions = if parts[1] == "-" { 0 } else { parts[1].parse::<usize>().unwrap_or(0) };
+                let file_path = PathBuf::from(parts[2]);
+
+                // Get the actual diff content for this commit
+                let diff_content = self.get_commit_file_diff_content(&file_path, commit_hash).await?;
+                let change_type = DiffChangeType::Modified; // Default for commit diffs
+
+                diffs.push(GitDiffEntry {
+                    file_path,
+                    change_type,
+                    diff_content,
+                    line_additions: additions,
+                    line_deletions: deletions,
+                    commit_hash: commit_info.clone(),
+                    commit_message: message.clone(),
+                    author: author.clone(),
+                    timestamp,
+                    old_file_path: None,
+                });
+            }
+        }
+
+        Ok(diffs)
+    }
+
+    /// Parse git log diff output with multiple commits
+    async fn parse_log_diff_output(&self, output: &str) -> Result<Vec<GitDiffEntry>> {
+        let mut diffs = Vec::new();
+        let lines: Vec<&str> = output.lines().collect();
+        log::debug!("Parsing log diff output with {} lines", lines.len());
+        let mut i = 0;
+
+        while i < lines.len() {
+            let line = lines[i];
+            
+            // Check if this is a commit metadata line
+            if line.contains('|') && line.split('|').count() >= 4 {
+                let parts: Vec<&str> = line.split('|').collect();
+                let commit_hash = parts[0].to_string();
+                let author = parts[1].to_string();
+                let timestamp = parts[2].parse::<u64>().ok();
+                let message = parts[3].to_string();
+
+                i += 1;
+
+                // Parse file changes for this commit (numstat format)
+                while i < lines.len() && !lines[i].contains('|') {
+                    let file_line = lines[i];
+                    if file_line.trim().is_empty() {
+                        i += 1;
+                        continue;
+                    }
+
+                    // Parse numstat format: additions\tdeletions\tfilename
+                    let parts: Vec<&str> = file_line.split('\t').collect();
+                    if parts.len() >= 3 {
+                        let additions = if parts[0] == "-" { 0 } else { parts[0].parse::<usize>().unwrap_or(0) };
+                        let deletions = if parts[1] == "-" { 0 } else { parts[1].parse::<usize>().unwrap_or(0) };
+                        let file_path = PathBuf::from(parts[2]);
+
+                        let diff_content = self.get_commit_file_diff_content(&file_path, &commit_hash).await?;
+
+                        diffs.push(GitDiffEntry {
+                            file_path,
+                            change_type: DiffChangeType::Modified,
+                            diff_content,
+                            line_additions: additions,
+                            line_deletions: deletions,
+                            commit_hash: Some(commit_hash.clone()),
+                            commit_message: Some(message.clone()),
+                            author: Some(author.clone()),
+                            timestamp,
+                            old_file_path: None,
+                        });
+                    }
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        Ok(diffs)
+    }
+
+    /// Get diff content for a specific file
+    async fn get_file_diff_content(&self, file_path: &Path, source: &DiffSource) -> Result<String> {
+        let mut cmd = AsyncCommand::new("git");
+        cmd.arg("diff");
+
+        match source {
+            DiffSource::Staged => { cmd.arg("--cached"); }
+            DiffSource::Unstaged => { }
+            DiffSource::BranchComparison => { }
+        }
+
+        let output = cmd
+            .arg("--")
+            .arg(file_path)
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get file diff: {}", e)))?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// Get diff content for a file in a specific commit
+    async fn get_commit_file_diff_content(&self, file_path: &Path, commit_hash: &str) -> Result<String> {
+        let output = AsyncCommand::new("git")
+            .arg("show")
+            .arg(format!("{}:{}", commit_hash, file_path.display()))
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to get commit file diff: {}", e)))?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// Determine the type of change for a file
+    async fn determine_change_type(&self, file_path: &Path, source: &DiffSource) -> Result<DiffChangeType> {
+        let mut cmd = AsyncCommand::new("git");
+        cmd.arg("status").arg("--porcelain");
+
+        let output = cmd
+            .arg("--")
+            .arg(file_path)
+            .current_dir(&self.repo_path)
+            .output()
+            .await
+            .map_err(|e| ScribeError::git(format!("Failed to determine change type: {}", e)))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(first_line) = stdout.lines().next() {
+                let status_code = first_line.chars().take(2).collect::<String>();
+                return Ok(match status_code.as_str() {
+                    "A " | " A" => DiffChangeType::Added,
+                    "D " | " D" => DiffChangeType::Deleted,
+                    "R " | " R" => DiffChangeType::Renamed,
+                    "C " | " C" => DiffChangeType::Copied,
+                    _ => DiffChangeType::Modified,
+                });
+            }
+        }
+
+        Ok(DiffChangeType::Modified)
+    }
+
+    /// Apply filtering rules to diffs
+    async fn filter_diffs(&self, mut diffs: Vec<GitDiffEntry>, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+        // Filter by ignore patterns
+        diffs.retain(|diff| {
+            !config.ignore_patterns.iter().any(|pattern| {
+                // Simple pattern matching - could be enhanced with proper glob matching
+                if pattern.ends_with("/*") {
+                    let prefix = &pattern[..pattern.len() - 2];
+                    diff.file_path.to_string_lossy().starts_with(prefix)
+                } else if pattern.starts_with("*.") {
+                    let suffix = &pattern[1..];
+                    diff.file_path.to_string_lossy().ends_with(suffix)
+                } else {
+                    diff.file_path.to_string_lossy().contains(pattern)
+                }
+            })
+        });
+
+        // Filter by diff size
+        diffs.retain(|diff| {
+            let diff_size_kb = diff.diff_content.len() / 1024;
+            diff_size_kb <= config.max_diff_size_kb
+        });
+
+        // Filter by line count
+        diffs.retain(|diff| {
+            let line_count = diff.line_additions + diff.line_deletions;
+            line_count <= config.max_lines_per_diff
+        });
+
+        // Filter binary files if not included
+        if !config.include_binary_diffs {
+            diffs.retain(|diff| !self.is_likely_binary_file(&diff.file_path));
+        }
+
+        // Filter generated files if not included
+        if !config.include_generated_files {
+            diffs.retain(|diff| !self.is_likely_generated_file(&diff.file_path));
+        }
+
+        Ok(diffs)
+    }
+
+    /// Check if a file is likely binary
+    fn is_likely_binary_file(&self, file_path: &Path) -> bool {
+        if let Some(extension) = file_path.extension().and_then(|ext| ext.to_str()) {
+            matches!(extension.to_lowercase().as_str(), 
+                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "svg" |
+                "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" |
+                "zip" | "tar" | "gz" | "7z" | "rar" |
+                "exe" | "dll" | "so" | "dylib" |
+                "mp3" | "mp4" | "avi" | "mov" | "wav"
+            )
+        } else {
+            false
+        }
+    }
+
+    /// Check if a file is likely generated
+    fn is_likely_generated_file(&self, file_path: &Path) -> bool {
+        let path_str = file_path.to_string_lossy().to_lowercase();
+        
+        // Common generated file patterns
+        path_str.contains("generated") ||
+        path_str.contains(".generated.") ||
+        path_str.contains("node_modules") ||
+        path_str.contains("__pycache__") ||
+        path_str.contains(".pyc") ||
+        path_str.contains("target/") ||
+        path_str.contains("build/") ||
+        path_str.contains("dist/") ||
+        path_str.ends_with(".min.js") ||
+        path_str.ends_with(".min.css") ||
+        path_str.contains("package-lock.json") ||
+        path_str.contains("yarn.lock") ||
+        path_str.contains("Cargo.lock")
+    }
+}
+
+/// Source of diff information
+#[derive(Debug)]
+enum DiffSource {
+    Staged,
+    Unstaged,
+    BranchComparison,
 }
 
 impl Default for AgeDistribution {
@@ -1010,5 +1650,177 @@ mod tests {
             integrator.clear_cache();
             assert!(!integrator.is_cache_valid());
         }
+    }
+
+    #[tokio::test]
+    async fn test_diff_analysis_staged_changes() {
+        if let Ok(temp_dir) = create_test_git_repo().await {
+            let integrator = GitIntegrator::new(temp_dir.path()).unwrap();
+            
+            // Modify and stage a file
+            let test_file = temp_dir.path().join("test.rs");
+            fs::write(&test_file, "fn main() { println!(\"Modified and staged!\"); }").unwrap();
+            
+            Command::new("git")
+                .args(&["add", "test.rs"])
+                .current_dir(temp_dir.path())
+                .output()
+                .unwrap();
+            
+            let config = DiffAnalysisConfig {
+                include_staged: true,
+                include_unstaged: false,
+                ..Default::default()
+            };
+            
+            let result = integrator.analyze_diffs(&config).await.unwrap();
+            
+            assert_eq!(result.total_files_changed, 1);
+            assert!(result.total_additions > 0 || result.total_deletions > 0);
+            assert!(!result.diffs.is_empty());
+            assert_eq!(result.diffs[0].file_path.file_name().unwrap(), "test.rs");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diff_analysis_unstaged_changes() {
+        if let Ok(temp_dir) = create_test_git_repo().await {
+            let integrator = GitIntegrator::new(temp_dir.path()).unwrap();
+            
+            // Modify but don't stage a file
+            let test_file = temp_dir.path().join("test.rs");
+            fs::write(&test_file, "fn main() { println!(\"Modified but not staged!\"); }").unwrap();
+            
+            let config = DiffAnalysisConfig {
+                include_staged: false,
+                include_unstaged: true,
+                ..Default::default()
+            };
+            
+            let result = integrator.analyze_diffs(&config).await.unwrap();
+            
+            assert_eq!(result.total_files_changed, 1);
+            assert!(!result.diffs.is_empty());
+            assert_eq!(result.diffs[0].change_type, DiffChangeType::Modified);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diff_analysis_commit_range() {
+        if let Ok(temp_dir) = create_test_git_repo().await {
+            let integrator = GitIntegrator::new(temp_dir.path()).unwrap();
+            
+            // Create a second commit by modifying existing file
+            let test_file = temp_dir.path().join("test.rs");
+            fs::write(&test_file, "fn main() { println!(\"Modified for second commit!\"); }").unwrap();
+            
+            Command::new("git")
+                .args(&["add", "test.rs"])
+                .current_dir(temp_dir.path())
+                .output()
+                .unwrap();
+            
+            Command::new("git")
+                .args(&["commit", "-m", "Modify existing file"])
+                .current_dir(temp_dir.path())
+                .output()
+                .unwrap();
+            
+            let config = DiffAnalysisConfig {
+                include_staged: false,
+                include_unstaged: false,
+                include_commits: Some(vec!["HEAD".to_string()]),
+                ..Default::default()
+            };
+            
+            let result = integrator.analyze_diffs(&config).await.unwrap();
+            
+            // Should find the modified file from the second commit
+            assert!(!result.diffs.is_empty(), "Expected diffs but got: {:?}", result);
+            let has_test_file = result.diffs.iter().any(|d| d.file_path.file_name().unwrap() == "test.rs");
+            assert!(has_test_file, "Expected test.rs in diffs but got: {:?}", result.diffs.iter().map(|d| &d.file_path).collect::<Vec<_>>());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diff_filtering() {
+        if let Ok(temp_dir) = create_test_git_repo().await {
+            let integrator = GitIntegrator::new(temp_dir.path()).unwrap();
+            
+            // Create files with different extensions
+            let js_file = temp_dir.path().join("test.js");
+            let lock_file = temp_dir.path().join("package.lock");
+            
+            fs::write(&js_file, "console.log('test');").unwrap();
+            fs::write(&lock_file, "{ \"lockfileVersion\": 1 }").unwrap();
+            
+            Command::new("git")
+                .args(&["add", "."])
+                .current_dir(temp_dir.path())
+                .output()
+                .unwrap();
+            
+            let config = DiffAnalysisConfig {
+                include_staged: true,
+                include_unstaged: false,
+                ignore_patterns: vec!["*.lock".to_string()],
+                ..Default::default()
+            };
+            
+            let result = integrator.analyze_diffs(&config).await.unwrap();
+            
+            // Should include .js file but exclude .lock file
+            let has_js = result.diffs.iter().any(|d| d.file_path.extension().unwrap() == "js");
+            let has_lock = result.diffs.iter().any(|d| d.file_path.extension().unwrap() == "lock");
+            
+            assert!(has_js);
+            assert!(!has_lock);
+        }
+    }
+
+    #[test]
+    fn test_binary_file_detection() {
+        let integrator = GitIntegrator {
+            repo_path: PathBuf::from("/tmp"),
+            git_available: true,
+            cache: GitCache::default(),
+        };
+        
+        assert!(integrator.is_likely_binary_file(&PathBuf::from("image.png")));
+        assert!(integrator.is_likely_binary_file(&PathBuf::from("document.pdf")));
+        assert!(integrator.is_likely_binary_file(&PathBuf::from("archive.zip")));
+        assert!(!integrator.is_likely_binary_file(&PathBuf::from("code.rs")));
+        assert!(!integrator.is_likely_binary_file(&PathBuf::from("README.md")));
+    }
+
+    #[test]
+    fn test_generated_file_detection() {
+        let integrator = GitIntegrator {
+            repo_path: PathBuf::from("/tmp"),
+            git_available: true,
+            cache: GitCache::default(),
+        };
+        
+        assert!(integrator.is_likely_generated_file(&PathBuf::from("bundle.min.js")));
+        assert!(integrator.is_likely_generated_file(&PathBuf::from("styles.min.css")));
+        assert!(integrator.is_likely_generated_file(&PathBuf::from("node_modules/package/index.js")));
+        assert!(integrator.is_likely_generated_file(&PathBuf::from("target/debug/scribe")));
+        assert!(integrator.is_likely_generated_file(&PathBuf::from("package-lock.json")));
+        assert!(!integrator.is_likely_generated_file(&PathBuf::from("src/main.rs")));
+        assert!(!integrator.is_likely_generated_file(&PathBuf::from("package.json")));
+    }
+
+    #[test]
+    fn test_diff_analysis_config_default() {
+        let config = DiffAnalysisConfig::default();
+        
+        assert!(config.include_staged);
+        assert!(config.include_unstaged);
+        assert_eq!(config.max_commits, 50);
+        assert_eq!(config.max_diff_size_kb, 100);
+        assert!(!config.include_binary_diffs);
+        assert!(!config.include_generated_files);
+        assert!(config.ignore_patterns.contains(&"*.lock".to_string()));
+        assert!(config.ignore_patterns.contains(&"node_modules/*".to_string()));
     }
 }

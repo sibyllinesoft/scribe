@@ -206,6 +206,22 @@ impl Default for HeuristicWeights {
     }
 }
 
+// Custom Hash implementation for HeuristicWeights to handle f64 fields properly
+impl std::hash::Hash for HeuristicWeights {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash f64 values as their bit representation for consistent hashing
+        self.doc.to_bits().hash(state);
+        self.readme.to_bits().hash(state);
+        self.import_deg.to_bits().hash(state);
+        self.path.to_bits().hash(state);
+        self.test_link.to_bits().hash(state);
+        self.churn.to_bits().hash(state);
+        self.centrality.to_bits().hash(state);
+        self.entrypoint.to_bits().hash(state);
+        self.examples.to_bits().hash(state);
+    }
+}
+
 impl HeuristicWeights {
     /// Create weights with V2 features enabled
     pub fn with_v2_features() -> Self {

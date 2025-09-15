@@ -28,7 +28,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use scribe_core::{Result, error::ScribeError};
 
-use crate::graph::{DependencyGraph, NodeId, GraphStatistics};
+use crate::graph::{DependencyGraph, NodeId, InternalNodeId, GraphStatistics};
 
 /// PageRank computation results with comprehensive metadata
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -229,16 +229,13 @@ impl PageRankComputer {
             });
         }
         
-        // Collect nodes for efficient iteration
-        let nodes: Vec<NodeId> = graph.nodes().cloned().collect();
-        let num_nodes = nodes.len();
+        // Use internal representation for massive performance improvement
+        let num_nodes = graph.internal_node_count();
+        let internal_nodes: Vec<(InternalNodeId, &NodeId)> = graph.internal_nodes().collect();
         
-        // Initialize PageRank scores
+        // Initialize PageRank scores using Vec for O(1) access
         let initial_score = 1.0 / num_nodes as f64;
-        let mut current_scores: HashMap<NodeId, f64> = nodes.iter()
-            .map(|node| (node.clone(), initial_score))
-            .collect();
-        
+        let mut current_scores = vec![initial_score; num_nodes];
         let mut previous_scores = current_scores.clone();
         let mut convergence_history = Vec::new();
         
@@ -249,15 +246,15 @@ impl PageRankComputer {
         for iteration in 0..self.config.max_iterations {
             iterations = iteration + 1;
             
-            // Compute new scores
+            // Compute new scores using optimized internal representation
             if self.config.use_parallel {
-                self.compute_iteration_parallel(graph, &nodes, &previous_scores, &mut current_scores)?;
+                self.compute_iteration_parallel_optimized(graph, &internal_nodes, &previous_scores, &mut current_scores)?;
             } else {
-                self.compute_iteration_sequential(graph, &nodes, &previous_scores, &mut current_scores)?;
+                self.compute_iteration_sequential_optimized(graph, &internal_nodes, &previous_scores, &mut current_scores)?;
             }
             
-            // Check convergence
-            total_convergence_diff = self.compute_convergence_diff(&current_scores, &previous_scores);
+            // Check convergence using Vec operations
+            total_convergence_diff = self.compute_convergence_diff_vec(&current_scores, &previous_scores);
             convergence_history.push(total_convergence_diff);
             
             if total_convergence_diff < self.config.epsilon {
@@ -268,9 +265,14 @@ impl PageRankComputer {
             std::mem::swap(&mut current_scores, &mut previous_scores);
         }
         
-        // Apply minimum score threshold filter
-        if self.config.min_score_threshold > 0.0 {
-            current_scores.retain(|_, &mut score| score >= self.config.min_score_threshold);
+        // Convert Vec scores back to HashMap and apply threshold filter
+        let mut final_scores = HashMap::new();
+        for (internal_id, &score) in current_scores.iter().enumerate() {
+            if score >= self.config.min_score_threshold {
+                if let Some(node_path) = graph.get_path(internal_id) {
+                    final_scores.insert(node_path.clone(), score);
+                }
+            }
         }
         
         // Calculate performance metrics
@@ -293,7 +295,7 @@ impl PageRankComputer {
         };
         
         Ok(PageRankResults {
-            scores: current_scores,
+            scores: final_scores,
             iterations_converged: iterations,
             convergence_epsilon: total_convergence_diff,
             graph_stats: self.compute_graph_stats(graph),
@@ -302,7 +304,7 @@ impl PageRankComputer {
         })
     }
     
-    /// Compute a single PageRank iteration (sequential version)
+    /// Compute a single PageRank iteration (sequential version) - LEGACY
     fn compute_iteration_sequential(
         &self,
         graph: &DependencyGraph,
@@ -332,7 +334,47 @@ impl PageRankComputer {
         Ok(())
     }
     
-    /// Compute a single PageRank iteration (parallel version)
+    /// Compute a single PageRank iteration (sequential version) - OPTIMIZED
+    fn compute_iteration_sequential_optimized(
+        &self,
+        graph: &DependencyGraph,
+        internal_nodes: &[(InternalNodeId, &NodeId)],
+        previous_scores: &[f64],
+        current_scores: &mut [f64],
+    ) -> Result<()> {
+        let num_nodes = internal_nodes.len() as f64;
+        let teleport_prob = (1.0 - self.config.damping_factor) / num_nodes;
+        
+        // Calculate dangling mass (from nodes with out-degree 0)
+        let mut dangling_sum = 0.0;
+        for &(internal_id, _) in internal_nodes {
+            if graph.out_degree_by_id(internal_id) == 0 {
+                dangling_sum += previous_scores[internal_id];
+            }
+        }
+        let dangling_bonus = self.config.damping_factor * dangling_sum / num_nodes;
+        
+        for &(internal_id, _) in internal_nodes {
+            let mut new_score = teleport_prob + dangling_bonus;
+            
+            // Sum contributions from nodes that link to this node (reverse edges)
+            if let Some(incoming_neighbors) = graph.incoming_neighbors_by_id(internal_id) {
+                for &linking_id in incoming_neighbors {
+                    let linking_score = previous_scores[linking_id];
+                    let linking_out_degree = graph.out_degree_by_id(linking_id) as f64;
+                    if linking_out_degree > 0.0 {
+                        new_score += self.config.damping_factor * (linking_score / linking_out_degree);
+                    }
+                }
+            }
+            
+            current_scores[internal_id] = new_score;
+        }
+        
+        Ok(())
+    }
+    
+    /// Compute a single PageRank iteration (parallel version) - LEGACY
     fn compute_iteration_parallel(
         &self,
         graph: &DependencyGraph,
@@ -370,7 +412,55 @@ impl PageRankComputer {
         Ok(())
     }
     
-    /// Compute L1 norm difference between score vectors (convergence metric)
+    /// Compute a single PageRank iteration (parallel version) - OPTIMIZED
+    fn compute_iteration_parallel_optimized(
+        &self,
+        graph: &DependencyGraph,
+        internal_nodes: &[(InternalNodeId, &NodeId)],
+        previous_scores: &[f64],
+        current_scores: &mut [f64],
+    ) -> Result<()> {
+        let num_nodes = internal_nodes.len() as f64;
+        let teleport_prob = (1.0 - self.config.damping_factor) / num_nodes;
+        
+        // Calculate dangling mass (from nodes with out-degree 0)
+        let mut dangling_sum = 0.0;
+        for &(internal_id, _) in internal_nodes {
+            if graph.out_degree_by_id(internal_id) == 0 {
+                dangling_sum += previous_scores[internal_id];
+            }
+        }
+        let dangling_bonus = self.config.damping_factor * dangling_sum / num_nodes;
+        
+        // Parallel computation of new scores using internal IDs
+        let new_scores: Vec<(InternalNodeId, f64)> = internal_nodes.par_iter()
+            .map(|&(internal_id, _)| {
+                let mut new_score = teleport_prob + dangling_bonus;
+                
+                // Sum contributions from nodes that link to this node (reverse edges)
+                if let Some(incoming_neighbors) = graph.incoming_neighbors_by_id(internal_id) {
+                    for &linking_id in incoming_neighbors {
+                        let linking_score = previous_scores[linking_id];
+                        let linking_out_degree = graph.out_degree_by_id(linking_id) as f64;
+                        if linking_out_degree > 0.0 {
+                            new_score += self.config.damping_factor * (linking_score / linking_out_degree);
+                        }
+                    }
+                }
+                
+                (internal_id, new_score)
+            })
+            .collect();
+        
+        // Update scores array
+        for (internal_id, score) in new_scores {
+            current_scores[internal_id] = score;
+        }
+        
+        Ok(())
+    }
+    
+    /// Compute L1 norm difference between score vectors (convergence metric) - LEGACY
     fn compute_convergence_diff(
         &self,
         current: &HashMap<NodeId, f64>,
@@ -381,6 +471,18 @@ impl PageRankComputer {
                 let previous_score = previous.get(node).copied().unwrap_or(0.0);
                 (current_score - previous_score).abs()
             })
+            .sum()
+    }
+    
+    /// Compute L1 norm difference between score vectors (convergence metric) - OPTIMIZED
+    fn compute_convergence_diff_vec(
+        &self,
+        current: &[f64],
+        previous: &[f64],
+    ) -> f64 {
+        current.iter()
+            .zip(previous.iter())
+            .map(|(&curr, &prev)| (curr - prev).abs())
             .sum()
     }
     
@@ -401,13 +503,14 @@ impl PageRankComputer {
             return GraphStatistics::empty();
         }
         
-        // Compute degree statistics
-        let degrees: Vec<_> = graph.nodes()
-            .map(|node| (graph.in_degree(node), graph.out_degree(node)))
-            .collect();
+        // Compute degree statistics using optimized internal representation
+        let mut in_degrees = Vec::with_capacity(total_nodes);
+        let mut out_degrees = Vec::with_capacity(total_nodes);
         
-        let in_degrees: Vec<_> = degrees.iter().map(|(in_deg, _)| *in_deg).collect();
-        let out_degrees: Vec<_> = degrees.iter().map(|(_, out_deg)| *out_deg).collect();
+        for (_, node_path) in graph.internal_nodes() {
+            in_degrees.push(graph.in_degree(node_path));
+            out_degrees.push(graph.out_degree(node_path));
+        }
         
         let in_degree_avg = in_degrees.iter().sum::<usize>() as f64 / total_nodes as f64;
         let in_degree_max = *in_degrees.iter().max().unwrap_or(&0);
@@ -415,8 +518,10 @@ impl PageRankComputer {
         let out_degree_max = *out_degrees.iter().max().unwrap_or(&0);
         
         // Count special nodes
-        let isolated_nodes = degrees.iter().filter(|(in_deg, out_deg)| *in_deg == 0 && *out_deg == 0).count();
-        let dangling_nodes = degrees.iter().filter(|(_, out_deg)| *out_deg == 0).count();
+        let isolated_nodes = in_degrees.iter().zip(out_degrees.iter())
+            .filter(|(&in_deg, &out_deg)| in_deg == 0 && out_deg == 0)
+            .count();
+        let dangling_nodes = out_degrees.iter().filter(|&&out_deg| out_deg == 0).count();
         
         // Graph density
         let max_possible_edges = total_nodes * (total_nodes - 1);

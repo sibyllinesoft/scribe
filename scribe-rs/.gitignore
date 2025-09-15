@@ -1,1 +1,77 @@
 /target/
+
+# Test outputs and analysis files
+*.html
+*.xml
+*.json
+perf.data*
+scribe-output.*
+scribe-analysis.*
+valknut.*
+test-*.html
+test-*.xml
+test-*.txt
+test-*.json
+beautiful-final.html
+external-template-test.html
+scribe-enhanced-test.html
+scribe-rs.html
+
+# Debug and development files
+debug_*.rs
+optimization_test.rs
+performance_test.rs
+test_*.rs
+repomix-output.xml
+
+# Frontend build artifacts
+frontend/
+build_frontend.sh
+validate_bundle.js
+
+# Example outputs
+examples/debug_*.rs
+examples/test_*.rs
+
+# Core module temporary files
+scribe-core/examples/
+scribe-core/src/tokenization.rs
+
+# Analysis module temporary files
+scribe-analysis/src/complexity.rs
+scribe-analysis/src/heuristics/enhanced_scoring.rs
+scribe-analysis/src/language_support/
+
+# Scanner module temporary files
+scribe-scanner/src/aho_corasick_reference_index.rs
+scribe-scanner/src/compact_data.rs
+scribe-scanner/src/filtering.rs
+scribe-scanner/src/git_batch.rs
+scribe-scanner/src/incremental.rs
+scribe-scanner/src/optimized_scanner.rs
+scribe-scanner/src/parallel.rs
+scribe-scanner/src/performance.rs
+
+# Scaling module temporary files
+scribe-scaling/tests/performance_regression_tests.rs
+
+# Selection module temporary files
+scribe-selection/repomix-output.xml
+
+# Binary outputs
+src/bin/
+
+# Templates and documentation
+templates/
+FRONTEND_BUNDLE_SETUP.md
+
+# Parent directory clutter
+../RUST_PARITY_TODO.md
+../archive/
+../perf.data
+../repomix-output.xml
+../scribe-analysis.xml
+../scribe-output.html
+../test-installed.xml
+../test_optimizations.rs
+../tiktoken_test.rs

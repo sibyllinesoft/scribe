@@ -18,7 +18,7 @@
 //! ```
 //! Where `centrality_score` becomes a weighted component when V2 features are enabled.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
@@ -364,23 +364,31 @@ impl CentralityCalculator {
     {
         let mut graph = DependencyGraph::with_capacity(scan_results.len());
         
+        // Create optimized import detector with pre-computed lookup maps
+        let mut optimized_detector = ImportDetector::with_file_index(self.import_detector.config.clone(), scan_results);
+        
         // Add all files as nodes first
         for result in scan_results {
             graph.add_node(result.path().to_string())?;
         }
         
-        // Detect imports and build edges
+        // Detect imports and build edges using optimized detector
         let import_stats = if self.config.pagerank_config.use_parallel {
-            self.build_edges_parallel(&mut graph, scan_results)?
+            self.build_edges_parallel_optimized(&mut graph, scan_results, &optimized_detector)?
         } else {
-            self.build_edges_sequential(&mut graph, scan_results)?
+            self.build_edges_sequential_optimized(&mut graph, scan_results, &optimized_detector)?
         };
         
         Ok((graph, import_stats))
     }
     
-    /// Build graph edges sequentially
-    fn build_edges_sequential<T>(&self, graph: &mut DependencyGraph, scan_results: &[T]) -> Result<ImportDetectionStats>
+    /// Build graph edges sequentially - OPTIMIZED
+    fn build_edges_sequential_optimized<T>(
+        &self, 
+        graph: &mut DependencyGraph, 
+        scan_results: &[T],
+        optimized_detector: &ImportDetector,
+    ) -> Result<ImportDetectionStats>
     where 
         T: ScanResult,
     {
@@ -402,16 +410,16 @@ impl CentralityCalculator {
             stats.files_processed += 1;
             
             // Track language
-            if let Some(lang) = self.import_detector.detect_language(result.path()) {
+            if let Some(lang) = optimized_detector.detect_language(result.path()) {
                 *stats.language_breakdown.entry(lang.clone()).or_insert(0) += 1;
             }
             
-            // Extract and resolve imports
+            // Extract and resolve imports using optimized detector
             if let Some(imports) = result.imports() {
                 stats.imports_detected += imports.len();
                 
                 for import_str in imports {
-                    if let Some(resolved_path) = self.import_detector.resolve_import(
+                    if let Some(resolved_path) = optimized_detector.resolve_import(
                         import_str, 
                         result.path(), 
                         &file_path_map
@@ -432,8 +440,22 @@ impl CentralityCalculator {
         Ok(stats)
     }
     
-    /// Build graph edges in parallel
-    fn build_edges_parallel<T>(&self, graph: &mut DependencyGraph, scan_results: &[T]) -> Result<ImportDetectionStats>
+    /// Build graph edges sequentially - LEGACY
+    fn build_edges_sequential<T>(&self, graph: &mut DependencyGraph, scan_results: &[T]) -> Result<ImportDetectionStats>
+    where 
+        T: ScanResult,
+    {
+        let optimized_detector = ImportDetector::with_file_index(self.import_detector.config.clone(), scan_results);
+        self.build_edges_sequential_optimized(graph, scan_results, &optimized_detector)
+    }
+    
+    /// Build graph edges in parallel - OPTIMIZED
+    fn build_edges_parallel_optimized<T>(
+        &self, 
+        graph: &mut DependencyGraph, 
+        scan_results: &[T],
+        optimized_detector: &ImportDetector,
+    ) -> Result<ImportDetectionStats>
     where 
         T: ScanResult + Sync,
     {
@@ -442,14 +464,14 @@ impl CentralityCalculator {
             .map(|result| (result.path(), result))
             .collect();
         
-        // Process imports in parallel
+        // Process imports in parallel using optimized detector
         let import_edges: Vec<_> = scan_results.par_iter()
             .flat_map(|result| {
                 let mut edges = Vec::new();
                 
                 if let Some(imports) = result.imports() {
                     for import_str in imports {
-                        if let Some(resolved_path) = self.import_detector.resolve_import(
+                        if let Some(resolved_path) = optimized_detector.resolve_import(
                             import_str, 
                             result.path(), 
                             &file_path_map
@@ -474,7 +496,7 @@ impl CentralityCalculator {
             .sum();
         
         let language_breakdown: HashMap<String, usize> = scan_results.iter()
-            .filter_map(|result| self.import_detector.detect_language(result.path())
+            .filter_map(|result| optimized_detector.detect_language(result.path())
                 .map(|lang| (lang, 1)))
             .fold(HashMap::new(), |mut acc, (lang, count)| {
                 *acc.entry(lang).or_insert(0) += count;
@@ -495,6 +517,15 @@ impl CentralityCalculator {
         };
         
         Ok(stats)
+    }
+    
+    /// Build graph edges in parallel - LEGACY
+    fn build_edges_parallel<T>(&self, graph: &mut DependencyGraph, scan_results: &[T]) -> Result<ImportDetectionStats>
+    where 
+        T: ScanResult + Sync,
+    {
+        let optimized_detector = ImportDetector::with_file_index(self.import_detector.config.clone(), scan_results);
+        self.build_edges_parallel_optimized(graph, scan_results, &optimized_detector)
     }
     
     /// Normalize centrality scores for integration with heuristics
@@ -632,16 +663,67 @@ impl Default for CentralityCalculator {
     }
 }
 
-/// Import detection and resolution engine
+/// Import detection and resolution engine with pre-computed lookup optimization
 #[derive(Debug, Clone)]
 pub struct ImportDetector {
     config: ImportResolutionConfig,
+    /// Pre-computed lookup map: file stem -> full paths (massive performance improvement)
+    stem_to_paths: HashMap<String, Vec<String>>,
+    /// Pre-computed lookup map: filename -> full paths
+    filename_to_paths: HashMap<String, Vec<String>>,
+    /// Set of all available file paths for quick existence checks
+    available_paths: HashSet<String>,
 }
 
 impl ImportDetector {
     /// Create with configuration
     pub fn with_config(config: ImportResolutionConfig) -> Self {
-        Self { config }
+        Self { 
+            config,
+            stem_to_paths: HashMap::new(),
+            filename_to_paths: HashMap::new(),
+            available_paths: HashSet::new(),
+        }
+    }
+    
+    /// Create with pre-computed lookup maps for massive performance improvement
+    pub fn with_file_index<T>(config: ImportResolutionConfig, scan_results: &[T]) -> Self 
+    where 
+        T: ScanResult,
+    {
+        let mut detector = Self::with_config(config);
+        detector.build_lookup_maps(scan_results);
+        detector
+    }
+    
+    /// Build inverted index mapping file stems/names to full paths
+    /// This eliminates the O(n) scan-all-files bottleneck
+    fn build_lookup_maps<T>(&mut self, scan_results: &[T]) 
+    where 
+        T: ScanResult,
+    {
+        self.stem_to_paths.clear();
+        self.filename_to_paths.clear();
+        self.available_paths.clear();
+        
+        for result in scan_results {
+            let full_path = result.path().to_string();
+            self.available_paths.insert(full_path.clone());
+            
+            let path = Path::new(result.path());
+            
+            // Index by file stem (name without extension)
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                let stem_lower = stem.to_lowercase();
+                self.stem_to_paths.entry(stem_lower).or_insert_with(Vec::new).push(full_path.clone());
+            }
+            
+            // Index by full filename
+            if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                let filename_lower = filename.to_lowercase();
+                self.filename_to_paths.entry(filename_lower).or_insert_with(Vec::new).push(full_path);
+            }
+        }
     }
     
     /// Detect programming language from file extension
@@ -880,11 +962,11 @@ impl ImportDetector {
         self.fuzzy_match_import(&parts, file_map)
     }
     
-    /// Fuzzy matching for import resolution
+    /// Fuzzy matching for import resolution - OPTIMIZED with pre-computed maps
     fn fuzzy_match_import<T>(
         &self,
         import_parts: &[&str],
-        file_map: &HashMap<&str, &T>,
+        _file_map: &HashMap<&str, &T>,
     ) -> Option<String>
     where
         T: ScanResult,
@@ -895,22 +977,36 @@ impl ImportDetector {
         
         let last_part = import_parts.last()?.to_lowercase();
         
-        // Find files that contain the import parts
-        for &file_path in file_map.keys() {
-            let file_path_lower = file_path.to_lowercase();
-            
-            // Check if filename matches
-            if let Some(file_stem) = Path::new(file_path).file_stem() {
-                if let Some(stem_str) = file_stem.to_str() {
-                    if stem_str.to_lowercase() == last_part {
-                        return Some(file_path.to_string());
-                    }
+        // MASSIVE PERFORMANCE IMPROVEMENT: Use pre-computed lookup maps instead of O(n) scan
+        // 1. First try exact stem match (most common case)
+        if let Some(paths) = self.stem_to_paths.get(&last_part) {
+            // Return first match (could be made smarter with scoring)
+            if let Some(first_path) = paths.first() {
+                return Some(first_path.clone());
+            }
+        }
+        
+        // 2. Try filename match
+        if let Some(paths) = self.filename_to_paths.get(&last_part) {
+            if let Some(first_path) = paths.first() {
+                return Some(first_path.clone());
+            }
+        }
+        
+        // 3. Try partial matching against stems
+        for (stem, paths) in &self.stem_to_paths {
+            if stem.contains(&last_part) || last_part.contains(stem) {
+                if let Some(first_path) = paths.first() {
+                    return Some(first_path.clone());
                 }
             }
-            
-            // Check if path contains import parts
-            if import_parts.iter().all(|&part| file_path_lower.contains(&part.to_lowercase())) {
-                return Some(file_path.to_string());
+        }
+        
+        // 4. Fallback: check if path contains all import parts
+        for path in &self.available_paths {
+            let path_lower = path.to_lowercase();
+            if import_parts.iter().all(|&part| path_lower.contains(&part.to_lowercase())) {
+                return Some(path.clone());
             }
         }
         

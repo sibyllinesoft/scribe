@@ -31,12 +31,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = ScalingConfig::default();
         
         // Configure the streaming system with token limits
-        config.streaming.chunk_size = if token_limit < 10_000 {
-            50    // Very small chunks for tight budgets
+        config.streaming.selection_heap_size = if token_limit < 10_000 {
+            200   // Small heap for tight budgets
         } else if token_limit < 50_000 {
-            200   // Small chunks
+            500   // Medium heap
         } else {
-            500   // Standard chunks
+            1000  // Standard heap
+        };
+        
+        config.streaming.concurrency_limit = if token_limit < 10_000 {
+            2     // Limited concurrency for tight budgets
+        } else if token_limit < 50_000 {
+            4     // Medium concurrency
+        } else {
+            8     // High concurrency
         };
         
         config.streaming.memory_limit = if token_limit < 10_000 {
@@ -80,7 +88,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Try with very small memory limit
             let mut extreme_config = ScalingConfig::default();
             extreme_config.streaming.memory_limit = 1024 * 1024; // 1MB limit
-            extreme_config.streaming.chunk_size = 10; // Tiny chunks
+            extreme_config.streaming.selection_heap_size = 50; // Very small heap
+            extreme_config.streaming.concurrency_limit = 1; // Single-threaded for consistency
             
             let mut extreme_engine = ScalingEngine::new(extreme_config).await?;
             

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::error::{ScalingResult, ScalingError};
-use crate::streaming::FileMetadata;
+use crate::streaming::{FileMetadata, StreamingSelector, ScoredFile};
 use crate::engine::{ScalingConfig, ProcessingResult};
 use crate::positioning::{ContextPositioner, ContextPositioningConfig, PositionedSelection};
 
@@ -135,9 +135,9 @@ pub struct ScalingSelectionResult {
     pub processing_result: ProcessingResult,
 }
 
-/// Scored file for selection
+/// Scored file for selection (selector-specific version)
 #[derive(Debug, Clone)]
-struct ScoredFile {
+struct SelectorScoredFile {
     metadata: FileMetadata,
     tokens: usize,
     score: f64,
@@ -189,21 +189,15 @@ impl ScalingSelector {
             info!("Query hint for positioning: '{}'", query);
         }
         
-        // Phase 1: Fast repository discovery using scaling system
+        // Phase 1: Optimized streaming discovery and selection
         let discovery_start = Instant::now();
-        let all_files = self.discover_files_with_scaling(repo_path).await?;
+        let selected_files = self.discover_and_select_files_streaming(repo_path).await?;
         let discovery_time = discovery_start.elapsed();
         
-        info!("Discovered {} files in {:?}", all_files.len(), discovery_time);
-        
-        // Phase 2: Apply intelligent selection
-        let selection_start = Instant::now();
-        let selected_files = self.apply_intelligent_selection(&all_files).await?;
-        let selection_time = selection_start.elapsed();
-        
-        info!("Selected {} files in {:?}", selected_files.len(), selection_time);
+        info!("Selected {} files in {:?}", selected_files.len(), discovery_time);
         
         // Phase 3: Apply context positioning if enabled
+        let total_files_considered = selected_files.len();
         let (positioned_selection, final_files, final_tokens) = if self.config.positioning_config.enable_positioning {
             let positioner = ContextPositioner::new(self.config.positioning_config.clone());
             let positioned = positioner.position_files(selected_files.clone(), query_hint).await?;
@@ -218,7 +212,7 @@ impl ScalingSelector {
             (Some(positioned), selected_files, tokens)
         } else {
             let tokens = self.calculate_tokens_used(&selected_files);
-            (None, selected_files.clone(), tokens)
+            (None, selected_files, tokens)
         };
         
         // Phase 4: Apply scaling optimizations to selected subset
@@ -234,55 +228,76 @@ impl ScalingSelector {
         Ok(ScalingSelectionResult {
             selected_files: final_files,
             positioned_selection,
-            total_files_considered: all_files.len(),
+            total_files_considered, // We only process selected files now
             token_utilization,
             tokens_used: final_tokens,
             algorithm_used: self.config.selection_algorithm,
-            selection_time,
+            selection_time: discovery_time, // This now includes both discovery and selection
             processing_result,
         })
     }
     
-    /// Fast file discovery (direct implementation to avoid recursion)
-    async fn discover_files_with_scaling(&self, repo_path: &Path) -> ScalingResult<Vec<FileMetadata>> {
-        use walkdir::WalkDir;
+    /// Optimized streaming file discovery with intelligent selection
+    async fn discover_and_select_files_streaming(&self, repo_path: &Path) -> ScalingResult<Vec<FileMetadata>> {
+        info!("Using optimized streaming file discovery");
         
-        let mut files = Vec::new();
+        // Create streaming selector
+        let streaming_config = crate::streaming::StreamingConfig {
+            enable_streaming: true,
+            concurrency_limit: num_cpus::get() * 2,
+            memory_limit: 100 * 1024 * 1024, // 100MB
+            selection_heap_size: self.config.token_budget * 2, // Allow larger heap for better selection
+        };
         
-        for entry in WalkDir::new(repo_path)
-            .follow_links(false)
-            .max_depth(10) 
-        {
-            match entry {
-                Ok(entry) => {
-                    if entry.file_type().is_file() {
-                        let (size, modified) = match entry.metadata() {
-                            Ok(metadata) => {
-                                let size = metadata.len();
-                                let modified = metadata.modified().unwrap_or_else(|_| std::time::SystemTime::now());
-                                (size, modified)
-                            }
-                            Err(_) => (0, std::time::SystemTime::now()),
-                        };
-                        
-                        let metadata = FileMetadata {
-                            path: entry.path().to_path_buf(),
-                            size,
-                            modified,
-                            language: self.detect_language(entry.path()),
-                            file_type: self.classify_file_type(entry.path()),
-                        };
-                        
-                        files.push(metadata);
-                    }
-                }
-                Err(e) => {
-                    warn!("Skipping file due to error: {}", e);
-                }
+        let streaming_selector = StreamingSelector::new(streaming_config);
+        
+        // Calculate target file count based on token budget
+        let target_count = self.estimate_target_file_count();
+        
+        // Create scoring functions
+        let score_fn = {
+            let token_budget = self.config.token_budget;
+            move |file: &FileMetadata| -> f64 {
+                Self::calculate_file_score_static(file, token_budget)
             }
-        }
+        };
         
-        Ok(files)
+        let token_fn = {
+            let token_budget = self.config.token_budget;
+            move |file: &FileMetadata| -> usize {
+                Self::estimate_tokens_static(file, token_budget)
+            }
+        };
+        
+        // Use streaming selection for O(N log K) performance
+        let scored_files = streaming_selector
+            .select_files_streaming(
+                repo_path,
+                target_count,
+                self.config.token_budget,
+                score_fn,
+                token_fn,
+            )
+            .await?;
+        
+        // Extract metadata from scored files
+        let selected_files: Vec<FileMetadata> = scored_files
+            .into_iter()
+            .map(|scored| scored.metadata)
+            .collect();
+        
+        info!("Streaming selection completed: {} files selected", selected_files.len());
+        Ok(selected_files)
+    }
+    
+    /// Estimate target number of files to select
+    fn estimate_target_file_count(&self) -> usize {
+        // Conservative estimate: aim for ~300 tokens per file on average
+        // This gives us room for both small config files and larger source files
+        let estimated_files = self.config.token_budget / 300;
+        
+        // Clamp between reasonable bounds
+        estimated_files.clamp(5, 200)
     }
     
     /// Simple language detection based on file extension
@@ -335,13 +350,13 @@ impl ScalingSelector {
     /// Baseline selection: simple importance-based greedy selection
     fn apply_baseline_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
         // Score all files
-        let mut scored_files: Vec<ScoredFile> = files.iter()
+        let mut scored_files: Vec<SelectorScoredFile> = files.iter()
             .map(|file| {
                 let tokens = self.estimate_tokens(file);
                 let score = self.calculate_file_score(file);
                 let category = self.classify_file(file);
                 
-                ScoredFile {
+                SelectorScoredFile {
                     metadata: file.clone(),
                     tokens,
                     score,
@@ -370,13 +385,13 @@ impl ScalingSelector {
     /// Quota-based selection with category allocation
     fn apply_quota_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
         // Score all files
-        let mut scored_files: Vec<ScoredFile> = files.iter()
+        let mut scored_files: Vec<SelectorScoredFile> = files.iter()
             .map(|file| {
                 let tokens = self.estimate_tokens(file);
                 let score = self.calculate_file_score(file);
                 let category = self.classify_file(file);
                 
-                ScoredFile {
+                SelectorScoredFile {
                     metadata: file.clone(),
                     tokens,
                     score,
@@ -386,7 +401,7 @@ impl ScalingSelector {
             .collect();
         
         // Group by category
-        let mut categorized: HashMap<FileCategory, Vec<ScoredFile>> = HashMap::new();
+        let mut categorized: HashMap<FileCategory, Vec<SelectorScoredFile>> = HashMap::new();
         for scored_file in scored_files {
             categorized.entry(scored_file.category)
                 .or_insert_with(Vec::new)
@@ -614,6 +629,119 @@ impl ScalingSelector {
         }
         
         FileCategory::General
+    }
+    
+    /// Static version of file scoring for use in streaming selector
+    fn calculate_file_score_static(file: &FileMetadata, token_budget: usize) -> f64 {
+        let mut score: f64 = 0.1; // Lower base score to be more selective
+        
+        let path_str = file.path.to_string_lossy().to_lowercase();
+        
+        // High-priority entry points (like original scribe)
+        if path_str.contains("main") || path_str.contains("index") {
+            score += 2.0; // Very high priority
+        }
+        if path_str.contains("lib.rs") || path_str.contains("mod.rs") {
+            score += 1.5; // High priority for Rust entry points
+        }
+        if path_str.contains("__init__.py") {
+            score += 1.3; // High priority for Python packages
+        }
+        
+        // Root-level files get major boost (like README, setup files)
+        let path_components = file.path.components().count();
+        if path_components <= 2 { // Root or one level down
+            score += 1.0;
+            
+            // Special boost for important root files
+            if path_str.contains("readme") || path_str.contains("license") || 
+               path_str.contains("cargo.toml") || path_str.contains("package.json") ||
+               path_str.contains("pyproject.toml") || path_str.contains("setup.py") {
+                score += 1.5;
+            }
+        }
+        
+        // Language importance (more aggressive)
+        match file.language.as_str() {
+            "Rust" | "Python" | "JavaScript" | "TypeScript" => score += 0.8,
+            "C" | "C++" | "Go" | "Java" => score += 0.6,
+            "Shell" => score += 0.4, // Build scripts
+            _ => {}
+        }
+        
+        // File type importance
+        match file.file_type.as_str() {
+            "Source" => score += 0.6,
+            "Configuration" => score += 0.5, // Config files are very important  
+            "Documentation" => score += 0.3,
+            _ => {}
+        }
+        
+        // Penalize very large files more heavily to stay within budget
+        if file.size > 50_000 {
+            score -= 0.5;
+        }
+        if file.size > 100_000 {
+            score -= 1.0;
+        }
+        
+        // Boost for certain important patterns
+        if path_str.contains("test") && !path_str.contains("tests/") {
+            score += 0.2; // Important test files but not test directories
+        }
+        
+        // Penalize deep nesting (prefer top-level files)
+        if path_components > 4 {
+            score -= 0.3 * (path_components - 4) as f64;
+        }
+        
+        // Boost small, important files
+        if file.size < 10_000 && (path_str.contains("config") || path_str.contains("env")) {
+            score += 0.4;
+        }
+        
+        score.clamp(0.0, 5.0) // Allow higher scores for very important files
+    }
+    
+    /// Static version of token estimation for use in streaming selector
+    fn estimate_tokens_static(file: &FileMetadata, token_budget: usize) -> usize {
+        // Use more realistic token estimation like original scribe
+        // Original scribe uses ~3.5 chars per token on average
+        let base_tokens = ((file.size as f64) / 3.5) as usize;
+        
+        // Add minimum token count for very small files to avoid underestimation
+        // Make minimum higher for small budgets to be more selective
+        let min_tokens = if token_budget < 5000 {
+            100 // Higher minimum for small budgets
+        } else {
+            50  // Standard minimum
+        };
+        let base_tokens = base_tokens.max(min_tokens);
+        
+        // Adjust based on file type (more realistic multipliers)
+        let multiplier = match file.file_type.as_str() {
+            "Source" => 1.2,      // Source code has more complexity
+            "Documentation" => 1.0, // Documentation is standard
+            "Configuration" => 0.8,  // Config files are more compact
+            _ => 1.1,             // Default higher to be conservative
+        };
+        
+        // Apply language-specific adjustments
+        let language_multiplier = match file.language.as_str() {
+            "Rust" => 1.3,       // Rust is very verbose
+            "JavaScript" | "TypeScript" => 1.2, // JS/TS moderately verbose
+            "Python" => 1.1,      // Python is readable but efficient
+            "C" | "Go" => 1.0,    // C/Go are concise
+            "HTML" | "CSS" => 0.9, // Markup is less token-dense
+            "JSON" | "YAML" | "TOML" => 0.7, // Data formats are compact
+            _ => 1.0,             // Default
+        };
+        
+        // Final calculation with realistic scaling
+        let final_tokens = (base_tokens as f64 * multiplier * language_multiplier) as usize;
+        
+        // Cap extremely large files to avoid single file consuming entire budget
+        final_tokens.min(token_budget / 4) // No single file > 25% of budget
     }
 }
 

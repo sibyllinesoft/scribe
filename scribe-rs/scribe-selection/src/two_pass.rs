@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
+use rayon::prelude::*;
 use scribe_core::{Result, ScribeError};
 
 /// Configuration for the two-pass selection system
@@ -103,6 +104,10 @@ pub struct SelectionContext<'a> {
     pub interfaces: &'a HashMap<String, Vec<String>>,
     /// Current budget remaining
     pub remaining_budget: usize,
+    /// Reverse dependency lookup: file -> files that depend on it
+    pub dependents_map: &'a HashMap<String, Vec<String>>,
+    /// Pre-computed count of selected source files (O(1) optimization)
+    pub selected_source_count: usize,
 }
 
 /// File information for selection decisions
@@ -227,18 +232,23 @@ impl TwoPassSelector {
         let mut selected = Vec::new();
         let mut remaining_budget = budget;
         
-        // Sort files by importance * confidence score
-        let mut candidates: Vec<(&String, &FileInfo)> = available_files.iter().collect();
+        // Calculate confidence scores in parallel and sort by importance * confidence
+        let mut candidates: Vec<(&String, &FileInfo, f64)> = available_files
+            .par_iter()
+            .map(|(file_path, file_info)| {
+                let confidence = self.calculate_confidence(file_info, dependencies);
+                (file_path, file_info, confidence)
+            })
+            .collect();
+        
         candidates.sort_by(|a, b| {
-            let score_a = a.1.importance * self.calculate_confidence(a.1, dependencies);
-            let score_b = b.1.importance * self.calculate_confidence(b.1, dependencies);
+            let score_a = a.1.importance * a.2; // a.2 is pre-calculated confidence
+            let score_b = b.1.importance * b.2; // b.2 is pre-calculated confidence
             score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         // Greedily select files while budget allows
-        for (file_path, file_info) in candidates {
-            let confidence = self.calculate_confidence(file_info, dependencies);
-            
+        for (file_path, file_info, confidence) in candidates {
             if confidence >= self.config.speculation_threshold 
                 && file_info.token_count <= remaining_budget {
                 selected.push(file_path.clone());
@@ -272,6 +282,19 @@ impl TwoPassSelector {
             )?;
         }
         
+        // Pre-build reverse dependency lookup for O(1) access
+        let mut dependents_map: HashMap<String, Vec<String>> = HashMap::new();
+        for (file_path, file_info) in available_files {
+            for dep in &file_info.dependencies {
+                dependents_map.entry(dep.clone()).or_default().push(file_path.clone());
+            }
+        }
+        
+        // Pre-compute selected source count to avoid O(N) iteration in rules
+        let selected_source_count = selected_files.iter()
+            .filter(|f| available_files.get(*f).map_or(false, |info| info.file_type == "source"))
+            .count();
+        
         // Apply rules to address gaps
         let context = SelectionContext {
             selected_files,
@@ -279,23 +302,23 @@ impl TwoPassSelector {
             dependencies,
             interfaces,
             remaining_budget,
+            dependents_map: &dependents_map,
+            selected_source_count,
         };
         
-        // Score all unselected files using rules
-        let mut rule_scores: HashMap<String, f64> = HashMap::new();
-        
-        for (file_path, file_info) in available_files {
-            if !selected_files.contains(file_path) && file_info.token_count <= remaining_budget {
-                let mut total_score = 0.0;
-                
-                for rule in &self.rules {
-                    let rule_score = (rule.evaluator)(&context, file_path);
-                    total_score += rule_score * rule.weight;
-                }
-                
-                rule_scores.insert(file_path.clone(), total_score);
-            }
-        }
+        // Score all unselected files using rules (parallel processing)
+        let rule_scores: HashMap<String, f64> = available_files
+            .par_iter()
+            .filter(|(file_path, file_info)| {
+                !selected_files.contains(*file_path) && file_info.token_count <= remaining_budget
+            })
+            .map(|(file_path, _file_info)| {
+                let total_score = self.rules.iter()
+                    .map(|rule| (rule.evaluator)(&context, file_path) * rule.weight)
+                    .sum();
+                (file_path.clone(), total_score)
+            })
+            .collect();
         
         // Select highest scoring files within budget
         let mut sorted_scores: Vec<(&String, &f64)> = rule_scores.iter().collect();
@@ -431,11 +454,14 @@ impl TwoPassSelector {
                 weight: 0.25,
                 evaluator: |context, file_path| {
                     if let Some(file_info) = context.available_files.get(file_path) {
-                        // Score based on how many selected files depend on this file
-                        let satisfies_dependencies = context.selected_files.iter()
-                            .filter_map(|selected| context.available_files.get(selected))
-                            .filter(|selected_info| selected_info.dependencies.contains(&file_path.to_string()))
-                            .count();
+                        // Score based on how many selected files depend on this file (O(1) lookup)
+                        let satisfies_dependencies = context.dependents_map.get(file_path)
+                            .map(|dependents| {
+                                dependents.iter()
+                                    .filter(|dependent| context.selected_files.contains(*dependent))
+                                    .count()
+                            })
+                            .unwrap_or(0);
                         
                         // Also consider if this file's own dependencies are satisfied
                         let missing_deps = file_info.dependencies.iter()
@@ -572,11 +598,8 @@ impl TwoPassSelector {
                 evaluator: |context, file_path| {
                     if let Some(file_info) = context.available_files.get(file_path) {
                         if file_info.file_type == "config" {
-                            let related_sources = context.selected_files.iter()
-                                .filter(|f| context.available_files.get(*f).map_or(false, |info| info.file_type == "source"))
-                                .count();
-                            
-                            if related_sources > 0 {
+                            // O(1) optimization: Use pre-computed selected source count
+                            if context.selected_source_count > 0 {
                                 0.7 // Config files are useful when we have source code
                             } else {
                                 0.2
@@ -743,12 +766,27 @@ mod tests {
         let mut selected = HashSet::new();
         selected.insert("src/main.rs".to_string());
         
+        // Pre-build reverse dependency lookup for testing
+        let mut dependents_map: HashMap<String, Vec<String>> = HashMap::new();
+        for (file_path, file_info) in &files {
+            for dep in &file_info.dependencies {
+                dependents_map.entry(dep.clone()).or_default().push(file_path.clone());
+            }
+        }
+        
+        // Pre-compute selected source count for testing
+        let selected_source_count = selected.iter()
+            .filter(|f| files.get(*f).map_or(false, |info| info.file_type == "source"))
+            .count();
+        
         let context = SelectionContext {
             selected_files: &selected,
             available_files: &files,
             dependencies: &dependencies,
             interfaces: &interfaces,
             remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count,
         };
         
         // Test dependency completeness rule

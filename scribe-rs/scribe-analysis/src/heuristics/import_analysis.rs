@@ -32,6 +32,91 @@ pub struct ImportGraph {
     pagerank_scores: Option<Vec<f64>>,
 }
 
+/// Fast import resolution keymap (O(1) lookups instead of O(F) scans)
+#[derive(Debug)]
+struct ImportKeyMap {
+    /// Exact path matches: normalized_path -> file_index
+    exact: HashMap<String, usize>,
+    /// Suffix matches: stem/base -> file_index  
+    suffix: HashMap<String, usize>,
+}
+
+impl ImportKeyMap {
+    fn new<T>(files: &[T]) -> Self 
+    where T: ScanResult 
+    {
+        let mut exact = HashMap::with_capacity(files.len());
+        let mut suffix = HashMap::with_capacity(files.len() * 2);
+        
+        for (i, file) in files.iter().enumerate() {
+            let path = file.path();
+            
+            // Add exact normalized keys
+            for key in Self::normalized_keys(path) {
+                exact.insert(key, i);
+            }
+            
+            // Add suffix keys  
+            for key in Self::suffix_keys(path) {
+                suffix.insert(key, i);
+            }
+        }
+        
+        Self { exact, suffix }
+    }
+    
+    fn resolve_import(&self, normalized_import: &str) -> Option<usize> {
+        // Try exact match first
+        if let Some(&idx) = self.exact.get(normalized_import) {
+            return Some(idx);
+        }
+        
+        // Try suffix match
+        self.suffix.get(normalized_import).copied()
+    }
+    
+    fn normalized_keys(path: &str) -> Vec<String> {
+        let mut keys = Vec::new();
+        
+        // Add the path as-is
+        keys.push(path.to_string());
+        
+        // Add without leading ./
+        if path.starts_with("./") {
+            keys.push(path[2..].to_string());
+        }
+        
+        // Add path with common extensions removed
+        if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
+            if let Some(parent) = Path::new(path).parent().and_then(|p| p.to_str()) {
+                if parent != "" {
+                    keys.push(format!("{}/{}", parent, stem));
+                } else {
+                    keys.push(stem.to_string());
+                }
+            }
+        }
+        
+        keys
+    }
+    
+    fn suffix_keys(path: &str) -> Vec<String> {
+        let mut keys = Vec::new();
+        
+        // Add filename without extension
+        if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
+            keys.push(stem.to_string());
+        }
+        
+        // Add directory/filename patterns
+        if let Some(filename) = Path::new(path).file_name().and_then(|s| s.to_str()) {
+            keys.push(filename.to_string());
+        }
+        
+        keys
+    }
+}
+
 /// Builder for constructing import graphs from scan results
 #[derive(Debug)]
 pub struct ImportGraphBuilder {
@@ -68,7 +153,7 @@ impl ImportGraphBuilder {
         })
     }
     
-    /// Build import graph from scan results
+    /// Build import graph from scan results (OPTIMIZED: O(1) lookups instead of O(F×I))
     pub fn build_graph<T>(&mut self, files: &[T]) -> Result<ImportGraph> 
     where 
         T: ScanResult,
@@ -80,11 +165,15 @@ impl ImportGraphBuilder {
             graph.add_node(file.path().to_string());
         }
         
+        // Build keymap for O(1) import resolution (MAJOR PERFORMANCE FIX!)
+        let keymap = ImportKeyMap::new(files);
+        
         // Build edges based on import relationships
         for (file_idx, file) in files.iter().enumerate() {
             if let Some(imports) = file.imports() {
                 for import_path in imports {
-                    if let Some(target_idx) = self.find_matching_file(import_path, files) {
+                    let normalized_import = self.normalize_import_path(import_path);
+                    if let Some(target_idx) = keymap.resolve_import(&normalized_import) {
                         graph.add_edge(file_idx, target_idx);
                     }
                 }

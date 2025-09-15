@@ -9,7 +9,11 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+use petgraph::{Graph, Directed, graph::NodeIndex};
+use petgraph::algo::kosaraju_scc;
+use petgraph::visit::EdgeRef;
+use rayon::prelude::*;
 
 use crate::error::{ScalingResult, ScalingError};
 use crate::streaming::FileMetadata;
@@ -175,40 +179,72 @@ impl ContextPositioner {
         })
     }
     
-    /// Calculate centrality scores for all files
+    /// Calculate centrality scores for all files using optimized algorithms
     async fn calculate_centrality_scores(&self, files: Vec<FileMetadata>) -> ScalingResult<Vec<FileWithCentrality>> {
         debug!("Calculating centrality scores for {} files", files.len());
         
-        // Build dependency graph from import/export relationships
-        let dependency_graph = self.build_dependency_graph(&files).await?;
-        
-        let mut files_with_centrality = Vec::new();
-        
-        for file in files {
-            let centrality = self.calculate_file_centrality(&file, &dependency_graph).await?;
-            
-            files_with_centrality.push(FileWithCentrality {
-                metadata: file,
-                centrality,
-                query_relevance: 0.0, // Will be set later
-                relatedness_group: String::new(), // Will be set later
-            });
+        if files.is_empty() {
+            return Ok(Vec::new());
         }
         
+        // Build optimized dependency graph
+        let (graph, node_map) = self.build_dependency_graph(&files).await?;
+        
+        // Calculate all centrality measures efficiently using petgraph
+        let centrality_scores = self.calculate_all_centralities(&graph, &node_map).await?;
+        
+        // Map centrality scores back to files in parallel
+        let files_with_centrality: Vec<FileWithCentrality> = files
+            .into_par_iter()
+            .map(|file| {
+                let file_key = self.file_to_key(&file.path);
+                let centrality = centrality_scores.get(&file_key)
+                    .cloned()
+                    .unwrap_or_default();
+                
+                FileWithCentrality {
+                    metadata: file,
+                    centrality,
+                    query_relevance: 0.0, // Will be set later
+                    relatedness_group: String::new(), // Will be set later
+                }
+            })
+            .collect();
+        
+        debug!("Calculated centrality for {} files", files_with_centrality.len());
         Ok(files_with_centrality)
     }
     
-    /// Build dependency graph from file relationships  
-    async fn build_dependency_graph(&self, files: &[FileMetadata]) -> ScalingResult<HashMap<String, Vec<String>>> {
-        let mut graph = HashMap::new();
+    /// Build dependency graph from file relationships using petgraph
+    async fn build_dependency_graph(&self, files: &[FileMetadata]) -> ScalingResult<(Graph<String, (), Directed>, HashMap<String, NodeIndex>)> {
+        let mut graph = Graph::new();
+        let mut node_map = HashMap::new();
         
+        // First pass: create nodes for all files
+        for file in files {
+            let file_key = self.file_to_key(&file.path);
+            let node_idx = graph.add_node(file_key.clone());
+            node_map.insert(file_key, node_idx);
+        }
+        
+        // Second pass: create edges based on dependencies
         for file in files {
             let file_key = self.file_to_key(&file.path);
             let dependencies = self.extract_dependencies(file).await?;
-            graph.insert(file_key, dependencies);
+            
+            if let Some(&from_idx) = node_map.get(&file_key) {
+                for dep in dependencies {
+                    if let Some(&to_idx) = node_map.get(&dep) {
+                        graph.add_edge(from_idx, to_idx, ());
+                    }
+                }
+            }
         }
         
-        Ok(graph)
+        debug!("Built dependency graph: {} nodes, {} edges", 
+               graph.node_count(), graph.edge_count());
+        
+        Ok((graph, node_map))
     }
     
     /// Extract dependencies from a file (imports, includes, etc.)
@@ -263,101 +299,157 @@ impl ContextPositioner {
         Ok(dependencies)
     }
     
-    /// Calculate centrality scores for a single file
-    async fn calculate_file_centrality(
-        &self, 
-        file: &FileMetadata, 
-        graph: &HashMap<String, Vec<String>>
-    ) -> ScalingResult<CentralityScores> {
-        let file_key = self.file_to_key(&file.path);
+    /// Calculate all centrality measures efficiently using petgraph algorithms
+    async fn calculate_all_centralities(
+        &self,
+        graph: &Graph<String, (), Directed>,
+        node_map: &HashMap<String, NodeIndex>,
+    ) -> ScalingResult<HashMap<String, CentralityScores>> {
+        let mut centrality_scores = HashMap::new();
         
-        // Calculate degree centrality (number of connections)
-        let degree = self.calculate_degree_centrality(&file_key, graph);
-        
-        // Calculate PageRank centrality (importance based on references)
-        let pagerank = self.calculate_pagerank_centrality(&file_key, graph);
-        
-        // Calculate betweenness centrality (bridge between components)
-        let betweenness = self.calculate_betweenness_centrality(&file_key, graph);
-        
-        // Combine centrality scores with weights
-        let combined = (degree * 0.3) + (pagerank * 0.5) + (betweenness * 0.2);
-        
-        Ok(CentralityScores {
-            degree,
-            pagerank, 
-            betweenness,
-            combined,
-        })
-    }
-    
-    /// Calculate degree centrality for a file
-    fn calculate_degree_centrality(&self, file_key: &str, graph: &HashMap<String, Vec<String>>) -> f64 {
-        let out_degree = graph.get(file_key).map(|deps| deps.len()).unwrap_or(0);
-        
-        // Count incoming edges (files that depend on this one)
-        let in_degree = graph.values()
-            .map(|deps| deps.iter().filter(|dep| *dep == file_key).count())
-            .sum::<usize>();
-        
-        // Normalize by potential maximum degree
-        let total_degree = out_degree + in_degree;
-        let max_possible = graph.len().saturating_sub(1);
-        
-        if max_possible == 0 {
-            0.0
-        } else {
-            total_degree as f64 / max_possible as f64
+        if graph.node_count() == 0 {
+            return Ok(centrality_scores);
         }
-    }
-    
-    /// Calculate PageRank centrality (simplified)
-    fn calculate_pagerank_centrality(&self, file_key: &str, graph: &HashMap<String, Vec<String>>) -> f64 {
-        // Simplified PageRank: count weighted incoming references
-        let incoming_refs = graph.values()
-            .map(|deps| {
-                let weight = if deps.is_empty() { 0.0 } else { 1.0 / deps.len() as f64 };
-                deps.iter().filter(|dep| *dep == file_key).count() as f64 * weight
+        
+        // Calculate PageRank using simplified approach (petgraph doesn't have built-in PageRank)
+        // We'll implement a basic version or use degree centrality as approximation
+        let pagerank_scores = self.calculate_simple_pagerank(graph, node_map)?;
+        
+        // Calculate degree centrality in parallel
+        let degree_scores: Vec<(NodeIndex, f64)> = node_map
+            .par_iter()
+            .map(|(_, &node_idx)| {
+                let in_degree = graph.edges_directed(node_idx, petgraph::Incoming).count();
+                let out_degree = graph.edges_directed(node_idx, petgraph::Outgoing).count();
+                let total_degree = in_degree + out_degree;
+                let max_possible = graph.node_count().saturating_sub(1);
+                
+                let normalized_degree = if max_possible == 0 {
+                    0.0
+                } else {
+                    total_degree as f64 / max_possible as f64
+                };
+                
+                (node_idx, normalized_degree)
             })
-            .sum::<f64>();
-            
-        // Add damping factor and normalize
-        let damping = 0.85;
-        let num_files = graph.len() as f64;
+            .collect();
         
-        if num_files == 0.0 {
-            0.0
-        } else {
-            ((1.0 - damping) / num_files) + (damping * incoming_refs / num_files)
+        // Calculate betweenness centrality using strongly connected components
+        let betweenness_scores = self.calculate_betweenness_from_scc(graph, node_map)?;
+        
+        // Combine all scores
+        for (file_key, &node_idx) in node_map {
+            let pagerank = pagerank_scores.get(node_idx.index()).copied().unwrap_or(0.0);
+            let degree = degree_scores
+                .iter()
+                .find(|(idx, _)| *idx == node_idx)
+                .map(|(_, score)| *score)
+                .unwrap_or(0.0);
+            let betweenness = betweenness_scores.get(&node_idx).copied().unwrap_or(0.0);
+            
+            // Combine centrality scores with weights
+            let combined = (degree * 0.3) + (pagerank * 0.5) + (betweenness * 0.2);
+            
+            centrality_scores.insert(file_key.clone(), CentralityScores {
+                degree,
+                pagerank,
+                betweenness,
+                combined,
+            });
         }
+        
+        debug!("Calculated centrality scores for {} files", centrality_scores.len());
+        Ok(centrality_scores)
     }
     
-    /// Calculate betweenness centrality (simplified)
-    fn calculate_betweenness_centrality(&self, file_key: &str, graph: &HashMap<String, Vec<String>>) -> f64 {
-        // Simplified betweenness: files that appear in many dependency paths
-        let mut betweenness = 0.0;
+    /// Calculate betweenness centrality using strongly connected components
+    fn calculate_betweenness_from_scc(
+        &self,
+        graph: &Graph<String, (), Directed>,
+        node_map: &HashMap<String, NodeIndex>,
+    ) -> ScalingResult<HashMap<NodeIndex, f64>> {
+        let mut betweenness_scores = HashMap::new();
         
-        // Count how many files this file connects to (transitively)
-        if let Some(dependencies) = graph.get(file_key) {
-            betweenness += dependencies.len() as f64;
+        // Use Kosaraju's algorithm to find strongly connected components
+        let sccs = kosaraju_scc(graph);
+        
+        // Calculate betweenness based on component connectivity
+        for &node_idx in node_map.values() {
+            let mut betweenness = 0.0;
             
-            // Add bonus for connecting different directory structures
-            let mut dirs_connected = HashSet::new();
-            for dep in dependencies {
-                if let Some(dir) = dep.rfind('/') {
-                    dirs_connected.insert(&dep[..dir]);
+            // Find which SCC this node belongs to
+            let node_scc = sccs.iter().position(|scc| scc.contains(&node_idx));
+            
+            if let Some(scc_idx) = node_scc {
+                // Count connections to other SCCs
+                let out_edges: HashSet<usize> = graph
+                    .edges_directed(node_idx, petgraph::Outgoing)
+                    .filter_map(|edge| {
+                        let target = edge.target();
+                        sccs.iter().position(|scc| scc.contains(&target))
+                    })
+                    .filter(|&target_scc| target_scc != scc_idx)
+                    .collect();
+                
+                let in_edges: HashSet<usize> = graph
+                    .edges_directed(node_idx, petgraph::Incoming)
+                    .filter_map(|edge| {
+                        let source = edge.source();
+                        sccs.iter().position(|scc| scc.contains(&source))
+                    })
+                    .filter(|&source_scc| source_scc != scc_idx)
+                    .collect();
+                
+                // Betweenness is based on how many different components this node connects
+                betweenness = (out_edges.len() + in_edges.len()) as f64;
+                
+                // Normalize by maximum possible connections
+                let max_components = sccs.len().saturating_sub(1);
+                if max_components > 0 {
+                    betweenness /= max_components as f64;
                 }
             }
-            betweenness += dirs_connected.len() as f64 * 0.5;
+            
+            betweenness_scores.insert(node_idx, betweenness);
         }
         
-        // Normalize
-        let max_possible = graph.len() as f64;
-        if max_possible == 0.0 {
-            0.0
-        } else {
-            betweenness / max_possible
+        Ok(betweenness_scores)
+    }
+    
+    /// Calculate simplified PageRank scores
+    fn calculate_simple_pagerank(
+        &self,
+        graph: &Graph<String, (), Directed>,
+        node_map: &HashMap<String, NodeIndex>,
+    ) -> ScalingResult<Vec<f64>> {
+        let node_count = graph.node_count();
+        if node_count == 0 {
+            return Ok(Vec::new());
         }
+        
+        let mut scores = vec![1.0 / node_count as f64; node_count];
+        let damping = 0.85;
+        let iterations = 10; // Simple approximation
+        
+        for _ in 0..iterations {
+            let mut new_scores = vec![(1.0 - damping) / node_count as f64; node_count];
+            
+            for &node_idx in node_map.values() {
+                let out_degree = graph.edges_directed(node_idx, petgraph::Outgoing).count();
+                if out_degree > 0 {
+                    let contribution = scores[node_idx.index()] * damping / out_degree as f64;
+                    
+                    for edge in graph.edges_directed(node_idx, petgraph::Outgoing) {
+                        let target_idx = edge.target().index();
+                        new_scores[target_idx] += contribution;
+                    }
+                }
+            }
+            
+            scores = new_scores;
+        }
+        
+        Ok(scores)
     }
     
     /// Calculate query relevance scores if query hint provided
