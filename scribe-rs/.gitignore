@@ -65,6 +65,10 @@ src/bin/
 templates/
 FRONTEND_BUNDLE_SETUP.md
 
+# Installation and development scripts
+install-scribe.sh
+install-*.sh
+
 # Parent directory clutter
 ../RUST_PARITY_TODO.md
 ../archive/

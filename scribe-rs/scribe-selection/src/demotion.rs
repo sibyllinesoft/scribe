@@ -315,12 +315,16 @@ impl DemotionEngine {
         };
         
         let demoted_tokens = if demoted_content.is_empty() {
-            eprintln!("🚨 CHUNK DEMOTION BUG: Empty demoted content for {}", file_path);
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("CHUNK DEMOTION BUG: Empty demoted content for {}", file_path);
+            }
             1 // Minimum tokens for empty content
         } else {
             let word_count = demoted_content.split_whitespace().count();
-            eprintln!("🔍 CHUNK DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens", 
-                     file_path, demoted_content.len(), word_count, std::cmp::max(1, word_count));
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("CHUNK DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens", 
+                         file_path, demoted_content.len(), word_count, std::cmp::max(1, word_count));
+            }
             std::cmp::max(1, word_count)
         };
 
@@ -390,12 +394,16 @@ impl DemotionEngine {
         
         // Better token estimation based on actual content
         let demoted_tokens = if demoted_content.is_empty() {
-            eprintln!("🚨 DEMOTION BUG: Empty demoted content for {}", file_path);
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("DEMOTION BUG: Empty demoted content for {}", file_path);
+            }
             1 // Minimum tokens for empty content
         } else {
             let word_count = demoted_content.split_whitespace().count();
-            eprintln!("🔍 DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens", 
-                     file_path, demoted_content.len(), word_count, std::cmp::max(1, word_count));
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens", 
+                         file_path, demoted_content.len(), word_count, std::cmp::max(1, word_count));
+            }
             std::cmp::max(1, word_count)
         };
 

@@ -308,46 +308,66 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
         
         match quick_scale_estimate(path.as_ref()).await {
             Ok((file_count, estimated_duration, _memory_usage)) => {
-                eprintln!("📊 Scaling estimate: {} files, {:?} duration", file_count, estimated_duration);
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("Scaling estimate: {} files, {:?} duration", file_count, estimated_duration);
+                }
                 
                 if file_count > 50 || estimated_duration.as_secs() > 2 {
                     if config.features.scaling_enabled {
-                        eprintln!("🚀 Using scaling engine for large repo");
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("Using scaling engine for large repo");
+                        }
                     } else {
-                        eprintln!("🔧 Large repo but scaling disabled");
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("Large repo but scaling disabled");
+                        }
                     }
                 }
                 
                 if (file_count > 50 || estimated_duration.as_secs() > 2) && config.features.scaling_enabled {
                     match create_scaling_engine(path.as_ref()).await {
                         Ok(mut scaling_engine) => {
-                            eprintln!("✅ Scaling engine created, processing repository...");
+                            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                                eprintln!("Scaling engine created, processing repository...");
+                            }
                             
                             // Use scaling engine's optimized processing
                             match scaling_engine.process_repository(path.as_ref()).await {
                                 Ok(processing_result) => {
-                                    eprintln!("✅ Scaling processing complete: {} files processed in {:?}", 
-                                        processing_result.total_files, processing_result.processing_time);
+                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                                        eprintln!("Scaling processing complete: {} files processed in {:?}", 
+                                            processing_result.total_files, processing_result.processing_time);
+                                    }
                                     
                                     return convert_scaling_result_to_analysis(processing_result, optimized_config).await;
                                 }
                                 Err(e) => {
-                                    eprintln!("❌ Scaling engine processing failed: {}, falling back", e);
+                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                                        eprintln!("Scaling engine processing failed: {}, falling back", e);
+                                    }
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ Failed to create scaling engine: {}, falling back", e);
+                            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                                eprintln!("Failed to create scaling engine: {}, falling back", e);
+                            }
                         }
                     }
                 } else if file_count > 50 || estimated_duration.as_secs() > 2 {
-                    eprintln!("🔧 Large repo detected but scaling disabled, using optimized basic scanner");
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("Large repo detected but scaling disabled, using optimized basic scanner");
+                    }
                 } else {
-                    eprintln!("📝 Small repo detected, using optimized basic scanner");
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("Small repo detected, using optimized basic scanner");
+                    }
                 }
             }
             Err(e) => {
-                eprintln!("❌ Scaling estimate failed: {}, falling back", e);
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("Scaling estimate failed: {}, falling back", e);
+                }
             }
         }
     }
@@ -365,8 +385,10 @@ async fn apply_token_budget_selection(
     use scribe_graph::{PageRankAnalysis, CentralityCalculator};
     use std::collections::HashMap;
     
-    eprintln!("🎯 Intelligent token budget selection: {} tokens across {} files", 
-        token_budget, files.len());
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("🎯 Intelligent token budget selection: {} tokens across {} files", 
+            token_budget, files.len());
+    }
     
     let counter = TokenCounter::global();
     let mut selected_files = Vec::new();
@@ -374,40 +396,33 @@ async fn apply_token_budget_selection(
     // Split files into categories for prioritized selection
     let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files);
     
-    eprintln!("📊 File categories: {} mandatory, {} source, {} docs, {} other",
-        mandatory_files.len(), source_files.len(), doc_files.len(), other_files.len());
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("📊 File categories: {} mandatory, {} source, {} docs, {} other",
+            mandatory_files.len(), source_files.len(), doc_files.len(), other_files.len());
+    }
     
-    // 🔧 CRITICAL FIX: Reserve budget for source files to prevent exhaustion on mandatory files
-    eprintln!("🚀 EXECUTING NEW BUDGET ALLOCATION LOGIC");
-    let source_files_count = source_files.len();
-    let source_budget_reservation = if source_files_count > 0 {
-        // Reserve 70% of budget for source files, 25% for mandatory, 5% for docs
-        (token_budget * 70) / 100
-    } else {
-        0
-    };
-    let mandatory_budget = (token_budget * 25) / 100;
-    let remaining_budget = token_budget - source_budget_reservation - mandatory_budget;
+    let mut budget_tracker = TokenBudget::new(token_budget);
     
-    eprintln!("💡 Budget allocation: {} for source files, {} for mandatory, {} for docs/other",
-        source_budget_reservation, mandatory_budget, remaining_budget);
-    
-    let mut mandatory_tracker = TokenBudget::new(mandatory_budget);
-    
-    // Phase 1: Process mandatory files with limited budget
-    eprintln!("📌 Phase 1: Processing mandatory files (budget: {} tokens)", mandatory_budget);
-    for mut file in mandatory_files {
+    // Tier 1: Mandatory files (README, project config, main/index files)
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("📌 Tier 1: Processing mandatory files");
+    }
+    for file in mandatory_files {
+        if budget_tracker.available() < 10 {
+            break;
+        }
         if let Some(selected_file) = try_include_file_with_budget(
-            file, &counter, &mut mandatory_tracker
+            file, &counter, &mut budget_tracker
         ).await? {
             selected_files.push(selected_file);
         }
     }
     
-    // Phase 2: Source files prioritized by PageRank centrality
-    eprintln!("🧠 Phase 2: Processing source files with centrality analysis (budget: {} tokens)", source_budget_reservation);
-    if !source_files.is_empty() && source_budget_reservation > 0 {
-        let mut source_tracker = TokenBudget::new(source_budget_reservation);
+    // Tier 2: Source files (prioritized by centrality)
+    if !source_files.is_empty() && budget_tracker.available() > 0 {
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("🧠 Tier 2: Processing source files with centrality analysis");
+        }
         
         // Calculate centrality scores for source files
         #[cfg(feature = "graph")]
@@ -422,16 +437,12 @@ async fn apply_token_budget_selection(
         
         #[cfg(feature = "graph")]
         let mut source_with_centrality: Vec<_> = source_files.into_iter()
-            .enumerate()
-            .map(|(i, mut file)| {
+            .map(|mut file| {
                 let centrality_score = centrality_results.pagerank_scores
                     .get(&file.relative_path)
                     .copied()
                     .unwrap_or(0.0);
-                
-                // 🔧 FIX: Actually populate the centrality_score field!
                 file.centrality_score = Some(centrality_score);
-                
                 (file, centrality_score)
             })
             .collect();
@@ -440,55 +451,48 @@ async fn apply_token_budget_selection(
         let mut source_with_centrality: Vec<_> = source_files.into_iter()
             .map(|mut file| {
                 let fallback_score = calculate_fallback_source_score(&file);
-                // 🔧 FIX: Also populate centrality_score in fallback case
                 file.centrality_score = Some(fallback_score);
                 (file, fallback_score)
             })
             .collect();
-        
-        // 🔧 DEBUG: Show top scoring files before sorting
-        if !source_with_centrality.is_empty() {
-            eprintln!("🔍 Top 10 source files before sorting:");
-            for (i, (file, score)) in source_with_centrality.iter().enumerate().take(10) {
-                eprintln!("  {}. {} (score: {:.6})", i+1, file.relative_path, score);
-            }
-        }
         
         // Sort by centrality score (highest first)
         source_with_centrality.sort_by(|a, b| {
             b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
         });
         
-        // 🔧 DEBUG: Show top scoring files after sorting
-        if !source_with_centrality.is_empty() {
-            eprintln!("🔍 Top 10 source files after sorting:");
+        if std::env::var("SCRIBE_DEBUG").is_ok() && !source_with_centrality.is_empty() {
+            eprintln!("🔍 Top 10 source files by centrality:");
             for (i, (file, score)) in source_with_centrality.iter().enumerate().take(10) {
                 eprintln!("  {}. {} (score: {:.6})", i+1, file.relative_path, score);
             }
         }
         
-        // 🔧 CRITICAL FIX: Use dedicated source budget to guarantee source file processing
-        eprintln!("🎯 Processing {} source files with dedicated budget", source_with_centrality.len());
-        for (mut file, centrality_score) in source_with_centrality {
-            if source_tracker.available() < 50 {
-                eprintln!("🛑 Source budget exhausted, stopping source selection");
+        for (file, centrality_score) in source_with_centrality {
+            if budget_tracker.available() < 10 {
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("🛑 Budget exhausted, stopping source selection");
+                }
                 break;
             }
             
             if let Some(selected_file) = try_include_file_with_budget_and_demotion(
-                file, &counter, &mut source_tracker, centrality_score
+                file, &counter, &mut budget_tracker, centrality_score
             ).await? {
-                eprintln!("✅ Selected {} (centrality: {:.4})", 
-                    selected_file.relative_path, centrality_score);
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("✅ Selected {} (centrality: {:.4})", 
+                        selected_file.relative_path, centrality_score);
+                }
                 selected_files.push(selected_file);
             }
         }
     }
     
-    // Phase 3: Documentation files with remaining budget
-    if remaining_budget > 50 {
-        eprintln!("📚 Phase 3: Processing documentation files (budget: {} tokens)", remaining_budget);
-        let mut doc_tracker = TokenBudget::new(remaining_budget);
+    // Tier 3: Documentation files
+    if !doc_files.is_empty() && budget_tracker.available() > 0 {
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("📚 Tier 3: Processing documentation files");
+        }
         
         // Sort docs by importance - prioritize architecture/design docs
         let mut critical_docs = Vec::new();
@@ -505,36 +509,45 @@ async fn apply_token_budget_selection(
             }
         }
         
-        // Include critical docs first
-        for mut file in critical_docs {
-            if doc_tracker.available() < 100 {
+        // Process critical docs first, then others
+        for file in critical_docs.into_iter().chain(other_docs.into_iter()) {
+            if budget_tracker.available() < 10 {
                 break;
             }
             
             if let Some(selected_file) = try_include_file_with_budget(
-                file, &counter, &mut doc_tracker
+                file, &counter, &mut budget_tracker
             ).await? {
                 selected_files.push(selected_file);
             }
         }
-        
-        // Include other docs if budget remains
-        for mut file in other_docs {
-            if doc_tracker.available() < 50 {
-                break;
-            }
-            
-            if let Some(selected_file) = try_include_file_with_budget(
-                file, &counter, &mut doc_tracker
-            ).await? {
-                selected_files.push(selected_file);
-            }
-        }
-    } else {
-        eprintln!("📚 Phase 3: Skipping documentation - insufficient budget");
     }
     
-    eprintln!("✅ Selected {} files for analysis with improved budget allocation", selected_files.len());
+    // Tier 4: Other files (if budget remains)
+    if !other_files.is_empty() && budget_tracker.available() > 0 {
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("📄 Tier 4: Processing other files");
+        }
+        
+        for file in other_files {
+            if budget_tracker.available() < 10 {
+                break;
+            }
+            
+            if let Some(selected_file) = try_include_file_with_budget(
+                file, &counter, &mut budget_tracker
+            ).await? {
+                selected_files.push(selected_file);
+            }
+        }
+    }
+    
+    let tokens_used = token_budget - budget_tracker.available();
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("✅ Selected {} files ({} tokens / {} budget, {:.1}% utilized)", 
+            selected_files.len(), tokens_used, token_budget, 
+            (tokens_used as f64 / token_budget as f64) * 100.0);
+    }
     
     Ok(selected_files)
 }
@@ -618,19 +631,25 @@ async fn try_include_file_with_budget(
                         file.line_count = Some(file.content.as_ref().unwrap().lines().count());
                         Ok(Some(file))
                     } else {
-                        eprintln!("⚠️  Skipping {} ({} tokens) - would exceed budget", 
-                            file.relative_path, token_count);
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("⚠️  Skipping {} ({} tokens) - would exceed budget", 
+                                file.relative_path, token_count);
+                        }
                         Ok(None)
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to estimate tokens for {}: {}", file.relative_path, e);
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("⚠️  Failed to estimate tokens for {}: {}", file.relative_path, e);
+                    }
                     Ok(None)
                 }
             }
         }
         Err(e) => {
-            eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
+            }
             Ok(None)
         }
     }
@@ -660,8 +679,10 @@ async fn try_include_file_with_budget_and_demotion(
                     
                     // Full content doesn't fit - try demotion for source files
                     if matches!(file.file_type, FileType::Source { .. }) {
-                        eprintln!("🔧 Trying demotion for {} ({} tokens → chunks/signatures)", 
-                            file.relative_path, full_tokens);
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("🔧 Trying demotion for {} ({} tokens → chunks/signatures)", 
+                                file.relative_path, full_tokens);
+                        }
                         
                         // Try chunk mode first
                         if let Ok(mut demotion_engine) = DemotionEngine::new() {
@@ -677,9 +698,11 @@ async fn try_include_file_with_budget_and_demotion(
                                     file.token_estimate = Some(chunk_result.demoted_tokens);
                                     file.char_count = Some(file.content.as_ref().unwrap().chars().count());
                                     file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-                                    eprintln!("✅ Demoted {} to chunks ({} → {} tokens, {:.1}% compression, centrality: {:.4})",
-                                        file.relative_path, full_tokens, chunk_result.demoted_tokens, 
-                                        chunk_result.compression_ratio * 100.0, centrality_score);
+                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                                        eprintln!("✅ Demoted {} to chunks ({} → {} tokens, {:.1}% compression, centrality: {:.4})",
+                                            file.relative_path, full_tokens, chunk_result.demoted_tokens, 
+                                            chunk_result.compression_ratio * 100.0, centrality_score);
+                                    }
                                     return Ok(Some(file));
                                 }
                             }
@@ -697,27 +720,35 @@ async fn try_include_file_with_budget_and_demotion(
                                     file.token_estimate = Some(sig_result.demoted_tokens);
                                     file.char_count = Some(file.content.as_ref().unwrap().chars().count());
                                     file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-                                    eprintln!("✅ Demoted {} to signatures ({} → {} tokens, {:.1}% compression, centrality: {:.4})",
-                                        file.relative_path, full_tokens, sig_result.demoted_tokens,
-                                        sig_result.compression_ratio * 100.0, centrality_score);
+                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                                        eprintln!("✅ Demoted {} to signatures ({} → {} tokens, {:.1}% compression, centrality: {:.4})",
+                                            file.relative_path, full_tokens, sig_result.demoted_tokens,
+                                            sig_result.compression_ratio * 100.0, centrality_score);
+                                    }
                                     return Ok(Some(file));
                                 }
                             }
                         }
                     }
                     
-                    eprintln!("⚠️  Skipping {} ({} tokens) - no demotion method fits budget", 
-                        file.relative_path, full_tokens);
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("⚠️  Skipping {} ({} tokens) - no demotion method fits budget", 
+                            file.relative_path, full_tokens);
+                    }
                     Ok(None)
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to estimate tokens for {}: {}", file.relative_path, e);
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("⚠️  Failed to estimate tokens for {}: {}", file.relative_path, e);
+                    }
                     Ok(None)
                 }
             }
         }
         Err(e) => {
-            eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
+            }
             Ok(None)
         }
     }
@@ -775,7 +806,9 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
     use std::collections::HashMap;
     
     let start_time = std::time::Instant::now();
-    eprintln!("🔄 Using fallback scanner with optimized config");
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("🔄 Using fallback scanner with optimized config");
+    }
     let scanner = Scanner::new();
     let scan_options = ScanOptions::default()
         .with_git_integration(true)
@@ -787,9 +820,13 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
     
     // Apply token budget if specified
     if let Some(token_budget) = config.analysis.token_budget {
-        eprintln!("🎯 Applying token budget: {} tokens", token_budget);
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("🎯 Applying token budget: {} tokens", token_budget);
+        }
         files = apply_token_budget_selection(files, token_budget, config).await?;
-        eprintln!("✅ Token budget applied: {} files selected", files.len());
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("✅ Token budget applied: {} files selected", files.len());
+        }
     }
     
     // Real heuristic scoring instead of placeholder
@@ -825,7 +862,9 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
     // Real PageRank centrality calculation
     #[cfg(feature = "graph")]
     let centrality_scores = {
-        eprintln!("🧠 Calculating PageRank centrality for {} files", files.len());
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("🧠 Calculating PageRank centrality for {} files", files.len());
+        }
         
         use scribe_graph::CentralityCalculator;
         
@@ -839,7 +878,9 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
                 
                 match calculator.calculate_centrality(&mock_scan_results) {
                     Ok(centrality_results) => {
-                        eprintln!("✅ PageRank calculation successful");
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("✅ PageRank calculation successful");
+                        }
                         let mut scores = HashMap::new();
                         
                         for file in &files {
@@ -861,7 +902,9 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
                         Some(scores)
                     }
                     Err(e) => {
-                        eprintln!("⚠️  PageRank calculation failed: {}, using heuristic fallback", e);
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("⚠️  PageRank calculation failed: {}, using heuristic fallback", e);
+                        }
                         // Fallback to simple heuristic centrality
                         let mut scores = HashMap::new();
                         for file in &files {
@@ -878,7 +921,9 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
                 }
             }
             Err(e) => {
-                eprintln!("⚠️  CentralityCalculator creation failed: {}, using heuristic fallback", e);
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("⚠️  CentralityCalculator creation failed: {}, using heuristic fallback", e);
+                }
                 // Fallback to simple heuristic centrality  
                 let mut scores = HashMap::new();
                 for file in &files {
@@ -954,7 +999,9 @@ async fn convert_scaling_result_to_analysis(
     use std::collections::HashMap;
     use scribe_core::FileInfo;
     
-    eprintln!("🔄 Converting scaling result to repository analysis format");
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("🔄 Converting scaling result to repository analysis format");
+    }
     
     // Convert the ProcessingResult to our analysis format
     // For now, create dummy FileInfo entries based on the result
