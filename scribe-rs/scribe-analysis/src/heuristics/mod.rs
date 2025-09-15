@@ -27,9 +27,11 @@ pub mod enhanced_scoring;
 
 pub use scoring::{
     HeuristicScorer, 
-    ScoreComponents, 
+    ScoreComponents,
+    RawScoreComponents,
     HeuristicWeights,
     ScoringFeatures,
+    WeightPreset,
 };
 
 pub use template_detection::{

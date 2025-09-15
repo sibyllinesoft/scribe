@@ -8,6 +8,7 @@ members = [
     "scribe-selection",
     "scribe-scaling",
     "scribe-webservice",
+    "scribe-py",
 ]
 default-members = ["scribe-core"]
 resolver = "2"
@@ -58,6 +59,9 @@ dashmap = "5.5"
 # Performance and optimization
 once_cell = "1.19"
 parking_lot = "0.12"
+
+# Python FFI
+pyo3 = { version = "0.20", features = ["extension-module"] }
 
 # Dev dependencies
 criterion = { version = "0.5", features = ["html_reports"] }

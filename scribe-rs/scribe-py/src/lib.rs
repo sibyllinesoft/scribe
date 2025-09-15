@@ -48,6 +48,7 @@ use pyo3_asyncio::tokio::future_into_py;
 // Module declarations
 mod error;
 mod utils;
+mod config;
 mod repository;
 mod scoring;
 mod graph;
@@ -57,6 +58,10 @@ mod patterns;
 pub use error::{
     rust_error_to_py_err, rust_result_to_py, ScribeException, AnalysisException,
     PatternException, ConfigurationException, ToPyResult
+};
+
+pub use config::{
+    PyConfig as Config
 };
 
 pub use repository::{
@@ -80,6 +85,9 @@ pub use patterns::{
 fn _scribe_py(_py: Python, m: &PyModule) -> PyResult<()> {
     // Initialize the async runtime
     pyo3_asyncio::tokio::init_multi_thread();
+    
+    // Configuration
+    m.add_class::<config::PyConfig>()?;
     
     // Core classes - Repository Analysis
     m.add_class::<Repository>()?;

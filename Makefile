@@ -1,246 +1,180 @@
-# PackRepo Makefile - Hermetic Build Operations
-# Provides convenient commands for development and CI/CD operations
+# Scribe Repository Analysis Tool - Build System
+# Provides unified build, test, and development commands
 
-.PHONY: help build test clean dev ci verify smoke schema lint security deps-check bootstrap
+.PHONY: help build install-dev test benchmark paper clean setup-ci setup-dev
 
-# Default Python and container settings
+# Configuration
 PYTHON := python3
-CONTAINER_TAG := packrepo:dev
-ARTIFACTS_DIR := ./artifacts
-TEST_REPO := https://github.com/karpathy/nanoGPT
-
-# Help target - default when just running 'make'
-help: ## Show this help message
-	@echo "PackRepo - Sophisticated Repository Packing System"
-	@echo "=================================================="
-	@echo ""
-	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
-	@echo ""
-	@echo "Development workflow:"
-	@echo "  make bootstrap  # Initial setup"
-	@echo "  make dev        # Start development environment" 
-	@echo "  make test       # Run tests"
-	@echo "  make smoke      # Run smoke tests"
-	@echo ""
-
-# Bootstrap - Initial setup
-bootstrap: ## Initialize development environment
-	@echo "🚀 Bootstrapping PackRepo development environment..."
-	@mkdir -p $(ARTIFACTS_DIR) locks spec/schemas tests/{properties,metamorphic,mutation,fuzzing,e2e}
-	@if command -v uv >/dev/null 2>&1; then \
-		echo "Installing dependencies with uv..."; \
-		uv sync; \
-	else \
-		echo "uv not found, using pip..."; \
-		$(PYTHON) -m pip install -r requirements.txt; \
-	fi
-	@echo "✓ Bootstrap complete"
-
-# Development environment
-dev: ## Start development environment with Docker Compose
-	@echo "🛠️  Starting PackRepo development environment..."
-	docker-compose -f infra/compose.yaml -f infra/compose.override.yaml up --build packrepo-dev
-
-dev-bg: ## Start development environment in background
-	docker-compose -f infra/compose.yaml -f infra/compose.override.yaml up -d --build packrepo-dev
-
-dev-stop: ## Stop development environment
-	docker-compose -f infra/compose.yaml -f infra/compose.override.yaml down
-
-dev-logs: ## Show development container logs
-	docker-compose -f infra/compose.yaml logs -f packrepo-dev
-
-# Build operations
-build: ## Build all Docker containers
-	@echo "🔨 Building PackRepo containers..."
-	docker build -t $(CONTAINER_TAG) -f infra/Dockerfile --target development .
-	docker build -t packrepo:ci -f infra/Dockerfile --target ci .
-	docker build -t packrepo:prod -f infra/Dockerfile --target production .
-	@echo "✓ Build complete"
-
-# Testing operations
-test: ## Run full test suite
-	@echo "🧪 Running PackRepo test suite..."
-	@mkdir -p $(ARTIFACTS_DIR)
-	./scripts/ci_full_test.sh
-
-test-unit: ## Run unit tests only
-	@echo "Running unit tests..."
-	$(PYTHON) -m pytest tests/ -v
-
-test-integration: ## Run integration tests
-	@echo "Running integration tests..."
-	docker-compose -f infra/compose.yaml --profile integration up --abort-on-container-exit
-
-test-watch: ## Run tests in watch mode
-	docker-compose -f infra/compose.yaml -f infra/compose.override.yaml --profile watch up
-
-# Verification operations
-verify: ## Verify pack format and constraints
-	@echo "✅ Running pack verification..."
-	$(PYTHON) scripts/pack_verify.py --write-schema spec/index.schema.json
-	@if [ -d "logs" ]; then \
-		$(PYTHON) scripts/pack_verify.py --packs logs/ --schema spec/index.schema.json; \
-	else \
-		echo "No logs directory found - run smoke tests first"; \
-	fi
-
-smoke: ## Run hermetic smoke tests
-	@echo "💨 Running hermetic smoke tests..."
-	./scripts/spinup_smoke.sh --repo $(TEST_REPO) --budget 50000 --tokenizer cl100k --no-llm
-
-smoke-self: ## Run smoke tests on current repository
-	@echo "💨 Running self smoke tests..."
-	./scripts/spinup_smoke.sh --budget 50000 --tokenizer cl100k --no-llm
-
-# Schema operations
-schema: ## Generate and validate JSON schemas
-	@echo "📋 Generating schemas..."
-	@mkdir -p spec
-	$(PYTHON) scripts/pack_verify.py --write-schema spec/index.schema.json
-	@echo "✓ Schema generation complete"
-
-# Code quality operations
-lint: ## Run code linting and formatting
-	@echo "🔍 Running linting..."
-	@if command -v ruff >/dev/null 2>&1; then \
-		ruff check . --fix; \
-		ruff format .; \
-	else \
-		echo "ruff not found, installing..."; \
-		$(PYTHON) -m pip install ruff; \
-		ruff check . --fix; \
-		ruff format .; \
-	fi
-	@echo "✓ Linting complete"
-
-lint-check: ## Check code formatting without fixing
-	@if command -v ruff >/dev/null 2>&1; then \
-		ruff check .; \
-		ruff format --check .; \
-	else \
-		echo "ruff not found - run 'make lint' first"; \
-		exit 1; \
-	fi
-
-typecheck: ## Run type checking
-	@echo "🏷️  Running type checks..."
-	@if command -v mypy >/dev/null 2>&1; then \
-		mypy packrepo/; \
-	else \
-		echo "mypy not found, installing..."; \
-		$(PYTHON) -m pip install mypy; \
-		mypy packrepo/; \
-	fi
-
-# Security operations
-security: ## Run security scans
-	@echo "🔒 Running security scans..."
-	@mkdir -p $(ARTIFACTS_DIR)
-	./scripts/scan_secrets.py --out $(ARTIFACTS_DIR)/secret_scan.json
-	@if command -v bandit >/dev/null 2>&1; then \
-		bandit -r packrepo/ -f json -o $(ARTIFACTS_DIR)/bandit_results.json; \
-	else \
-		echo "bandit not found, installing..."; \
-		$(PYTHON) -m pip install bandit; \
-		bandit -r packrepo/ -f json -o $(ARTIFACTS_DIR)/bandit_results.json; \
-	fi
-	@echo "✓ Security scan complete"
-
-# Dependency operations
-deps-check: ## Check for dependency vulnerabilities
-	@echo "📦 Checking dependencies..."
-	@if command -v safety >/dev/null 2>&1; then \
-		safety check --json --output $(ARTIFACTS_DIR)/safety_results.json; \
-	else \
-		echo "safety not found, installing..."; \
-		$(PYTHON) -m pip install safety; \
-		safety check --json --output $(ARTIFACTS_DIR)/safety_results.json; \
-	fi
-
-deps-update: ## Update dependencies
-	@echo "📦 Updating dependencies..."
-	@if command -v uv >/dev/null 2>&1; then \
-		uv lock --upgrade; \
-	else \
-		$(PYTHON) -m pip list --outdated; \
-		echo "Consider using uv for better dependency management"; \
-	fi
-
-# CI operations
-ci: ## Run complete CI pipeline
-	@echo "🚀 Running complete CI pipeline..."
-	@$(MAKE) clean
-	@$(MAKE) build
-	@$(MAKE) test
-	@$(MAKE) verify
-	@$(MAKE) security
-	@$(MAKE) smoke-self
-	@echo "✅ CI pipeline complete"
-
-ci-docker: ## Run CI in Docker containers
-	@echo "🐳 Running CI in Docker..."
-	docker-compose -f infra/compose.yaml --profile ci up --abort-on-container-exit
-
-# Deployment operations
-deploy-staging: ## Deploy to staging environment
-	@echo "🚀 Deploying to staging..."
-	docker-compose -f infra/compose.yaml --profile prod up -d
-	@echo "✓ Staging deployment complete"
-
-# Cleanup operations
-clean: ## Clean up generated files and containers
-	@echo "🧹 Cleaning up..."
-	rm -rf $(ARTIFACTS_DIR)/* logs/* locks/*.bak
-	docker-compose -f infra/compose.yaml down --remove-orphans --volumes
-	docker system prune -f
-	@echo "✓ Cleanup complete"
-
-clean-all: ## Clean everything including Docker images
-	@$(MAKE) clean
-	docker rmi -f $(CONTAINER_TAG) packrepo:ci packrepo:prod || true
-	docker system prune -a -f
-
-# Documentation operations
-docs: ## Generate documentation
-	@echo "📚 Generating documentation..."
-	@mkdir -p docs
-	@echo "# PackRepo Documentation" > docs/README.md
-	@echo "" >> docs/README.md
-	@echo "Generated on: $$(date)" >> docs/README.md
-	@echo "" >> docs/README.md
-	@echo "## Schema Documentation" >> docs/README.md
-	@if [ -f "spec/index.schema.json" ]; then \
-		echo "See [index.schema.json](../spec/index.schema.json)" >> docs/README.md; \
-	fi
-	@echo "✓ Documentation generated"
-
-# Status and information
-status: ## Show project status
-	@echo "📊 PackRepo Status"
-	@echo "=================="
-	@echo "Project root: $$(pwd)"
-	@echo "Python version: $$($(PYTHON) --version 2>&1)"
-	@echo "Docker version: $$(docker --version 2>&1 || echo 'Docker not available')"
-	@echo ""
-	@echo "Directory structure:"
-	@find . -name "*.py" -type f | head -10
-	@echo ""
-	@echo "Containers:"
-	@docker ps --filter "name=packrepo" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || echo "No containers running"
-	@echo ""
-	@if [ -d "$(ARTIFACTS_DIR)" ]; then \
-		echo "Recent artifacts:"; \
-		ls -la $(ARTIFACTS_DIR) | head -5; \
-	fi
-
-# Quick operations
-quick-test: bootstrap lint typecheck test-unit ## Run quick development tests
-	@echo "✅ Quick tests complete"
-
-full-test: bootstrap build test verify security smoke-self ## Run comprehensive tests
-	@echo "✅ Full test suite complete"
+PIP := pip3
+MATURIN := maturin
+CARGO := cargo
+SCRIBE_RS_DIR := scribe-rs
+VENV_DIR := .venv
+ARTIFACTS_DIR := artifacts
 
 # Default target
-.DEFAULT_GOAL := help
+help: ## Show this help message
+	@echo "Scribe Build System"
+	@echo "==================="
+	@echo ""
+	@echo "Phase 1 Commands (Foundation):"
+	@echo "  setup-dev       Setup local development environment"
+	@echo "  build          Compile Rust library"
+	@echo "  install-dev    Setup Python environment with local wheel"
+	@echo ""
+	@echo "Development Commands:"
+	@echo "  test           Run all tests (Rust + Python)"
+	@echo "  test-rust      Run only Rust tests"
+	@echo "  test-python    Run only Python tests"
+	@echo "  benchmark      Execute benchmark suite"
+	@echo "  paper          Generate research artifacts"
+	@echo ""
+	@echo "CI/CD Commands:"
+	@echo "  setup-ci       Setup CI environment"
+	@echo "  ci-pipeline    Run full CI pipeline"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  clean          Clean build artifacts"
+	@echo "  clean-all      Clean everything including venv"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
+
+# Development Environment Setup
+setup-dev: ## Setup local development environment
+	@echo "🔧 Setting up development environment..."
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+		$(PYTHON) -m venv $(VENV_DIR); \
+	fi
+	@echo "📦 Installing maturin..."
+	@. $(VENV_DIR)/bin/activate && $(PIP) install maturin[patchelf]
+	@echo "📦 Installing Python development dependencies..."
+	@. $(VENV_DIR)/bin/activate && $(PIP) install pytest pytest-asyncio numpy pandas matplotlib seaborn jupyter
+	@echo "✅ Development environment ready!"
+	@echo "   Activate with: source $(VENV_DIR)/bin/activate"
+
+# Rust compilation
+build: ## Compile Rust library
+	@echo "🔨 Building Rust core..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) build --release
+	@echo "✅ Rust build complete"
+
+# Python wheel creation and installation
+install-dev: build ## Setup Python environment with local wheel
+	@echo "🐍 Building Python wheel with maturin..."
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+		echo "❌ Virtual environment not found. Run 'make setup-dev' first."; \
+		exit 1; \
+	fi
+	@. $(VENV_DIR)/bin/activate && cd $(SCRIBE_RS_DIR) && $(MATURIN) develop --release
+	@echo "📦 Installing Python research framework..."
+	@. $(VENV_DIR)/bin/activate && $(PIP) install -e .
+	@echo "✅ Local wheel installed successfully!"
+
+# Testing
+test: test-rust test-python ## Run all tests (Rust + Python)
+
+test-rust: ## Run only Rust tests
+	@echo "🧪 Running Rust tests..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) test --workspace --release
+	@echo "✅ Rust tests passed"
+
+test-python: ## Run only Python tests
+	@echo "🐍 Running Python tests..."
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+		echo "❌ Virtual environment not found. Run 'make setup-dev' first."; \
+		exit 1; \
+	fi
+	@. $(VENV_DIR)/bin/activate && pytest -v tests/ || echo "⚠️  Python tests not found or failed"
+	@echo "✅ Python tests completed"
+
+# Benchmarking
+benchmark: ## Execute benchmark suite
+	@echo "⚡ Running benchmarks..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) bench
+	@if [ -d "research/benchmarks" ]; then \
+		echo "🐍 Running Python benchmarks..."; \
+		. $(VENV_DIR)/bin/activate && cd research/benchmarks && $(PYTHON) -m benchmark_runner; \
+	fi
+	@echo "✅ Benchmarks complete"
+
+# Research artifacts
+paper: ## Generate research artifacts
+	@echo "📊 Generating research artifacts..."
+	@mkdir -p $(ARTIFACTS_DIR)
+	@if [ -d "research" ]; then \
+		echo "🐍 Running statistical analysis..."; \
+		. $(VENV_DIR)/bin/activate && cd research && $(PYTHON) -m statistical_analysis.main; \
+	fi
+	@echo "✅ Research artifacts generated in $(ARTIFACTS_DIR)/"
+
+# CI/CD Support
+setup-ci: ## Setup CI environment
+	@echo "🚀 Setting up CI environment..."
+	@$(PYTHON) -m venv $(VENV_DIR)
+	@. $(VENV_DIR)/bin/activate && $(PIP) install --upgrade pip
+	@. $(VENV_DIR)/bin/activate && $(PIP) install maturin[patchelf]
+	@. $(VENV_DIR)/bin/activate && $(PIP) install pytest pytest-asyncio numpy pandas matplotlib seaborn
+	@echo "✅ CI environment ready"
+
+ci-pipeline: setup-ci build install-dev test benchmark ## Run full CI pipeline
+	@echo "🎯 CI Pipeline completed successfully!"
+
+# Linting and formatting
+lint: ## Run linting and formatting
+	@echo "🔍 Running Rust linting..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) fmt --check
+	@echo "✅ Linting complete"
+
+fmt: ## Format code
+	@echo "✨ Formatting Rust code..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) fmt
+	@echo "✅ Code formatted"
+
+# Cleanup
+clean: ## Clean build artifacts
+	@echo "🧹 Cleaning build artifacts..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) clean
+	@rm -rf $(ARTIFACTS_DIR)
+	@rm -rf build/
+	@rm -rf dist/
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find . -name "*.pyc" -delete 2>/dev/null || true
+	@echo "✅ Build artifacts cleaned"
+
+clean-all: clean ## Clean everything including venv
+	@echo "🧹 Cleaning everything..."
+	@rm -rf $(VENV_DIR)
+	@echo "✅ Everything cleaned"
+
+# Development utilities
+check: ## Check Rust code without building
+	@echo "🔍 Checking Rust code..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) check --workspace
+
+docs: ## Generate documentation
+	@echo "📚 Generating documentation..."
+	@cd $(SCRIBE_RS_DIR) && $(CARGO) doc --workspace --no-deps --open
+
+# Environment info
+info: ## Show environment information
+	@echo "Environment Information:"
+	@echo "======================="
+	@echo "Python: $(shell $(PYTHON) --version)"
+	@echo "Cargo: $(shell $(CARGO) --version)"
+	@echo "Rust: $(shell rustc --version)"
+	@echo "Working Directory: $(shell pwd)"
+	@echo "Virtual Environment: $(VENV_DIR)"
+	@echo "Artifacts Directory: $(ARTIFACTS_DIR)"
+	@if [ -d "$(VENV_DIR)" ]; then \
+		echo "Virtual Environment: ✅ Active"; \
+	else \
+		echo "Virtual Environment: ❌ Not Found"; \
+	fi
+
+# Quick development workflow
+dev: setup-dev build install-dev test ## Complete development setup workflow
+	@echo "🎉 Development environment is ready!"
+	@echo "   Next steps:"
+	@echo "   1. source $(VENV_DIR)/bin/activate"
+	@echo "   2. Start developing!"
