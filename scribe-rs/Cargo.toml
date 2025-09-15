@@ -106,6 +106,10 @@ comprehensive = ["core", "analysis", "graph", "scanner", "patterns", "selection"
 name = "scribe"
 path = "src/bin/cli.rs"
 
+[[bin]]
+name = "test_budget_utilization"
+path = "test_budget_utilization.rs"
+
 
 
 [dependencies]

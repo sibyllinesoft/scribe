@@ -393,8 +393,11 @@ async fn apply_token_budget_selection(
     let counter = TokenCounter::global();
     let mut selected_files = Vec::new();
     
-    // Split files into categories for prioritized selection
-    let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files);
+    // Split files into categories for prioritized selection  
+    let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files.clone());
+    
+    // Keep a reference to all files for final optimization pass
+    let all_files = files;
     
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         eprintln!("📊 File categories: {} mandatory, {} source, {} docs, {} other",
@@ -408,7 +411,10 @@ async fn apply_token_budget_selection(
         eprintln!("📌 Tier 1: Processing mandatory files");
     }
     for file in mandatory_files {
-        if budget_tracker.available() < 10 {
+        if budget_tracker.available() < 1 {
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!("🛑 Budget exhausted, stopping mandatory file selection");
+            }
             break;
         }
         if let Some(selected_file) = try_include_file_with_budget(
@@ -450,9 +456,9 @@ async fn apply_token_budget_selection(
         #[cfg(not(feature = "graph"))]
         let mut source_with_centrality: Vec<_> = source_files.into_iter()
             .map(|mut file| {
-                let fallback_score = calculate_fallback_source_score(&file);
-                file.centrality_score = Some(fallback_score);
-                (file, fallback_score)
+                // No artificial centrality - preserve natural file order
+                file.centrality_score = None;
+                (file, 0.0)
             })
             .collect();
         
@@ -469,7 +475,7 @@ async fn apply_token_budget_selection(
         }
         
         for (file, centrality_score) in source_with_centrality {
-            if budget_tracker.available() < 10 {
+            if budget_tracker.available() < 1 {
                 if std::env::var("SCRIBE_DEBUG").is_ok() {
                     eprintln!("🛑 Budget exhausted, stopping source selection");
                 }
@@ -511,7 +517,10 @@ async fn apply_token_budget_selection(
         
         // Process critical docs first, then others
         for file in critical_docs.into_iter().chain(other_docs.into_iter()) {
-            if budget_tracker.available() < 10 {
+            if budget_tracker.available() < 1 {
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("🛑 Budget exhausted, stopping documentation selection");
+                }
                 break;
             }
             
@@ -530,7 +539,10 @@ async fn apply_token_budget_selection(
         }
         
         for file in other_files {
-            if budget_tracker.available() < 10 {
+            if budget_tracker.available() < 1 {
+                if std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!("🛑 Budget exhausted, stopping other file selection");
+                }
                 break;
             }
             
@@ -542,11 +554,55 @@ async fn apply_token_budget_selection(
         }
     }
     
+    // Final optimization pass: try to fill remaining budget with smaller files
+    if budget_tracker.available() > 1 {
+        if std::env::var("SCRIBE_DEBUG").is_ok() {
+            eprintln!("🔧 Final optimization pass: {} tokens remaining, searching for small files", 
+                budget_tracker.available());
+        }
+        
+        // Collect files that weren't included yet and could fit in remaining budget
+        let included_paths: std::collections::HashSet<String> = selected_files.iter()
+            .map(|f| f.relative_path.clone())
+            .collect();
+        
+        // Try to find any remaining files that could fit
+        for file in &all_files {
+            if budget_tracker.available() < 1 {
+                break;
+            }
+            
+            if included_paths.contains(&file.relative_path) || !file.decision.should_include() {
+                continue;
+            }
+            
+            // Quick estimate - try small files that might fit
+            if file.size <= (budget_tracker.available() * 4) as u64 { // Rough tokens = chars/4
+                if let Some(selected_file) = try_include_file_with_budget(
+                    file.clone(), &counter, &mut budget_tracker
+                ).await? {
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("🎯 Final pass: included {} ({} tokens)", 
+                            selected_file.relative_path, 
+                            selected_file.token_estimate.unwrap_or(0));
+                    }
+                    selected_files.push(selected_file);
+                }
+            }
+        }
+    }
+
     let tokens_used = token_budget - budget_tracker.available();
+    let utilization = (tokens_used as f64 / token_budget as f64) * 100.0;
+    
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         eprintln!("✅ Selected {} files ({} tokens / {} budget, {:.1}% utilized)", 
-            selected_files.len(), tokens_used, token_budget, 
-            (tokens_used as f64 / token_budget as f64) * 100.0);
+            selected_files.len(), tokens_used, token_budget, utilization);
+        
+        if utilization < 90.0 {
+            eprintln!("⚠️  Budget utilization below 90% - {} tokens unused", 
+                budget_tracker.available());
+        }
     }
     
     Ok(selected_files)
@@ -790,6 +846,7 @@ impl scribe_analysis::heuristics::ScanResult for MockScanResult {
     fn imports(&self) -> Option<&[String]> { None }
     fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> { None }
 }
+
 
 fn load_file_content_safe(path: &std::path::Path) -> Result<String> {
     use std::fs;
@@ -1152,48 +1209,6 @@ mod tests {
         assert!(!VERSION.is_empty());
     }
 
-    #[test]
-    fn test_calculate_fallback_source_score() {
-        // Test main file gets high score
-        let main_file = FileInfo {
-            path: std::path::PathBuf::from("src/main.rs"),
-            relative_path: "src/main.rs".to_string(),
-            size: 5000,
-            modified: None,
-            decision: crate::core::RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
-            language: Language::Rust,
-            content: None,
-            token_estimate: None,
-            line_count: None,
-            char_count: None,
-            is_binary: false,
-            git_status: None,
-        };
-        
-        let main_score = calculate_fallback_source_score(&main_file);
-        
-        // Test regular file gets lower score
-        let regular_file = FileInfo {
-            path: std::path::PathBuf::from("utils/helper.py"),
-            relative_path: "utils/helper.py".to_string(),
-            size: 5000,
-            modified: None,
-            decision: crate::core::RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Python },
-            language: Language::Python,
-            content: None,
-            token_estimate: None,
-            line_count: None,
-            char_count: None,
-            is_binary: false,
-            git_status: None,
-        };
-        
-        let regular_score = calculate_fallback_source_score(&regular_file);
-        assert!(main_score >= regular_score, "Main files should score equal or higher than regular files: {} vs {}", main_score, regular_score);
-        assert!(regular_score >= 0.001, "All files should have minimum positive score");
-    }
     
     #[cfg(feature = "core")]
     #[test]
