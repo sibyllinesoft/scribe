@@ -37,9 +37,7 @@ examples/test_*.rs
 scribe-core/examples/
 
 # Analysis module temporary files
-scribe-analysis/src/complexity.rs
-scribe-analysis/src/heuristics/enhanced_scoring.rs
-scribe-analysis/src/language_support/
+# (removed - these are now permanent modules)
 
 # Scanner module temporary files
 scribe-scanner/src/aho_corasick_reference_index.rs
