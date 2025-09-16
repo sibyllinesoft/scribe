@@ -24,8 +24,10 @@ performance_test.rs
 test_*.rs
 repomix-output.xml
 
-# Frontend build artifacts
-frontend/
+# Frontend build artifacts (keep source but ignore built files)
+frontend/node_modules/
+frontend/dist/
+frontend/build/
 build_frontend.sh
 validate_bundle.js
 

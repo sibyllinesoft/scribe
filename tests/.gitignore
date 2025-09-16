@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+.bun-cache/
+
+# Test results and reports
+test-results/
+playwright-report/
+coverage/
+.nyc_output/
+
+# Playwright browsers
+**/ms-playwright/
+
+# Test artifacts
+screenshots/
+videos/
+traces/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Temporary files
+.tmp/
+temp/
+*.tmp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build outputs (in case any are generated)
+dist/
+build/
+out/
