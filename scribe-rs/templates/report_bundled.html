@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repository Analysis: {{repository_name}}</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2a2a2a;
+            --bg-tertiary: #3a3a3a;
+            --text-primary: #e5e5e5;
+            --text-secondary: #b5b5b5;
+            --text-muted: #888;
+            --accent-primary: #4f9cf9;
+            --accent-secondary: #7c3aed;
+            --border-color: #404040;
+            --hover-color: #333333;
+            --code-bg: #252525;
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+            color: white;
+            padding: 32px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.02) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.01) 0%, transparent 50%);
+            pointer-events: none;
+        }
+        
+        .header::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3e%3cg fill='none' fill-rule='evenodd'%3e%3cg fill='%23ffffff' fill-opacity='0.02'%3e%3ccircle cx='20' cy='20' r='1'/%3e%3c/g%3e%3c/g%3e%3c/svg%3e");
+            pointer-events: none;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 32px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .header .meta {
+            margin-top: 20px;
+            opacity: 0.9;
+            font-size: 13px;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            padding: 8px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        
+        .meta-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+            transform: translateY(-1px);
+        }
+        
+        .stats {
+            background: var(--bg-tertiary);
+            padding: 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 24px;
+        }
+        
+        .stat {
+            text-align: center;
+            padding: 20px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s ease;
+        }
+        
+        .stat:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+        
+        .toc {
+            background: var(--bg-tertiary);
+            padding: 24px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .toc h3 {
+            margin: 0 0 20px 0;
+            font-size: 18px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+        }
+        
+        .file-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+        }
+        
+        .file-item {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+        
+        .file-item:hover {
+            background-color: var(--hover-color);
+        }
+        
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        
+        .file-name {
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 13px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .file-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .content {
+            padding: 24px;
+            background: var(--bg-secondary);
+        }
+        
+        .file-section {
+            margin-bottom: 32px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--bg-primary);
+        }
+        
+        .file-header {
+            background: var(--bg-tertiary);
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .file-content {
+            max-height: 600px;
+            overflow-y: auto;
+            position: relative;
+        }
+        
+        .file-content::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .file-content::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        
+        .file-content::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+        
+        .file-content::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+        
+        pre {
+            margin: 0;
+            padding: 24px;
+            background: var(--code-bg);
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: var(--text-primary);
+        }
+        
+        .icon {
+            width: 16px;
+            height: 16px;
+        }
+        
+        .icon-lg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* React Tree Component Styles */
+        .tree-container {
+            height: 400px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .tree-node {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            cursor: pointer;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 13px;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+            user-select: none;
+            border-radius: 4px;
+            margin: 1px 0;
+        }
+
+        .tree-node:hover {
+            background: var(--hover-color);
+            color: var(--accent-primary);
+        }
+
+        .tree-node.selected {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .tree-node-content {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1;
+            width: 100%;
+        }
+
+        .tree-arrow {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 4px;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            opacity: 0.6;
+        }
+
+        .tree-arrow.expanded {
+            transform: rotate(90deg);
+        }
+
+        .tree-arrow.hidden {
+            opacity: 0;
+        }
+
+        .tree-icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .tree-label {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        .folder-icon {
+            color: var(--accent-secondary);
+        }
+
+        .file-icon {
+            color: var(--text-secondary);
+        }
+
+        /* Scrollbar styling for tree */
+        .tree-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .tree-container::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+        }
+
+        .tree-container::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        .tree-container::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 12px;
+            }
+            
+            .header {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 24px;
+            }
+            
+            .header .meta {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+            
+            .meta-item {
+                justify-content: center;
+            }
+            
+            .stats {
+                grid-template-columns: 1fr;
+                gap: 16px;
+                padding: 16px;
+            }
+            
+            .content {
+                padding: 16px;
+            }
+        }
+        
+        .control-bar {
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #3d8bfd;
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--hover-color);
+            transform: translateY(-1px);
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.online {
+            background: #10b981;
+        }
+        
+        .status-dot.offline {
+            background: #ef4444;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @media (max-width: 768px) {
+            .control-bar {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+                padding: 16px;
+            }
+            
+            .control-buttons {
+                justify-content: center;
+            }
+            
+            .status-indicator {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                🔍 Repository Analysis
+            </h1>
+            <div class="meta">
+                <div class="meta-item">
+                    <span>📊 <strong>Algorithm:</strong> {{algorithm}}</span>
+                </div>
+                <div class="meta-item">
+                    <span>🕒 <strong>Generated:</strong> {{generated_time}}</span>
+                </div>
+                <div class="meta-item">
+                    <span>⚡ <strong>Selection Time:</strong> {{selection_time_ms}}ms</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="control-bar">
+            <div class="control-buttons">
+                <button id="save-btn" class="btn btn-primary">
+                    💾 Save Bundle
+                </button>
+                <button id="shutdown-btn" class="btn btn-secondary">
+                    🛑 Shutdown Server
+                </button>
+            </div>
+            <div class="status-indicator">
+                <span id="connection-status" class="status-dot online"></span>
+                <span id="status-text">Connected</span>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-value">
+                    📄 {{total_files}}
+                </div>
+                <div class="stat-label">Files Selected</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">
+                    🔢 {{total_tokens}}
+                </div>
+                <div class="stat-label">Estimated Tokens</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">
+                    💾 {{total_size}}
+                </div>
+                <div class="stat-label">Total Size</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">
+                    🎯 {{coverage_percentage}}%
+                </div>
+                <div class="stat-label">Coverage</div>
+            </div>
+        </div>
+        
+        <div class="toc">
+            <h3>
+                📁 File Explorer
+            </h3>
+            <div id="file-tree-container" class="tree-container"></div>
+        </div>
+        
+        <div class="file-list">
+            {{#each files}}
+            <div class="file-item">
+                <span class="file-name">📄 {{relative_path}}</span>
+                <span class="file-meta">{{size}} • ~{{estimated_tokens}} tokens • Score: {{importance_score}}</span>
+            </div>
+            {{/each}}
+        </div>
+        
+        <div class="content">
+            {{#each files}}
+            <div class="file-section" id="file-{{add @index 1}}">
+                <div class="file-header">📄 {{relative_path}}</div>
+                <div class="file-content">
+                    <pre>{{content}}</pre>
+                </div>
+            </div>
+            {{/each}}
+        </div>
+    </div>
+    
+    <!-- Load self-contained bundle (includes React, ReactDOM, React Arborist, and Lucide React) -->
+    <script src="assets/scribe-tree-bundle.js"></script>
+    
+    <script>
+        // File data from Handlebars template
+        const fileData = [
+            {{#each files}}
+            {
+                path: "{{relative_path}}",
+                icon: "{{icon}}",
+                index: {{@index}},
+                size: "{{size}}",
+                tokens: "{{estimated_tokens}}",
+                score: "{{importance_score}}"
+            }{{#unless @last}},{{/unless}}
+            {{/each}}
+        ];
+
+        // Initialize the file tree
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.ScribeFileTree) {
+                const fileTree = new window.ScribeFileTree();
+                const success = fileTree.renderTree('file-tree-container', fileData);
+                
+                if (success) {
+                    console.log('File tree rendered successfully');
+                } else {
+                    console.error('Failed to render file tree');
+                    // Fallback to simple list
+                    const container = document.getElementById('file-tree-container');
+                    if (container) {
+                        container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Tree view failed to load. Use the file list below.</div>';
+                    }
+                }
+            } else {
+                console.error('ScribeFileTree not available');
+            }
+            
+            // Initialize control buttons and ping mechanism
+            initializeControls();
+        });
+        
+        // Control functionality
+        function initializeControls() {
+            // Ping server every 30 seconds to keep alive
+            setInterval(pingServer, 30000);
+            
+            // Initial ping
+            pingServer();
+            
+            // Setup button event listeners
+            const saveBtn = document.getElementById('save-btn');
+            const shutdownBtn = document.getElementById('shutdown-btn');
+            
+            if (saveBtn) {
+                saveBtn.addEventListener('click', handleSave);
+            }
+            
+            if (shutdownBtn) {
+                shutdownBtn.addEventListener('click', handleShutdown);
+            }
+        }
+        
+        async function pingServer() {
+            try {
+                const response = await fetch('/api/ping', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    updateConnectionStatus(true);
+                } else {
+                    updateConnectionStatus(false);
+                }
+            } catch (error) {
+                console.warn('Ping failed:', error);
+                updateConnectionStatus(false);
+            }
+        }
+        
+        function updateConnectionStatus(isOnline) {
+            const statusDot = document.getElementById('connection-status');
+            const statusText = document.getElementById('status-text');
+            
+            if (statusDot && statusText) {
+                if (isOnline) {
+                    statusDot.className = 'status-dot online';
+                    statusText.textContent = 'Connected';
+                } else {
+                    statusDot.className = 'status-dot offline';
+                    statusText.textContent = 'Disconnected';
+                }
+            }
+        }
+        
+        async function handleSave() {
+            const saveBtn = document.getElementById('save-btn');
+            if (!saveBtn) return;
+            
+            // Disable button and show loading
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '⏳ Saving...';
+            
+            try {
+                // Get current selected files from the tree
+                const selectedFiles = getSelectedFiles();
+                
+                const response = await fetch('/api/bundle/save', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        files: selectedFiles
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    saveBtn.innerHTML = '✅ Saved!';
+                    setTimeout(() => {
+                        saveBtn.innerHTML = '💾 Save Bundle';
+                        saveBtn.disabled = false;
+                    }, 2000);
+                } else {
+                    throw new Error('Save failed');
+                }
+            } catch (error) {
+                console.error('Save error:', error);
+                saveBtn.innerHTML = '❌ Save Failed';
+                setTimeout(() => {
+                    saveBtn.innerHTML = '💾 Save Bundle';
+                    saveBtn.disabled = false;
+                }, 2000);
+            }
+        }
+        
+        async function handleShutdown() {
+            if (!confirm('Are you sure you want to shutdown the server?')) {
+                return;
+            }
+            
+            const shutdownBtn = document.getElementById('shutdown-btn');
+            if (!shutdownBtn) return;
+            
+            // Disable button and show loading
+            shutdownBtn.disabled = true;
+            shutdownBtn.innerHTML = '⏳ Shutting down...';
+            
+            try {
+                const response = await fetch('/api/shutdown', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    shutdownBtn.innerHTML = '✅ Server stopped';
+                    updateConnectionStatus(false);
+                    // Show goodbye message
+                    setTimeout(() => {
+                        document.body.innerHTML = '<div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-size: 24px; color: var(--text-primary);">🛑 Server has been shut down</div>';
+                    }, 1000);
+                } else {
+                    throw new Error('Shutdown failed');
+                }
+            } catch (error) {
+                console.error('Shutdown error:', error);
+                shutdownBtn.innerHTML = '❌ Shutdown Failed';
+                setTimeout(() => {
+                    shutdownBtn.innerHTML = '🛑 Shutdown Server';
+                    shutdownBtn.disabled = false;
+                }, 2000);
+            }
+        }
+        
+        function getSelectedFiles() {
+            // This would integrate with the React tree component
+            // For now, return all files as selected
+            return fileData.map(file => file.path);
+        }
+    </script>
+</body>
+</html>

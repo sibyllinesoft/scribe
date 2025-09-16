@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Bundle</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+            background-color: #1a1a1a;
+            color: #e5e5e5;
+            padding: 20px;
+        }
+        
+        .tree-container {
+            height: 400px;
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .tree-node {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            cursor: pointer;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 13px;
+            color: #b5b5b5;
+            transition: all 0.2s ease;
+            user-select: none;
+            border-radius: 4px;
+            margin: 1px 0;
+        }
+
+        .tree-node:hover {
+            background: #333333;
+            color: #4f9cf9;
+        }
+
+        .tree-node-content {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1;
+            width: 100%;
+        }
+
+        .tree-arrow {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 4px;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            opacity: 0.6;
+        }
+
+        .tree-arrow.expanded {
+            transform: rotate(90deg);
+        }
+
+        .tree-icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .tree-label {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        .folder-icon {
+            color: #7c3aed;
+        }
+
+        .file-icon {
+            color: #b5b5b5;
+        }
+    </style>
+</head>
+<body>
+    <h1>React Arborist Bundle Test</h1>
+    <p>Testing the bundled React Arborist tree component:</p>
+    
+    <div id="file-tree-container" class="tree-container"></div>
+    
+    <!-- Load self-contained bundle -->
+    <script src="assets/scribe-tree-bundle.js"></script>
+    
+    <script>
+        // Test file data
+        const testFileData = [
+            { path: "src/components/App.js", icon: "file-text", index: 0, size: "1.2KB", tokens: "150", score: "8.5" },
+            { path: "src/components/Header.js", icon: "file-text", index: 1, size: "0.8KB", tokens: "100", score: "7.2" },
+            { path: "src/utils/helpers.js", icon: "file-text", index: 2, size: "2.1KB", tokens: "280", score: "9.1" },
+            { path: "src/styles/main.css", icon: "file-text", index: 3, size: "1.5KB", tokens: "80", score: "6.8" },
+            { path: "package.json", icon: "file-text", index: 4, size: "0.9KB", tokens: "45", score: "5.5" },
+            { path: "README.md", icon: "file-text", index: 5, size: "3.2KB", tokens: "450", score: "4.2" }
+        ];
+
+        // Initialize the file tree when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, checking for ScribeFileTree...');
+            
+            if (window.ScribeFileTree) {
+                console.log('ScribeFileTree found, creating instance...');
+                const fileTree = new window.ScribeFileTree();
+                const success = fileTree.renderTree('file-tree-container', testFileData);
+                
+                if (success) {
+                    console.log('File tree rendered successfully!');
+                } else {
+                    console.error('Failed to render file tree');
+                    // Fallback message
+                    const container = document.getElementById('file-tree-container');
+                    if (container) {
+                        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">Failed to load tree view</div>';
+                    }
+                }
+            } else {
+                console.error('ScribeFileTree not available in window object');
+                console.log('Available in window:', Object.keys(window).filter(k => k.includes('Tree') || k.includes('React') || k.includes('Scribe')));
+                
+                // Fallback message
+                const container = document.getElementById('file-tree-container');
+                if (container) {
+                    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">Bundle failed to load properly</div>';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

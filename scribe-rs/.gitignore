@@ -2,6 +2,7 @@
 
 # Test outputs and analysis files
 *.html
+!templates/*.html
 *.xml
 *.json
 perf.data*
@@ -54,9 +55,12 @@ scribe-selection/repomix-output.xml
 # Binary outputs (removed - src/bin/ contains source files needed by Cargo.toml)
 # Binary artifacts are in target/ which is already ignored
 
-# Templates and documentation
-templates/
+# Templates and documentation (keep essential templates, ignore generated ones)
+templates/generated/
+templates/*.tmp
 FRONTEND_BUNDLE_SETUP.md
+!templates/report_bundled.html
+!templates/report.html
 
 # Installation and development scripts
 install-scribe.sh
