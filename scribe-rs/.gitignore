@@ -35,7 +35,6 @@ examples/test_*.rs
 
 # Core module temporary files
 scribe-core/examples/
-scribe-core/src/tokenization.rs
 
 # Analysis module temporary files
 scribe-analysis/src/complexity.rs
