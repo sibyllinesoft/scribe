@@ -22,6 +22,7 @@ debug_*.rs
 optimization_test.rs
 performance_test.rs
 test_*.rs
+!test_budget_utilization.rs
 repomix-output.xml
 
 # Frontend build artifacts (keep source but ignore built files)
@@ -41,15 +42,8 @@ scribe-core/examples/
 # Analysis module temporary files
 # (removed - these are now permanent modules)
 
-# Scanner module temporary files
-scribe-scanner/src/aho_corasick_reference_index.rs
-scribe-scanner/src/compact_data.rs
-scribe-scanner/src/filtering.rs
-scribe-scanner/src/git_batch.rs
-scribe-scanner/src/incremental.rs
-scribe-scanner/src/optimized_scanner.rs
-scribe-scanner/src/parallel.rs
-scribe-scanner/src/performance.rs
+# Scanner module temporary files (removed - these are now permanent)
+# scribe-scanner/src files are now tracked as they're needed
 
 # Scaling module temporary files
 scribe-scaling/tests/performance_regression_tests.rs
@@ -57,8 +51,8 @@ scribe-scaling/tests/performance_regression_tests.rs
 # Selection module temporary files
 scribe-selection/repomix-output.xml
 
-# Binary outputs
-src/bin/
+# Binary outputs (removed - src/bin/ contains source files needed by Cargo.toml)
+# Binary artifacts are in target/ which is already ignored
 
 # Templates and documentation
 templates/
