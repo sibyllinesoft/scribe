@@ -25,13 +25,9 @@ pub enum FileCategory {
 }
 
 /// Selection algorithm variants
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SelectionAlgorithm {
-    /// Simple baseline selection
-    V1Baseline,
-    /// Category-based quota allocation
-    V2Quotas,
-    /// Fully integrated selection
+    /// Tiered approach with intelligent selection (V5)
     V5Integrated,
 }
 
@@ -71,7 +67,7 @@ impl ScalingSelectionConfig {
     pub fn small_budget() -> Self {
         Self {
             token_budget: 1000,
-            selection_algorithm: SelectionAlgorithm::V2Quotas,
+            selection_algorithm: SelectionAlgorithm::V5Integrated,
             enable_quotas: true,
             positioning_config: ContextPositioningConfig::default(),
             scaling_config: ScalingConfig::small_repository(),
@@ -334,21 +330,12 @@ impl ScalingSelector {
     
     /// Apply intelligent selection algorithm based on configuration
     async fn apply_intelligent_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
-        match self.config.selection_algorithm {
-            SelectionAlgorithm::V1Baseline => {
-                self.apply_baseline_selection(files)
-            }
-            SelectionAlgorithm::V2Quotas => {
-                self.apply_quota_selection(files)
-            }
-            SelectionAlgorithm::V5Integrated => {
-                self.apply_integrated_selection(files)
-            }
-        }
+        // V5 Integrated selection algorithm (tiered approach)
+        self.apply_integrated_selection(files)
     }
     
-    /// Baseline selection: simple importance-based greedy selection
-    fn apply_baseline_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
+    /// V5 Integrated selection: tiered approach with intelligent prioritization
+    fn apply_integrated_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
         // Score all files
         let mut scored_files: Vec<SelectorScoredFile> = files.iter()
             .map(|file| {
@@ -365,42 +352,7 @@ impl ScalingSelector {
             })
             .collect();
         
-        // Sort by score (descending)
-        scored_files.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        
-        // Greedy selection within budget
-        let mut selected = Vec::new();
-        let mut remaining_budget = self.config.token_budget;
-        
-        for scored_file in scored_files {
-            if scored_file.tokens <= remaining_budget {
-                selected.push(scored_file.metadata);
-                remaining_budget -= scored_file.tokens;
-            }
-        }
-        
-        Ok(selected)
-    }
-    
-    /// Quota-based selection with category allocation
-    fn apply_quota_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
-        // Score all files
-        let mut scored_files: Vec<SelectorScoredFile> = files.iter()
-            .map(|file| {
-                let tokens = self.estimate_tokens(file);
-                let score = self.calculate_file_score(file);
-                let category = self.classify_file(file);
-                
-                SelectorScoredFile {
-                    metadata: file.clone(),
-                    tokens,
-                    score,
-                    category,
-                }
-            })
-            .collect();
-        
-        // Group by category
+        // Group by category for tiered selection
         let mut categorized: HashMap<FileCategory, Vec<SelectorScoredFile>> = HashMap::new();
         for scored_file in scored_files {
             categorized.entry(scored_file.category)
@@ -408,36 +360,28 @@ impl ScalingSelector {
                 .push(scored_file);
         }
         
-        // Sort within each category
+        // Sort within each category by score
         for files in categorized.values_mut() {
             files.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         }
         
-        // Allocate budget by category (simplified quotas)
+        // V5 Tiered selection with intelligent allocation
         let mut selected = Vec::new();
         let mut remaining_budget = self.config.token_budget;
         
-        // Priority order: Entry -> Config -> General -> Examples
-        let priority_order = [
-            FileCategory::Entry,
-            FileCategory::Config,
-            FileCategory::General,
-            FileCategory::Examples,
-        ];
-        
-        for category in priority_order.iter() {
+        // Tier 1: Critical entry points (highest priority)
+        let tier1_order = [FileCategory::Entry, FileCategory::Config];
+        for category in tier1_order.iter() {
             if let Some(files) = categorized.get(category) {
-                // Allocate portion of budget to this category (more restrictive like original scribe)
-                let category_budget = match category {
-                    FileCategory::Entry => (self.config.token_budget as f64 * 0.4) as usize, // 40% - entry points are critical
-                    FileCategory::Config => (self.config.token_budget as f64 * 0.3) as usize, // 30% - config is important
-                    FileCategory::General => (self.config.token_budget as f64 * 0.25) as usize, // 25% - general code
-                    FileCategory::Examples => (self.config.token_budget as f64 * 0.05) as usize, // 5% - examples last
+                let tier_budget = match category {
+                    FileCategory::Entry => (self.config.token_budget as f64 * 0.35) as usize, // 35% for entry points
+                    FileCategory::Config => (self.config.token_budget as f64 * 0.25) as usize, // 25% for config
+                    _ => 0,
                 };
                 
                 let mut used_budget = 0;
                 for scored_file in files {
-                    if used_budget + scored_file.tokens <= category_budget {
+                    if used_budget + scored_file.tokens <= tier_budget && scored_file.tokens <= remaining_budget {
                         selected.push(scored_file.metadata.clone());
                         used_budget += scored_file.tokens;
                         remaining_budget = remaining_budget.saturating_sub(scored_file.tokens);
@@ -446,13 +390,27 @@ impl ScalingSelector {
             }
         }
         
+        // Tier 2: General implementation files (fill remaining budget intelligently)
+        if let Some(general_files) = categorized.get(&FileCategory::General) {
+            for scored_file in general_files {
+                if scored_file.tokens <= remaining_budget {
+                    selected.push(scored_file.metadata.clone());
+                    remaining_budget = remaining_budget.saturating_sub(scored_file.tokens);
+                }
+            }
+        }
+        
+        // Tier 3: Examples (lowest priority, use remaining budget)
+        if let Some(example_files) = categorized.get(&FileCategory::Examples) {
+            for scored_file in example_files {
+                if scored_file.tokens <= remaining_budget {
+                    selected.push(scored_file.metadata.clone());
+                    remaining_budget = remaining_budget.saturating_sub(scored_file.tokens);
+                }
+            }
+        }
+        
         Ok(selected)
-    }
-    
-    /// Integrated selection combining quotas with density optimization
-    fn apply_integrated_selection(&self, files: &[FileMetadata]) -> ScalingResult<Vec<FileMetadata>> {
-        // Start with quota-based selection
-        self.apply_quota_selection(files)
     }
     
     /// Apply scaling optimizations to selected files
@@ -808,7 +766,7 @@ mod tests {
     async fn test_small_budget_selection() {
         let selector = ScalingSelector::with_token_budget(1000);
         assert_eq!(selector.config.token_budget, 1000);
-        assert!(matches!(selector.config.selection_algorithm, SelectionAlgorithm::V2Quotas));
+        assert!(matches!(selector.config.selection_algorithm, SelectionAlgorithm::V5Integrated));
     }
 
     #[tokio::test]

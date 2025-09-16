@@ -78,6 +78,19 @@ than the previous static file approach.
                 .long("no-exclude-tests")
                 .help("Don't automatically exclude test files")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no-auto-shutdown")
+                .long("no-auto-shutdown")
+                .help("Disable auto-shutdown after inactivity")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("shutdown-timeout")
+                .long("shutdown-timeout")
+                .help("Auto-shutdown timeout in seconds")
+                .value_name("SECONDS")
+                .default_value("60"),
         );
 
     let matches = app.get_matches();
@@ -102,6 +115,12 @@ than the previous static file approach.
         .parse::<usize>()
         .map_err(|_| "Invalid max file size")?;
     let auto_exclude_tests = !matches.get_flag("no-exclude-tests");
+    let auto_shutdown = !matches.get_flag("no-auto-shutdown");
+    let auto_shutdown_timeout = matches
+        .get_one::<String>("shutdown-timeout")
+        .unwrap()
+        .parse::<u64>()
+        .map_err(|_| "Invalid shutdown timeout")?;
 
     // Validate repository path
     if !repo_path.exists() {
@@ -123,6 +142,8 @@ than the previous static file approach.
         auto_open_browser,
         max_file_size,
         auto_exclude_tests,
+        auto_shutdown,
+        auto_shutdown_timeout,
     };
 
     info!("Starting Scribe web service...");

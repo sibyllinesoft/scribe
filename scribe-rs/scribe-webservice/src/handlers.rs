@@ -6,9 +6,14 @@ use axum::{
     http::StatusCode,
     response::{Html, Json, IntoResponse},
 };
+use handlebars::Handlebars;
+use scribe_core::{Config, FileInfo};
+use scribe_scanner::{Scanner, ScanOptions};
+// Simple file selection for web interface (will be enhanced later)
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use std::path::Path;
+use tracing::{debug, error, info, warn};
 
 /// Health check endpoint
 pub async fn status() -> Json<ApiResponse<StatusInfo>> {
@@ -20,11 +25,55 @@ pub async fn status() -> Json<ApiResponse<StatusInfo>> {
     Json(ApiResponse::success(status))
 }
 
+/// Ping endpoint to keep server alive
+pub async fn ping(State(state): State<AppState>) -> Json<ApiResponse<PingResponse>> {
+    let now = tokio::time::Instant::now();
+    
+    // Update last ping time
+    {
+        let mut last_ping = state.last_ping.write().await;
+        *last_ping = now;
+    }
+    
+    debug!("Received ping, updated last activity");
+    
+    let response = PingResponse {
+        timestamp: chrono::Utc::now(),
+        auto_shutdown_enabled: state.config.auto_shutdown,
+        timeout_seconds: state.config.auto_shutdown_timeout,
+    };
+    
+    Json(ApiResponse::success(response))
+}
+
+/// Manual shutdown endpoint
+pub async fn shutdown(State(state): State<AppState>) -> Json<ApiResponse<String>> {
+    info!("Manual shutdown requested");
+    
+    // Send shutdown signal
+    {
+        let mut sender_lock = state.shutdown_sender.write().await;
+        if let Some(sender) = sender_lock.take() {
+            let _ = sender.send(());
+            Json(ApiResponse::success("Shutdown initiated".to_string()))
+        } else {
+            Json(ApiResponse::error("Shutdown already in progress".to_string()))
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusInfo {
     pub service: String,
     pub version: String,
     pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PingResponse {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub auto_shutdown_enabled: bool,
+    pub timeout_seconds: u64,
 }
 
 /// Main index page
@@ -71,28 +120,80 @@ pub async fn index() -> Html<String> {
 
 /// Bundle editor interface
 pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
-    // Load the bundle editor HTML template - for now return a simple HTML
-    let html = format!(r#"
+    info!("Starting repository analysis for web editor");
+    
+    // For now, use mock data to test template rendering
+    // TODO: Re-enable actual scanning once we confirm template rendering works
+    let selection_start = std::time::Instant::now();
+    
+    // Create mock FileInfo data for testing
+    use std::path::PathBuf;
+    let selected_files = vec![
+        FileInfo {
+            path: PathBuf::from("src/lib.rs"),
+            relative_path: PathBuf::from("src/lib.rs"),
+            size: 1024,
+            modified: std::time::SystemTime::now(),
+            content: Some("// Mock content for src/lib.rs\nfn main() {\n    println!(\"Hello, world!\");\n}".to_string()),
+            token_estimate: Some(250),
+            centrality_score: Some(0.85),
+        },
+        FileInfo {
+            path: PathBuf::from("src/main.rs"),
+            relative_path: PathBuf::from("src/main.rs"),
+            size: 512,
+            modified: std::time::SystemTime::now(),
+            content: Some("// Mock content for src/main.rs\nuse crate::lib;\n\nfn main() {\n    lib::run();\n}".to_string()),
+            token_estimate: Some(120),
+            centrality_score: Some(0.60),
+        },
+    ];
+    
+    let selection_time = selection_start.elapsed();
+    info!("Using mock data: {} files in {}ms", selected_files.len(), selection_time.as_millis());
+    
+    // Calculate statistics
+    let total_files = selected_files.len();
+    let total_tokens: usize = selected_files.iter()
+        .map(|f| f.token_estimate.unwrap_or(0))
+        .sum();
+    let total_size: u64 = selected_files.iter()
+        .map(|f| f.size)
+        .sum();
+    
+    // Prepare template data
+    let template_data = prepare_template_data(
+        &state.config.repo_path,
+        &selected_files,
+        total_files,
+        total_tokens,
+        total_size,
+        selection_time.as_millis() as u64,
+        state.config.token_budget,
+    );
+    
+    // For debugging - return simple HTML to test if handler runs
+    let simple_html = format!(r#"
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>Scribe Bundle Editor</title>
-    </head>
+    <head><title>Test - {}</title></head>
     <body>
-        <h1>Scribe Bundle Editor</h1>
+        <h1>Scribe Analysis - {}</h1>
         <p>Repository: {}</p>
-        <p>Token Budget: {}</p>
-        <p>Auto Exclude Tests: {}</p>
-        <div id="editor">Editor interface will go here</div>
+        <p>Files: {}</p>
+        <p>Total tokens: {}</p>
+        <p>Template rendering test successful!</p>
     </body>
     </html>
     "#, 
-        state.config.repo_path.display(), 
-        state.config.token_budget,
-        state.config.auto_exclude_tests
+        template_data.repository_name,
+        template_data.repository_name,
+        state.config.repo_path.display(),
+        template_data.total_files,
+        template_data.total_tokens
     );
     
-    Html(html)
+    Html(simple_html).into_response()
 }
 
 /// Scan repository and return file information
@@ -333,6 +434,146 @@ pub async fn update_config(
     // TODO: Update the actual state configuration
     // For now, just return the new config
     Json(ApiResponse::success(new_config))
+}
+
+/// Template data structure for Handlebars rendering
+#[derive(Serialize)]
+struct TemplateData {
+    repository_name: String,
+    algorithm: String,
+    generated_time: String,
+    selection_time_ms: u64,
+    total_files: usize,
+    total_tokens: String,
+    total_size: String,
+    coverage_percentage: u32,
+    files: Vec<TemplateFile>,
+}
+
+#[derive(Serialize)]
+struct TemplateFile {
+    relative_path: String,
+    icon: String,
+    size: String,
+    estimated_tokens: String,
+    importance_score: String,
+    content: String,
+}
+
+fn prepare_template_data(
+    repo_path: &Path,
+    selected_files: &[FileInfo],
+    total_files: usize,
+    total_tokens: usize,
+    total_size: u64,
+    selection_time_ms: u64,
+    token_budget: usize,
+) -> TemplateData {
+    let repo_name = repo_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    
+    // Format file size
+    let formatted_size = format_file_size(total_size);
+    
+    // Calculate coverage percentage
+    let coverage_percentage = if token_budget > 0 {
+        ((total_tokens as f64 / token_budget as f64) * 100.0).min(100.0) as u32
+    } else {
+        0
+    };
+    
+    // Convert FileInfo to TemplateFile
+    let template_files: Vec<TemplateFile> = selected_files
+        .iter()
+        .map(|file| {
+            let relative_path = file.path
+                .strip_prefix(repo_path)
+                .unwrap_or(&file.path)
+                .to_string_lossy()
+                .to_string();
+            
+            let file_extension = file.path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("");
+            
+            let icon = get_file_icon(file_extension);
+            
+            TemplateFile {
+                relative_path,
+                icon,
+                size: format_file_size(file.size),
+                estimated_tokens: file.token_estimate.unwrap_or(0).to_string(),
+                importance_score: format!("{:.2}", file.centrality_score.unwrap_or(0.0)),
+                content: file.content.clone().unwrap_or_default(),
+            }
+        })
+        .collect();
+    
+    TemplateData {
+        repository_name: format!("Scribe Analysis - {}", repo_name),
+        algorithm: "Two-Pass File Selection".to_string(),
+        generated_time: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        selection_time_ms,
+        total_files,
+        total_tokens: total_tokens.to_string(),
+        total_size: formatted_size,
+        coverage_percentage,
+        files: template_files,
+    }
+}
+
+fn render_template(template_data: &TemplateData) -> std::result::Result<String, Box<dyn std::error::Error>> {
+    let template_content = include_str!("../../templates/report_bundled.html");
+    
+    let mut handlebars = Handlebars::new();
+    handlebars.register_template_string("report", template_content)?;
+    
+    let mut rendered = handlebars.render("report", template_data)?;
+    
+    // Fix static asset path
+    rendered = rendered.replace("src=\"assets/scribe-tree-bundle.js\"", "src=\"/static/scribe-tree-bundle.js\"");
+    
+    Ok(rendered)
+}
+
+fn format_file_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+    
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    
+    if unit_index == 0 {
+        format!("{} {}", bytes, UNITS[unit_index])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    }
+}
+
+fn get_file_icon(extension: &str) -> String {
+    match extension.to_lowercase().as_str() {
+        "rs" => "🦀",
+        "js" | "ts" => "⚡",
+        "py" => "🐍",
+        "go" => "🔷",
+        "java" => "☕",
+        "cpp" | "c" | "cc" => "⚙️",
+        "html" => "🌐",
+        "css" => "🎨",
+        "md" => "📝",
+        "json" => "📄",
+        "yml" | "yaml" => "⚙️",
+        "toml" => "📋",
+        "sh" | "bash" => "🔧",
+        _ => "📄",
+    }.to_string()
 }
 
 #[cfg(test)]

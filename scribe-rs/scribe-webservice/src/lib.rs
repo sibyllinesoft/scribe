@@ -50,6 +50,10 @@ pub struct WebServiceConfig {
     pub max_file_size: usize,
     /// Whether to exclude tests automatically
     pub auto_exclude_tests: bool,
+    /// Whether to auto-shutdown after inactivity (default true)
+    pub auto_shutdown: bool,
+    /// Auto-shutdown timeout in seconds (default 60)
+    pub auto_shutdown_timeout: u64,
 }
 
 impl Default for WebServiceConfig {
@@ -62,6 +66,8 @@ impl Default for WebServiceConfig {
             auto_open_browser: true,
             max_file_size: 1024 * 1024, // 1MB
             auto_exclude_tests: true,
+            auto_shutdown: true,
+            auto_shutdown_timeout: 60,
         }
     }
 }
@@ -71,6 +77,8 @@ impl Default for WebServiceConfig {
 pub struct AppState {
     pub config: WebServiceConfig,
     pub bundle_state: Arc<RwLock<BundleState>>,
+    pub last_ping: Arc<tokio::sync::RwLock<tokio::time::Instant>>,
+    pub shutdown_sender: Arc<tokio::sync::RwLock<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
 
 /// Current bundle state

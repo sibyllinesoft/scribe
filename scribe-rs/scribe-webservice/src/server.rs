@@ -37,6 +37,8 @@ impl WebService {
         let app_state = AppState {
             config: config.clone(),
             bundle_state: Arc::new(RwLock::new(Default::default())),
+            last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
+            shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
         };
 
         Ok(Self { config, app_state })
@@ -46,16 +48,34 @@ impl WebService {
     pub async fn start(self) -> Result<()> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.port));
         let auto_open_browser = self.config.auto_open_browser;
+        let auto_shutdown = self.config.auto_shutdown;
+        let shutdown_timeout = self.config.auto_shutdown_timeout;
         
         info!("🚀 Starting Scribe web service on http://{}", addr);
         info!("📁 Repository: {}", self.config.repo_path.display());
         info!("🎯 Token budget: {}", self.config.token_budget);
+        
+        if auto_shutdown {
+            info!("⏰ Auto-shutdown enabled: {}s timeout", shutdown_timeout);
+        }
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        
+        // Store shutdown sender in app state
+        {
+            let mut sender_lock = self.app_state.shutdown_sender.write().await;
+            *sender_lock = Some(shutdown_tx);
+        }
+
+        // Clone necessary values before moving self
+        let last_ping = self.app_state.last_ping.clone();
 
         let app = self.create_router();
 
-        // Open browser if requested
+        // Open browser if requested  
         if auto_open_browser {
-            let url = format!("http://{}", addr);
+            let url = format!("http://{}/editor", addr); // Go directly to editor
             info!("🌐 Opening browser to {}", url);
             
             if let Err(e) = open::that(&url) {
@@ -63,13 +83,39 @@ impl WebService {
             }
         }
 
+        // Start auto-shutdown monitoring if enabled
+        if auto_shutdown {
+            let timeout_duration = tokio::time::Duration::from_secs(shutdown_timeout);
+            
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    
+                    let last_ping_time = *last_ping.read().await;
+                    let elapsed = last_ping_time.elapsed();
+                    
+                    if elapsed > timeout_duration {
+                        info!("⏰ Auto-shutdown triggered after {}s of inactivity", elapsed.as_secs());
+                        std::process::exit(0);
+                    }
+                }
+            });
+        }
+
         // Start the server
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         info!("✅ Web service ready at http://{}", addr);
         
-        axum::serve(listener, app)
-            .await
-            .map_err(|e| WebServiceError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        // Run server until shutdown signal
+        tokio::select! {
+            result = axum::serve(listener, app) => {
+                result.map_err(|e| WebServiceError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            }
+            _ = shutdown_rx => {
+                info!("🛑 Shutdown signal received, stopping server");
+            }
+        }
 
         Ok(())
     }
@@ -82,6 +128,8 @@ impl WebService {
         Router::new()
             // API routes
             .route("/api/status", get(handlers::status))
+            .route("/api/ping", post(handlers::ping))
+            .route("/api/shutdown", post(handlers::shutdown))
             .route("/api/scan", post(handlers::scan_repository))
             .route("/api/files", get(handlers::list_files))
             .route("/api/files/toggle", post(handlers::toggle_file))

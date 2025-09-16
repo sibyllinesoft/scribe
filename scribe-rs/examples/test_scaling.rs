@@ -3,6 +3,7 @@
 // To test via CLI with scaling: ./target/release/scribe --scaling .
 
 use std::time::Instant;
+use std::path::Path;
 use scribe_scaling::{ScalingEngine, ScalingConfig};
 use tokio;
 
@@ -29,41 +30,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create scaling engine
         let mut engine = ScalingEngine::new(config).await?;
         
-        // Profile the repository first
-        println!("🔍 Profiling repository...");
-        let profile_start = Instant::now();
-        let profile = engine.profile_repository(repo_path).await?;
-        let profile_duration = profile_start.elapsed();
-        
-        println!("   Repository Type: {:?}", profile.repo_type);
-        println!("   Size Category: {:?}", profile.size_category);
-        println!("   File Count Estimate: {}", profile.estimated_file_count);
-        println!("   Profiling Time: {:?}", profile_duration);
-        
         // Process repository
         println!("⚡ Processing repository...");
         let process_start = Instant::now();
-        let result = engine.process_repository(repo_path).await?;
+        let result = engine.process_repository(Path::new(repo_path)).await?;
         let process_duration = process_start.elapsed();
         
-        println!("   Files Processed: {}", result.files_processed);
+        println!("   Files Processed: {}", result.metrics.files_processed);
         println!("   Processing Time: {:?}", process_duration);
-        
-        // Get metrics
-        let metrics = engine.get_metrics();
-        println!("   Memory Used: {:.2} MB", metrics.memory_used_bytes as f64 / 1024.0 / 1024.0);
-        println!("   Cache Hits: {}", metrics.cache_hits);
-        println!("   Cache Misses: {}", metrics.cache_misses);
+        println!("   Memory Peak: {:.2} MB", result.memory_peak as f64 / 1024.0 / 1024.0);
+        println!("   Cache Hits: {}", result.cache_hits);
+        println!("   Cache Misses: {}", result.cache_misses);
         
         let total_duration = start_time.elapsed();
         println!("   Total Time: {:?}", total_duration);
         
         // Performance check against targets
-        let memory_mb = metrics.memory_used_bytes as f64 / 1024.0 / 1024.0;
+        let memory_mb = result.memory_peak as f64 / 1024.0 / 1024.0;
         let time_secs = total_duration.as_secs_f64();
         
         println!("📈 Performance Analysis:");
-        if result.files_processed <= 1000 {
+        if result.metrics.files_processed <= 1000 {
             // Small repo targets: <1s, <50MB
             let time_ok = time_secs < 1.0;
             let memory_ok = memory_mb < 50.0;
@@ -72,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if time_ok { "⏱️ ✅" } else { "⏱️ ❌" },
                 if memory_ok { "💾 ✅" } else { "💾 ❌" }
             );
-        } else if result.files_processed <= 10000 {
+        } else if result.metrics.files_processed <= 10000 {
             // Medium repo targets: <5s, <200MB
             let time_ok = time_secs < 5.0;
             let memory_ok = memory_mb < 200.0;
@@ -90,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run full benchmark suite
     let mut engine = ScalingEngine::new(ScalingConfig::default()).await?;
     let benchmark_start = Instant::now();
-    let benchmarks = engine.benchmark(repo_path, 3).await?;
+    let benchmarks = engine.benchmark(Path::new(repo_path), 3).await?;
     let benchmark_duration = benchmark_start.elapsed();
     
     println!("Benchmark runs: {}", benchmarks.len());
@@ -98,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     if !benchmarks.is_empty() {
         let avg_time: f64 = benchmarks.iter().map(|b| b.duration.as_secs_f64()).sum::<f64>() / benchmarks.len() as f64;
-        let avg_memory: f64 = benchmarks.iter().map(|b| b.memory_used as f64).sum::<f64>() / benchmarks.len() as f64 / 1024.0 / 1024.0;
+        let avg_memory: f64 = benchmarks.iter().map(|b| b.memory_usage as f64).sum::<f64>() / benchmarks.len() as f64 / 1024.0 / 1024.0;
         
         println!("📊 Benchmark Results (avg of {} runs):", benchmarks.len());
         println!("   Average Time: {:.3}s", avg_time);

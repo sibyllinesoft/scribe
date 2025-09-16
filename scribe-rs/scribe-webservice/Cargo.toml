@@ -16,6 +16,8 @@ description = "Web service interface for Scribe repository analysis"
 scribe-core = { version = "0.2.0", path = "../scribe-core" }
 scribe-scaling = { version = "0.2.0", path = "../scribe-scaling" }
 scribe-selection = { version = "0.2.0", path = "../scribe-selection" }
+scribe-scanner = { version = "0.2.0", path = "../scribe-scanner" }
+scribe-analysis = { version = "0.2.0", path = "../scribe-analysis" }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }
@@ -47,6 +49,9 @@ clap = { version = "4.4", features = ["derive"] }
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
+
+# Template rendering
+handlebars = "4.5"
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -28,16 +28,16 @@
 //! ### Basic Usage
 //!
 //! ```rust,no_run
-//! use scribe::prelude::*;
+//! use scribe_analyzer::prelude::*;
 //! use std::path::Path;
 //!
-//! # async fn example() -> Result<()> {
+//! # async fn example() -> scribe_analyzer::Result<()> {
 //! // Configure analysis
 //! let config = Config::default();
 //! let repo_path = Path::new(".");
 //!
 //! // Quick analysis - get most important files
-//! let important_files = scribe::analyze_repository(repo_path, &config).await?;
+//! let important_files = scribe_analyzer::analyze_repository(repo_path, &config).await?;
 //! 
 //! println!("Top 10 most important files:");
 //! for (file, score) in important_files.top_files(10) {
@@ -51,10 +51,10 @@
 //!
 //! ```rust,no_run
 //! // For minimal installations with selective features
-//! use scribe::core::{Config, FileInfo};
-//! use scribe::scanner::{Scanner, ScanOptions};
+//! use scribe_analyzer::core::{Config, FileInfo};
+//! use scribe_analyzer::scanner::{Scanner, ScanOptions};
 //!
-//! # async fn selective_example() -> scribe::Result<()> {
+//! # async fn selective_example() -> scribe_analyzer::Result<()> {
 //! let scanner = Scanner::new();
 //! let options = ScanOptions::default();
 //! let files = scanner.scan(".", options).await?;
@@ -268,12 +268,12 @@ impl RepositoryAnalysis {
 /// # Example
 ///
 /// ```rust,no_run
-/// use scribe;
+/// use scribe_analyzer;
 /// use std::path::Path;
 ///
-/// # async fn example() -> scribe::Result<()> {
-/// let config = scribe::Config::default();
-/// let analysis = scribe::analyze_repository(".", &config).await?;
+/// # async fn example() -> scribe_analyzer::Result<()> {
+/// let config = scribe_analyzer::Config::default();
+/// let analysis = scribe_analyzer::analyze_repository(".", &config).await?;
 /// 
 /// println!("Analysis: {}", analysis.summary());
 /// for (file, score) in analysis.top_files(5) {
@@ -1127,7 +1127,7 @@ pub async fn scan_repository<P: AsRef<std::path::Path>>(
 /// # Example
 ///
 /// ```rust
-/// use scribe::prelude::*;
+/// use scribe_analyzer::prelude::*;
 /// 
 /// // Now you have access to:
 /// // - Result, ScribeError
