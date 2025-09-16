@@ -1,30 +1,41 @@
 //! # Scribe Selection
-//! 
+//!
 //! Intelligent code selection and context extraction capabilities for the Scribe library.
 //! This crate provides advanced algorithms for selecting relevant code sections based on
 //! semantic understanding, dependency analysis, and contextual relevance.
 
-pub mod selector;
-pub mod context;
-pub mod relevance;
+pub mod ast_parser;
+pub mod bandit_router;
 pub mod bundler;
+pub mod context;
+pub mod demotion;
 pub mod optimizer;
 pub mod quota;
-pub mod demotion;
+pub mod relevance;
+pub mod selector;
 pub mod two_pass;
-pub mod bandit_router;
-pub mod ast_parser;
 
 // Re-export main types
+pub use ast_parser::{AstChunk, AstLanguage, AstParser, AstSignature};
+pub use bandit_router::{
+    BanditConfig, BanditRouter, BanditState, BanditStatistics, PerformanceFeedback,
+    RoutingDecision, SelectionStrategy,
+};
+pub use bundler::{BundleOptions, CodeBundle, CodeBundler};
+pub use context::{CodeContext, ContextExtractor, ContextOptions};
+pub use demotion::{
+    ChunkInfo, CodeChunker, DemotionEngine, DemotionResult, FidelityMode, SignatureExtractor,
+};
+pub use quota::{
+    create_quota_manager, CategoryQuota, FileCategory, QuotaAllocation, QuotaManager,
+    QuotaScanResult,
+};
+pub use relevance::{RelevanceMetrics, RelevanceScorer};
 pub use selector::{CodeSelector, SelectionCriteria, SelectionResult};
-pub use context::{ContextExtractor, ContextOptions, CodeContext};
-pub use relevance::{RelevanceScorer, RelevanceMetrics};
-pub use bundler::{CodeBundler, BundleOptions, CodeBundle};
-pub use quota::{QuotaManager, FileCategory, CategoryQuota, QuotaAllocation, QuotaScanResult, create_quota_manager};
-pub use demotion::{DemotionEngine, FidelityMode, DemotionResult, ChunkInfo, CodeChunker, SignatureExtractor};
-pub use two_pass::{TwoPassSelector, TwoPassConfig, TwoPassResult, CoverageGap, SelectionMetrics, SelectionRule, SelectionContext, FileInfo};
-pub use bandit_router::{BanditRouter, BanditConfig, SelectionStrategy, RoutingDecision, PerformanceFeedback, BanditStatistics, BanditState};
-pub use ast_parser::{AstParser, AstLanguage, AstChunk, AstSignature};
+pub use two_pass::{
+    CoverageGap, FileInfo, SelectionContext, SelectionMetrics, SelectionRule, TwoPassConfig,
+    TwoPassResult, TwoPassSelector,
+};
 
 use scribe_core::Result;
 
@@ -48,10 +59,7 @@ impl SelectionEngine {
     }
 
     /// Select relevant code based on criteria
-    pub async fn select_code(
-        &self, 
-        criteria: &SelectionCriteria
-    ) -> Result<SelectionResult> {
+    pub async fn select_code(&self, criteria: &SelectionCriteria) -> Result<SelectionResult> {
         // TODO: Implement selection logic without heavy dependencies
         todo!("Implement selection logic")
     }
@@ -60,7 +68,7 @@ impl SelectionEngine {
     pub async fn extract_context(
         &self,
         selection: &SelectionResult,
-        options: &ContextOptions
+        options: &ContextOptions,
     ) -> Result<CodeContext> {
         self.context_extractor.extract(selection, options).await
     }
@@ -69,7 +77,7 @@ impl SelectionEngine {
     pub async fn create_bundle(
         &self,
         context: &CodeContext,
-        options: &BundleOptions
+        options: &BundleOptions,
     ) -> Result<CodeBundle> {
         self.bundler.bundle(context, options).await
     }

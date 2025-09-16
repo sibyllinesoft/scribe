@@ -30,14 +30,14 @@
 //! use scribe_graph::{CentralityCalculator, PageRankConfig};
 //! # use scribe_analysis::heuristics::ScanResult;
 //! # use std::collections::HashMap;
-//! # 
+//! #
 //! # // Mock implementation for documentation
 //! # #[derive(Debug)]
 //! # struct MockScanResult {
 //! #     path: String,
 //! #     relative_path: String,
 //! # }
-//! # 
+//! #
 //! # impl ScanResult for MockScanResult {
 //! #     fn path(&self) -> &str { &self.path }
 //! #     fn relative_path(&self) -> &str { &self.relative_path }
@@ -53,27 +53,27 @@
 //! #     fn get_imports(&self) -> Vec<String> { vec![] }
 //! #     fn get_git_churn(&self) -> usize { 0 }
 //! # }
-//! # 
+//! #
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create centrality calculator optimized for code analysis
 //! let calculator = CentralityCalculator::for_large_codebases()?;
-//! 
+//!
 //! // Example scan results (replace with actual scan results)
 //! let scan_results = vec![
 //!     MockScanResult { path: "main.rs".to_string(), relative_path: "main.rs".to_string() },
 //!     MockScanResult { path: "lib.rs".to_string(), relative_path: "lib.rs".to_string() },
 //! ];
 //! let heuristic_scores = HashMap::new();
-//! 
+//!
 //! // Calculate PageRank centrality for scan results
 //! let centrality_results = calculator.calculate_centrality(&scan_results)?;
-//! 
+//!
 //! // Get top files by centrality
 //! let top_files = centrality_results.top_files_by_centrality(10);
-//! 
+//!
 //! // Integrate with existing heuristic scores
 //! let integrated_scores = calculator.integrate_with_heuristics(
-//!     &centrality_results, 
+//!     &centrality_results,
 //!     &heuristic_scores
 //! )?;
 //! # Ok(())
@@ -88,64 +88,44 @@
 //! - **Parallel efficiency**: Near-linear speedup on multi-core systems
 
 // Core modules
+pub mod centrality;
 pub mod graph;
 pub mod pagerank;
 pub mod statistics;
-pub mod centrality;
 
 // Legacy modules (maintained for compatibility)
-pub mod builder;
 pub mod algorithms;
+pub mod builder;
 pub mod traversal;
 pub mod visualization;
 
 // Primary API exports - PageRank centrality system
 pub use centrality::{
-    CentralityCalculator,
-    CentralityResults,
-    CentralityConfig,
-    ImportDetectionStats,
-    IntegrationMetadata,
-    IntegrationConfig,
-    ImportResolutionConfig,
-    NormalizationMethod,
+    CentralityCalculator, CentralityConfig, CentralityResults, ImportDetectionStats,
+    ImportResolutionConfig, IntegrationConfig, IntegrationMetadata, NormalizationMethod,
 };
 
 pub use pagerank::{
-    PageRankComputer,
-    PageRankResults,
-    PageRankConfig,
-    PerformanceMetrics,
-    ScoreStatistics,
+    PageRankComputer, PageRankConfig, PageRankResults, PerformanceMetrics, ScoreStatistics,
 };
 
 pub use graph::{
-    DependencyGraph,
-    ConcurrentDependencyGraph,
-    NodeMetadata,
-    DegreeInfo,
-    GraphStatistics,
+    ConcurrentDependencyGraph, DegreeInfo, DependencyGraph, GraphStatistics, NodeMetadata,
 };
 
 pub use statistics::{
-    GraphStatisticsAnalyzer,
-    GraphAnalysisResults,
-    DegreeDistribution,
-    ConnectivityAnalysis,
-    StructuralPatterns,
-    ImportInsights,
-    PerformanceProfile,
-    StatisticsConfig,
+    ConnectivityAnalysis, DegreeDistribution, GraphAnalysisResults, GraphStatisticsAnalyzer,
+    ImportInsights, PerformanceProfile, StatisticsConfig, StructuralPatterns,
 };
 
 // Legacy exports (for backward compatibility)
-pub use graph::{DependencyGraph as CodeGraph}; // Alias for compatibility
-pub use builder::{GraphBuilder, BuildOptions};
 pub use algorithms::{GraphAlgorithms, PathFinder};
+pub use builder::{BuildOptions, GraphBuilder};
+pub use graph::DependencyGraph as CodeGraph; // Alias for compatibility
 pub use traversal::{GraphTraversal, TraversalOrder};
 
+use scribe_analysis::{heuristics::ScanResult, AnalysisResult};
 use scribe_core::Result;
-use scribe_analysis::{AnalysisResult, heuristics::ScanResult};
 use std::collections::HashMap;
 
 /// Main entry point for PageRank centrality analysis
@@ -158,14 +138,14 @@ use std::collections::HashMap;
 /// ```ignore
 /// use scribe_graph::PageRankAnalysis;
 /// # use scribe_analysis::heuristics::ScanResult;
-/// # 
+/// #
 /// # // Mock implementation for documentation
 /// # #[derive(Debug)]
 /// # struct MockScanResult {
 /// #     path: String,
 /// #     relative_path: String,
 /// # }
-/// # 
+/// #
 /// # impl ScanResult for MockScanResult {
 /// #     fn path(&self) -> &str { &self.path }
 /// #     fn relative_path(&self) -> &str { &self.relative_path }
@@ -181,7 +161,7 @@ use std::collections::HashMap;
 /// #     fn get_imports(&self) -> Vec<String> { vec![] }
 /// #     fn get_git_churn(&self) -> usize { 0 }
 /// # }
-/// # 
+/// #
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let analysis = PageRankAnalysis::new()?;
 /// let scan_results = vec![
@@ -189,10 +169,10 @@ use std::collections::HashMap;
 ///     MockScanResult { path: "lib.rs".to_string(), relative_path: "lib.rs".to_string() },
 /// ];
 /// let centrality_results = analysis.compute_centrality(&scan_results)?;
-/// 
+///
 /// // Get files ranked by importance
 /// let top_files = centrality_results.top_files_by_centrality(10);
-/// 
+///
 /// println!("Top 10 most important files:");
 /// for (file, score) in top_files {
 ///     println!("  {}: {:.4}", file, score);
@@ -211,36 +191,36 @@ impl PageRankAnalysis {
             calculator: CentralityCalculator::new()?,
         })
     }
-    
+
     /// Create with custom centrality configuration
     pub fn with_config(config: CentralityConfig) -> Result<Self> {
         Ok(Self {
             calculator: CentralityCalculator::with_config(config)?,
         })
     }
-    
+
     /// Create optimized for code dependency analysis
     pub fn for_code_analysis() -> Result<Self> {
         Ok(Self {
             calculator: CentralityCalculator::new()?,
         })
     }
-    
+
     /// Create optimized for large codebases (>5k files)
     pub fn for_large_codebases() -> Result<Self> {
         Ok(Self {
             calculator: CentralityCalculator::for_large_codebases()?,
         })
     }
-    
+
     /// Compute PageRank centrality scores for a collection of files
     pub fn compute_centrality<T>(&self, scan_results: &[T]) -> Result<CentralityResults>
-    where 
+    where
         T: ScanResult + Sync,
     {
         self.calculator.calculate_centrality(scan_results)
     }
-    
+
     /// Integrate centrality scores with existing heuristic scores
     ///
     /// This combines PageRank centrality with FastPath heuristic scores using
@@ -251,9 +231,10 @@ impl PageRankAnalysis {
         centrality_results: &CentralityResults,
         heuristic_scores: &HashMap<String, f64>,
     ) -> Result<HashMap<String, f64>> {
-        self.calculator.integrate_with_heuristics(centrality_results, heuristic_scores)
+        self.calculator
+            .integrate_with_heuristics(centrality_results, heuristic_scores)
     }
-    
+
     /// Get a summary of centrality computation results
     pub fn summarize_results(&self, results: &CentralityResults) -> String {
         results.summary()
@@ -267,7 +248,7 @@ impl Default for PageRankAnalysis {
 }
 
 /// Legacy GraphAnalysis maintained for backward compatibility
-/// 
+///
 /// **Note**: For new projects, use `PageRankAnalysis` instead, which provides
 /// the complete PageRank centrality system with performance optimizations.
 pub struct GraphAnalysis {
@@ -304,39 +285,39 @@ impl Default for GraphAnalysis {
 /// Utility functions for PageRank analysis
 pub mod utils {
     use super::*;
-    
+
     /// Quick function to compute centrality scores for scan results
-    /// 
+    ///
     /// This is a convenience function for simple use cases. For more control
     /// over configuration, use `PageRankAnalysis` directly.
     pub fn compute_file_centrality<T>(scan_results: &[T]) -> Result<HashMap<String, f64>>
-    where 
+    where
         T: ScanResult + Sync,
     {
         let analysis = PageRankAnalysis::for_code_analysis()?;
         let results = analysis.compute_centrality(scan_results)?;
         Ok(results.pagerank_scores)
     }
-    
+
     /// Quick function to get top-K most important files
     pub fn get_top_important_files<T>(
-        scan_results: &[T], 
-        top_k: usize
+        scan_results: &[T],
+        top_k: usize,
     ) -> Result<Vec<(String, f64)>>
-    where 
+    where
         T: ScanResult + Sync,
     {
         let analysis = PageRankAnalysis::for_code_analysis()?;
         let results = analysis.compute_centrality(scan_results)?;
         Ok(results.top_files_by_centrality(top_k))
     }
-    
+
     /// Combine centrality and heuristic scores with default configuration
     pub fn combine_scores<T>(
         scan_results: &[T],
         heuristic_scores: &HashMap<String, f64>,
     ) -> Result<HashMap<String, f64>>
-    where 
+    where
         T: ScanResult + Sync,
     {
         let analysis = PageRankAnalysis::for_code_analysis()?;

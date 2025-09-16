@@ -7,12 +7,12 @@
 //! - Support for .gitignore, .ignore, and custom ignore files
 
 use scribe_core::{Result, ScribeError};
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 // use std::collections::HashMap; // Not needed currently
-use ignore::{WalkBuilder, overrides::OverrideBuilder};
-use serde::{Serialize, Deserialize};
+use ignore::{overrides::OverrideBuilder, WalkBuilder};
+use serde::{Deserialize, Serialize};
 
 /// Gitignore pattern matcher with full syntax support
 #[derive(Debug)]
@@ -76,7 +76,7 @@ impl GitignorePattern {
     /// Create a new gitignore pattern from a line
     pub fn new(line: &str) -> Result<Self> {
         let trimmed = line.trim();
-        
+
         // Handle empty lines and comments
         if trimmed.is_empty() {
             return Ok(Self {
@@ -88,7 +88,7 @@ impl GitignorePattern {
                 rule_type: GitignoreRule::Empty,
             });
         }
-        
+
         if trimmed.starts_with('#') {
             return Ok(Self {
                 original: line.to_string(),
@@ -99,37 +99,37 @@ impl GitignorePattern {
                 rule_type: GitignoreRule::Comment,
             });
         }
-        
+
         let mut pattern = trimmed.to_string();
         let mut negated = false;
         let mut directory_only = false;
         let mut anchored = false;
-        
+
         // Handle negation
         if pattern.starts_with('!') {
             negated = true;
             pattern = pattern[1..].to_string();
         }
-        
+
         // Handle directory-only patterns
         if pattern.ends_with('/') {
             directory_only = true;
             pattern = pattern.trim_end_matches('/').to_string();
         }
-        
+
         // Handle anchoring
         if pattern.starts_with('/') {
             anchored = true;
             pattern = pattern[1..].to_string();
         }
-        
+
         // Determine rule type
         let rule_type = if negated {
             GitignoreRule::Include
         } else {
             GitignoreRule::Exclude
         };
-        
+
         Ok(Self {
             original: line.to_string(),
             pattern,
@@ -141,11 +141,19 @@ impl GitignorePattern {
     }
 
     /// Check if this pattern matches a path
-    pub fn matches<P: AsRef<Path>>(&self, path: P, is_directory: bool, case_sensitive: bool) -> bool {
-        if matches!(self.rule_type, GitignoreRule::Comment | GitignoreRule::Empty) {
+    pub fn matches<P: AsRef<Path>>(
+        &self,
+        path: P,
+        is_directory: bool,
+        case_sensitive: bool,
+    ) -> bool {
+        if matches!(
+            self.rule_type,
+            GitignoreRule::Comment | GitignoreRule::Empty
+        ) {
             return false;
         }
-        
+
         let path_str = path.as_ref().to_string_lossy();
         self.matches_glob(&self.pattern, &path_str, is_directory, case_sensitive)
     }
@@ -153,7 +161,7 @@ impl GitignorePattern {
     /// Convert gitignore pattern to glob pattern
     fn to_glob_pattern(&self) -> String {
         let pattern = self.pattern.clone();
-        
+
         // Handle anchored vs unanchored patterns
         if self.anchored {
             // Anchored patterns match from the root
@@ -171,23 +179,31 @@ impl GitignorePattern {
     }
 
     /// Simple glob-like matching (simplified implementation)
-    fn matches_glob(&self, pattern: &str, path: &str, is_directory: bool, case_sensitive: bool) -> bool {
+    fn matches_glob(
+        &self,
+        pattern: &str,
+        path: &str,
+        is_directory: bool,
+        case_sensitive: bool,
+    ) -> bool {
         // This is a simplified implementation
         // A full implementation would use proper gitignore pattern matching
-        
+
         if pattern.contains("**") {
             // Handle recursive patterns
             let parts: Vec<&str> = pattern.split("**").collect();
             if parts.len() == 2 {
                 let prefix = parts[0];
                 let suffix = parts[1].trim_start_matches('/');
-                
+
                 if prefix.is_empty() {
                     // Pattern like **/suffix
                     if suffix.contains('*') {
                         // If suffix has wildcards, match it against path components
                         let path_parts: Vec<&str> = path.split('/').collect();
-                        return path_parts.iter().any(|part| self.wildcard_match(suffix, part, case_sensitive));
+                        return path_parts
+                            .iter()
+                            .any(|part| self.wildcard_match(suffix, part, case_sensitive));
                     } else {
                         return path.ends_with(suffix) || path.contains(&format!("/{}", suffix));
                     }
@@ -196,23 +212,23 @@ impl GitignorePattern {
                     return path.starts_with(prefix.trim_end_matches('/'));
                 } else {
                     // Pattern like prefix/**/suffix
-                    return path.starts_with(prefix.trim_end_matches('/')) && 
-                           (path.ends_with(suffix) || path.contains(&format!("/{}", suffix)));
+                    return path.starts_with(prefix.trim_end_matches('/'))
+                        && (path.ends_with(suffix) || path.contains(&format!("/{}", suffix)));
                 }
             }
         }
-        
+
         // Simple wildcard matching
         if pattern.contains('*') {
             return self.wildcard_match(pattern, path, case_sensitive);
         }
-        
+
         // For directory patterns, only match directories or paths inside directories
         if self.directory_only {
             // Directory-only patterns (ending with /) should only match:
             // 1. If the path is a directory AND matches the pattern exactly (anywhere in path for unanchored)
             // 2. If the path is inside a directory that matches the pattern
-            
+
             if case_sensitive {
                 if self.anchored {
                     // Anchored: must start with pattern/ or be exactly pattern (if directory)
@@ -222,24 +238,25 @@ impl GitignorePattern {
                     // Unanchored: can match anywhere in the path
                     let dir_pattern = format!("{}/", pattern);
                     let component_pattern = format!("/{}", pattern);
-                    path.starts_with(&dir_pattern) || 
-                    (path == pattern && is_directory) ||
-                    path.contains(&dir_pattern) ||
-                    (path.ends_with(&component_pattern) && is_directory)
+                    path.starts_with(&dir_pattern)
+                        || (path == pattern && is_directory)
+                        || path.contains(&dir_pattern)
+                        || (path.ends_with(&component_pattern) && is_directory)
                 }
             } else {
                 let path_lower = path.to_ascii_lowercase();
                 let pattern_lower = pattern.to_ascii_lowercase();
                 let dir_pattern_lower = format!("{}/", pattern_lower);
                 let component_pattern_lower = format!("/{}", pattern_lower);
-                
+
                 if self.anchored {
-                    path_lower.starts_with(&dir_pattern_lower) || (path_lower == pattern_lower && is_directory)
+                    path_lower.starts_with(&dir_pattern_lower)
+                        || (path_lower == pattern_lower && is_directory)
                 } else {
-                    path_lower.starts_with(&dir_pattern_lower) || 
-                    (path_lower == pattern_lower && is_directory) ||
-                    path_lower.contains(&dir_pattern_lower) ||
-                    (path_lower.ends_with(&component_pattern_lower) && is_directory)
+                    path_lower.starts_with(&dir_pattern_lower)
+                        || (path_lower == pattern_lower && is_directory)
+                        || path_lower.contains(&dir_pattern_lower)
+                        || (path_lower.ends_with(&component_pattern_lower) && is_directory)
                 }
             }
         } else {
@@ -248,8 +265,10 @@ impl GitignorePattern {
             if case_sensitive {
                 path == pattern || path.ends_with(&component_pattern)
             } else {
-                path.to_ascii_lowercase() == pattern.to_ascii_lowercase() || 
-                path.to_ascii_lowercase().ends_with(&component_pattern.to_ascii_lowercase())
+                path.to_ascii_lowercase() == pattern.to_ascii_lowercase()
+                    || path
+                        .to_ascii_lowercase()
+                        .ends_with(&component_pattern.to_ascii_lowercase())
             }
         }
     }
@@ -258,15 +277,22 @@ impl GitignorePattern {
     fn wildcard_match(&self, pattern: &str, text: &str, case_sensitive: bool) -> bool {
         let pattern_chars: Vec<char> = pattern.chars().collect();
         let text_chars: Vec<char> = text.chars().collect();
-        
+
         self.wildcard_match_recursive(&pattern_chars, &text_chars, 0, 0, case_sensitive)
     }
 
-    fn wildcard_match_recursive(&self, pattern: &[char], text: &[char], p: usize, t: usize, case_sensitive: bool) -> bool {
+    fn wildcard_match_recursive(
+        &self,
+        pattern: &[char],
+        text: &[char],
+        p: usize,
+        t: usize,
+        case_sensitive: bool,
+    ) -> bool {
         if p == pattern.len() {
             return t == text.len();
         }
-        
+
         if pattern[p] == '*' {
             // In gitignore, * matches any character except '/'
             // Try matching zero characters
@@ -371,12 +397,12 @@ impl GitignoreMatcher {
         let path = path.as_ref();
         let ignore_type = self.determine_ignore_type(path);
         let ignore_file = self.load_ignore_file(path, ignore_type)?;
-        
+
         // Add patterns to the main list
         for pattern in &ignore_file.patterns {
             self.patterns.push(pattern.clone());
         }
-        
+
         self.ignore_files.push(ignore_file);
         self.invalidate_overrides();
         Ok(())
@@ -407,7 +433,7 @@ impl GitignoreMatcher {
         // A path ending with '/' is considered a directory, otherwise check filesystem if it exists
         let path_str = path.to_string_lossy();
         let is_directory = path_str.ends_with('/') || path.is_dir();
-        
+
         // Process patterns in reverse order (later patterns override earlier ones)
         let mut result = IgnoreMatchResult {
             ignored: false,
@@ -416,12 +442,12 @@ impl GitignoreMatcher {
             rule_type: GitignoreRule::Exclude,
             line_number: None,
         };
-        
+
         for (index, pattern) in self.patterns.iter().enumerate().rev() {
             if pattern.matches(path, is_directory, self.case_sensitive) {
                 result.matched_pattern = Some(pattern.original.clone());
                 result.rule_type = pattern.rule_type.clone();
-                
+
                 // Find which file this pattern came from
                 let mut line_count = 0;
                 for ignore_file in &self.ignore_files {
@@ -432,7 +458,7 @@ impl GitignoreMatcher {
                     }
                     line_count += ignore_file.patterns.len();
                 }
-                
+
                 // Set ignore status based on rule type
                 match pattern.rule_type {
                     GitignoreRule::Exclude => {
@@ -443,12 +469,12 @@ impl GitignoreMatcher {
                     }
                     _ => continue, // Comments and empty lines don't affect matching
                 }
-                
+
                 // Stop at first match (patterns are processed in reverse order)
                 break;
             }
         }
-        
+
         Ok(result)
     }
 
@@ -460,15 +486,15 @@ impl GitignoreMatcher {
         if self.overrides.is_none() {
             self.build_overrides()?;
         }
-        
+
         let mut result = Vec::new();
-        
+
         for path in paths {
             if !self.is_ignored(path)? {
                 result.push(path.clone());
             }
         }
-        
+
         Ok(result)
     }
 
@@ -492,16 +518,22 @@ impl GitignoreMatcher {
     /// Get statistics about loaded patterns
     pub fn stats(&self) -> GitignoreStats {
         let total_patterns = self.patterns.len();
-        let exclude_patterns = self.patterns.iter()
+        let exclude_patterns = self
+            .patterns
+            .iter()
             .filter(|p| p.rule_type == GitignoreRule::Exclude)
             .count();
-        let include_patterns = self.patterns.iter()
+        let include_patterns = self
+            .patterns
+            .iter()
             .filter(|p| p.rule_type == GitignoreRule::Include)
             .count();
-        let comment_lines = self.patterns.iter()
+        let comment_lines = self
+            .patterns
+            .iter()
             .filter(|p| p.rule_type == GitignoreRule::Comment)
             .count();
-        
+
         GitignoreStats {
             total_patterns,
             exclude_patterns,
@@ -514,29 +546,42 @@ impl GitignoreMatcher {
     /// Load patterns from an ignore file
     fn load_ignore_file(&self, path: &Path, ignore_type: IgnoreType) -> Result<IgnoreFile> {
         if !path.exists() {
-            return Err(ScribeError::path(format!("Ignore file does not exist: {}", path.display()), path));
+            return Err(ScribeError::path(
+                format!("Ignore file does not exist: {}", path.display()),
+                path,
+            ));
         }
-        
-        let file = fs::File::open(path)
-            .map_err(|e| ScribeError::io(format!("Failed to open ignore file {}: {}", path.display(), e), e))?;
-        
+
+        let file = fs::File::open(path).map_err(|e| {
+            ScribeError::io(
+                format!("Failed to open ignore file {}: {}", path.display(), e),
+                e,
+            )
+        })?;
+
         let reader = BufReader::new(file);
         let mut patterns = Vec::new();
         let mut line_count = 0;
-        
+
         for line in reader.lines() {
-            let line = line.map_err(|e| ScribeError::io(format!("Failed to read ignore file: {}", e), e))?;
+            let line =
+                line.map_err(|e| ScribeError::io(format!("Failed to read ignore file: {}", e), e))?;
             line_count += 1;
-            
+
             match GitignorePattern::new(&line) {
                 Ok(pattern) => patterns.push(pattern),
                 Err(e) => {
-                    log::warn!("Invalid gitignore pattern in {} line {}: {} ({})", 
-                              path.display(), line_count, line, e);
+                    log::warn!(
+                        "Invalid gitignore pattern in {} line {}: {} ({})",
+                        path.display(),
+                        line_count,
+                        line,
+                        e
+                    );
                 }
             }
         }
-        
+
         Ok(IgnoreFile {
             path: path.to_path_buf(),
             ignore_type,
@@ -561,22 +606,25 @@ impl GitignoreMatcher {
     /// Build override patterns for the ignore crate
     fn build_overrides(&mut self) -> Result<()> {
         let mut builder = OverrideBuilder::new(".");
-        
+
         for pattern in &self.patterns {
-            if matches!(pattern.rule_type, GitignoreRule::Exclude | GitignoreRule::Include) {
+            if matches!(
+                pattern.rule_type,
+                GitignoreRule::Exclude | GitignoreRule::Include
+            ) {
                 let glob_pattern = pattern.to_glob_pattern();
                 let override_pattern = if pattern.negated {
                     format!("!{}", glob_pattern)
                 } else {
                     glob_pattern
                 };
-                
+
                 if let Err(e) = builder.add(&override_pattern) {
                     log::warn!("Failed to add override pattern {}: {}", override_pattern, e);
                 }
             }
         }
-        
+
         self.overrides = Some(builder.build()?);
         Ok(())
     }
@@ -590,13 +638,13 @@ impl GitignoreMatcher {
     pub fn discover_gitignore_files<P: AsRef<Path>>(root: P) -> Result<Vec<PathBuf>> {
         let root = root.as_ref();
         let mut gitignore_files = Vec::new();
-        
+
         // Use WalkBuilder from ignore crate to respect existing gitignore rules
         let walker = WalkBuilder::new(root)
             .hidden(false) // Include hidden files to find .gitignore
             .git_ignore(false) // Don't apply gitignore during discovery
             .build();
-        
+
         for entry in walker {
             match entry {
                 Ok(entry) => {
@@ -612,7 +660,7 @@ impl GitignoreMatcher {
                 }
             }
         }
-        
+
         Ok(gitignore_files)
     }
 
@@ -620,20 +668,20 @@ impl GitignoreMatcher {
     pub fn from_directory<P: AsRef<Path>>(root: P) -> Result<Self> {
         let mut matcher = Self::new();
         let gitignore_files = Self::discover_gitignore_files(&root)?;
-        
+
         for file in gitignore_files {
             if let Err(e) = matcher.add_gitignore_file(&file) {
                 log::warn!("Failed to load gitignore file {}: {}", file.display(), e);
             }
         }
-        
+
         Ok(matcher)
     }
 
     /// Create a matcher with commonly ignored patterns
     pub fn with_defaults() -> Self {
         let mut matcher = Self::new();
-        
+
         // Add common ignore patterns
         let default_patterns = [
             ".DS_Store",
@@ -651,13 +699,13 @@ impl GitignoreMatcher {
             "*.pyc",
             "*.pyo",
         ];
-        
+
         for pattern in &default_patterns {
             if let Err(e) = matcher.add_pattern(pattern) {
                 log::warn!("Failed to add default pattern {}: {}", pattern, e);
             }
         }
-        
+
         matcher
     }
 }
@@ -683,8 +731,8 @@ pub struct GitignoreStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_gitignore_pattern_parsing() {
@@ -729,7 +777,7 @@ mod tests {
         assert!(pattern.matches("lib.rs", false, true));
         assert!(!pattern.matches("src/lib.rs", false, true)); // Single * doesn't match across directories
         assert!(!pattern.matches("lib.py", false, true));
-        
+
         // For recursive matching, use **
         let pattern = GitignorePattern::new("**/*.rs").unwrap();
         assert!(pattern.matches("lib.rs", false, true));
@@ -759,7 +807,7 @@ mod tests {
         assert!(matcher.is_ignored("lib.rs").unwrap());
         assert!(matcher.is_ignored("src/lib.rs").unwrap());
         assert!(!matcher.is_ignored("lib.py").unwrap());
-        
+
         // Negation should override exclude
         assert!(!matcher.is_ignored("important.rs").unwrap());
     }
@@ -768,7 +816,7 @@ mod tests {
     fn test_gitignore_file_loading() {
         let temp_dir = TempDir::new().unwrap();
         let gitignore_path = temp_dir.path().join(".gitignore");
-        
+
         let gitignore_content = r#"
 # Ignore compiled files
 *.o
@@ -783,7 +831,7 @@ build/
 
 # Empty line above
 "#;
-        
+
         fs::write(&gitignore_path, gitignore_content).unwrap();
 
         let mut matcher = GitignoreMatcher::new();
@@ -843,7 +891,8 @@ build/
         assert_eq!(gitignore_files.len(), 3);
 
         // Check that all expected files are found
-        let filenames: Vec<String> = gitignore_files.iter()
+        let filenames: Vec<String> = gitignore_files
+            .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert!(filenames.iter().all(|name| name == ".gitignore"));
@@ -861,7 +910,7 @@ build/
 
         let matcher = GitignoreMatcher::from_directory(root).unwrap();
         let stats = matcher.stats();
-        
+
         assert_eq!(stats.ignore_files, 2);
         assert!(stats.total_patterns >= 3); // At least the 3 patterns we added
     }
@@ -870,10 +919,10 @@ build/
     fn test_gitignore_defaults() {
         let matcher = GitignoreMatcher::with_defaults();
         let stats = matcher.stats();
-        
+
         assert!(stats.total_patterns > 0);
         assert!(stats.exclude_patterns > 0);
-        
+
         // Test some common patterns
         let mut matcher = matcher;
         assert!(matcher.is_ignored("node_modules/package.json").unwrap());
@@ -903,7 +952,7 @@ build/
     #[test]
     fn test_gitignore_pattern_precedence() {
         let mut matcher = GitignoreMatcher::new();
-        
+
         // Add patterns in order - later ones should override earlier ones
         matcher.add_pattern("*.txt").unwrap(); // Exclude all .txt files
         matcher.add_pattern("!important.txt").unwrap(); // But include important.txt
@@ -917,7 +966,7 @@ build/
     #[test]
     fn test_complex_gitignore_patterns() {
         let mut matcher = GitignoreMatcher::new();
-        
+
         // Test various gitignore pattern types
         matcher.add_pattern("**/*.tmp").unwrap(); // Recursive pattern
         matcher.add_pattern("build/**/output").unwrap(); // Pattern with ** in middle
@@ -945,7 +994,7 @@ build/
         ];
 
         let filtered = matcher.filter_paths(&paths).unwrap();
-        
+
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains(&"src/lib.rs"));
         assert!(filtered.contains(&"README.md"));
@@ -965,7 +1014,7 @@ build/
         let stats = matcher.stats();
         assert_eq!(stats.exclude_patterns, 1); // Only *.rs counts
         assert!(stats.comment_lines >= 1);
-        
+
         assert!(matcher.is_ignored("test.rs").unwrap());
         assert!(!matcher.is_ignored("test.py").unwrap());
     }

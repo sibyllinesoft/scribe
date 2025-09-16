@@ -7,16 +7,16 @@ use serde::{Deserialize, Serialize};
 pub struct AdaptiveConfig {
     /// Whether to enable adaptive thresholds
     pub enable_adaptive_thresholds: bool,
-    
+
     /// Factor for repository size adjustment
     pub repository_size_factor: f64,
-    
+
     /// Factor for memory pressure adjustment
     pub memory_pressure_factor: f64,
-    
+
     /// Factor for CPU utilization adjustment
     pub cpu_utilization_factor: f64,
-    
+
     /// Weight for performance feedback
     pub performance_feedback_weight: f64,
 }

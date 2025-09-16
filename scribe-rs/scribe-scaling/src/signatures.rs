@@ -8,7 +8,7 @@ pub enum SignatureLevel {
     /// Basic file metadata only
     Minimal,
     /// Structure and imports
-    Structural, 
+    Structural,
     /// Include semantic information
     Semantic,
     /// Detailed analysis
@@ -28,10 +28,10 @@ impl Default for SignatureLevel {
 pub struct SignatureConfig {
     /// Default signature level
     pub default_level: SignatureLevel,
-    
+
     /// Whether to enable caching of signatures
     pub enable_caching: bool,
-    
+
     /// Budget pressure threshold (0.0 to 1.0)
     pub budget_pressure_threshold: f64,
 }

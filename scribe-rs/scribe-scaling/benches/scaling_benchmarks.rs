@@ -1,24 +1,24 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use scribe_scaling::engine::ScalingEngine;
 use scribe_scaling::config::ScalingConfig;
+use scribe_scaling::engine::ScalingEngine;
+use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
-use std::fs;
 
 fn create_test_repository(size: usize, temp_dir: &TempDir) -> PathBuf {
     let repo_path = temp_dir.path().to_path_buf();
-    
+
     // Create directory structure
     let src_dir = repo_path.join("src");
     fs::create_dir_all(&src_dir).unwrap();
-    
+
     let tests_dir = repo_path.join("tests");
     fs::create_dir_all(&tests_dir).unwrap();
-    
+
     let docs_dir = repo_path.join("docs");
     fs::create_dir_all(&docs_dir).unwrap();
-    
+
     // Create files based on size
     for i in 0..size {
         let file_content = format!(
@@ -64,16 +64,16 @@ mod tests {{
 "#,
             i, i, i, i, i
         );
-        
+
         let file_path = match i % 3 {
             0 => src_dir.join(format!("module_{}.rs", i)),
             1 => tests_dir.join(format!("test_{}.rs", i)),
             _ => docs_dir.join(format!("doc_{}.md", i)),
         };
-        
+
         fs::write(file_path, file_content).unwrap();
     }
-    
+
     // Create Cargo.toml
     let cargo_toml = r#"[package]
 name = "test-repo"
@@ -85,7 +85,7 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 "#;
     fs::write(repo_path.join("Cargo.toml"), cargo_toml).unwrap();
-    
+
     repo_path
 }
 
@@ -93,7 +93,7 @@ fn bench_small_repository(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(100, &temp_dir);
     let config = ScalingConfig::small_repository();
-    
+
     c.bench_with_input(
         BenchmarkId::new("small_repository", "100_files"),
         &repo_path,
@@ -113,7 +113,7 @@ fn bench_medium_repository(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(1000, &temp_dir);
     let config = ScalingConfig::default();
-    
+
     c.bench_with_input(
         BenchmarkId::new("medium_repository", "1000_files"),
         &repo_path,
@@ -133,7 +133,7 @@ fn bench_large_repository(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(5000, &temp_dir);
     let config = ScalingConfig::large_repository();
-    
+
     c.bench_with_input(
         BenchmarkId::new("large_repository", "5000_files"),
         &repo_path,
@@ -150,11 +150,11 @@ fn bench_large_repository(c: &mut Criterion) {
 fn bench_streaming_vs_batch(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(2000, &temp_dir);
-    
+
     let mut group = c.benchmark_group("streaming_vs_batch");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(30));
-    
+
     // Streaming approach
     group.bench_with_input(
         BenchmarkId::new("streaming", "2000_files"),
@@ -175,7 +175,7 @@ fn bench_streaming_vs_batch(c: &mut Criterion) {
                 })
         },
     );
-    
+
     // Batch approach (streaming disabled)
     group.bench_with_input(
         BenchmarkId::new("batch", "2000_files"),
@@ -196,17 +196,17 @@ fn bench_streaming_vs_batch(c: &mut Criterion) {
                 })
         },
     );
-    
+
     group.finish();
 }
 
 fn bench_caching_effectiveness(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(1000, &temp_dir);
-    
+
     let mut group = c.benchmark_group("caching_effectiveness");
     group.sample_size(10);
-    
+
     // Test cold cache (new engine each time)
     group.bench_with_input(
         BenchmarkId::new("cold_cache", "1000_files"),
@@ -215,12 +215,14 @@ fn bench_caching_effectiveness(c: &mut Criterion) {
             b.to_async(tokio::runtime::Runtime::new().unwrap())
                 .iter(|| async {
                     // Create new engine each time to ensure cold cache
-                    let mut engine = ScalingEngine::new(black_box(ScalingConfig::default())).await.unwrap();
+                    let mut engine = ScalingEngine::new(black_box(ScalingConfig::default()))
+                        .await
+                        .unwrap();
                     black_box(engine.process_repository(black_box(path)).await.unwrap())
                 })
         },
     );
-    
+
     // Test warm cache (reuse engine)
     group.bench_with_input(
         BenchmarkId::new("warm_cache", "1000_files"),
@@ -228,37 +230,37 @@ fn bench_caching_effectiveness(c: &mut Criterion) {
         |b, path| {
             // Create the runtime and engine OUTSIDE the benchmark
             let rt = tokio::runtime::Runtime::new().unwrap();
-            
-            b.to_async(rt)
-                .iter_setup(
-                    || {
-                        // Setup: create and warm up the engine
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(async {
-                            let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
-                            // Warm up the cache with a small operation
-                            let _ = engine.process_repository(path).await;
-                            engine
-                        })
-                    },
-                    |mut engine| async move {
-                        // Measured code: should benefit from warm cache
-                        black_box(engine.process_repository(black_box(path)).await.unwrap())
-                    }
-                )
+
+            b.to_async(rt).iter_setup(
+                || {
+                    // Setup: create and warm up the engine
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(async {
+                        let mut engine =
+                            ScalingEngine::new(ScalingConfig::default()).await.unwrap();
+                        // Warm up the cache with a small operation
+                        let _ = engine.process_repository(path).await;
+                        engine
+                    })
+                },
+                |mut engine| async move {
+                    // Measured code: should benefit from warm cache
+                    black_box(engine.process_repository(black_box(path)).await.unwrap())
+                },
+            )
         },
     );
-    
+
     group.finish();
 }
 
 fn bench_parallel_processing_scaling(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(2000, &temp_dir);
-    
+
     let mut group = c.benchmark_group("parallel_scaling");
     group.sample_size(10);
-    
+
     for workers in [1, 2, 4, 8, 16].iter() {
         group.bench_with_input(
             BenchmarkId::new("workers", workers),
@@ -277,30 +279,35 @@ fn bench_parallel_processing_scaling(c: &mut Criterion) {
                             ..ScalingConfig::default()
                         };
                         let mut engine = ScalingEngine::new(black_box(config)).await.unwrap();
-                        engine.process_repository(black_box(&repo_path)).await.unwrap()
+                        engine
+                            .process_repository(black_box(&repo_path))
+                            .await
+                            .unwrap()
                     })
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_signature_extraction_levels(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_test_repository(500, &temp_dir);
-    
+
     let mut group = c.benchmark_group("signature_levels");
-    
+
     use scribe_scaling::signatures::SignatureLevel;
-    
+
     for level in [
         SignatureLevel::Minimal,
         SignatureLevel::Structural,
         SignatureLevel::Semantic,
         SignatureLevel::Detailed,
         SignatureLevel::Complete,
-    ].iter() {
+    ]
+    .iter()
+    {
         group.bench_with_input(
             BenchmarkId::new("signature_level", format!("{:?}", level)),
             level,
@@ -316,12 +323,15 @@ fn bench_signature_extraction_levels(c: &mut Criterion) {
                             ..ScalingConfig::default()
                         };
                         let mut engine = ScalingEngine::new(black_box(config)).await.unwrap();
-                        engine.process_repository(black_box(&repo_path)).await.unwrap()
+                        engine
+                            .process_repository(black_box(&repo_path))
+                            .await
+                            .unwrap()
                     })
             },
         );
     }
-    
+
     group.finish();
 }
 

@@ -3,10 +3,10 @@
 //! Provides fundamental data structures for scoring, analysis, and
 //! code representation used throughout the Scribe ecosystem.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
 
 use crate::file::{FileInfo, Language};
 
@@ -58,10 +58,10 @@ impl Range {
 
     /// Check if this range contains a position
     pub fn contains(&self, pos: Position) -> bool {
-        (pos.line > self.start.line || 
-         (pos.line == self.start.line && pos.column >= self.start.column)) &&
-        (pos.line < self.end.line || 
-         (pos.line == self.end.line && pos.column < self.end.column))
+        (pos.line > self.start.line
+            || (pos.line == self.start.line && pos.column >= self.start.column))
+            && (pos.line < self.end.line
+                || (pos.line == self.end.line && pos.column < self.end.column))
     }
 
     /// Get the length in characters (approximation)
@@ -80,33 +80,32 @@ impl Range {
 pub struct ScoreComponents {
     /// Documentation score (presence of comments, docstrings)
     pub doc_score: f64,
-    
+
     /// README/documentation file score
     pub readme_score: f64,
-    
+
     /// Import/dependency score (how much this file is imported)
     pub import_score: f64,
-    
+
     /// Path depth score (penalize deeply nested files)
     pub path_score: f64,
-    
+
     /// Test linkage score (proximity to tests)
     pub test_link_score: f64,
-    
+
     /// Code churn score (git activity)
     pub churn_score: f64,
-    
+
     /// Final weighted score
     pub final_score: f64,
-    
+
     // V2 advanced features (optional)
-    
     /// PageRank centrality score
     pub centrality_score: f64,
-    
+
     /// Entrypoint detection score
     pub entrypoint_score: f64,
-    
+
     /// Examples/usage score
     pub examples_score: f64,
 }
@@ -144,15 +143,51 @@ impl ScoreComponents {
     /// Get a breakdown of score contributions
     pub fn breakdown(&self, weights: &HeuristicWeights) -> Vec<(String, f64, f64)> {
         vec![
-            ("doc".to_string(), self.doc_score, self.doc_score * weights.doc),
-            ("readme".to_string(), self.readme_score, self.readme_score * weights.readme),
-            ("import".to_string(), self.import_score, self.import_score * weights.import_deg),
-            ("path".to_string(), self.path_score, self.path_score * weights.path),
-            ("test_link".to_string(), self.test_link_score, self.test_link_score * weights.test_link),
-            ("churn".to_string(), self.churn_score, self.churn_score * weights.churn),
-            ("centrality".to_string(), self.centrality_score, self.centrality_score * weights.centrality),
-            ("entrypoint".to_string(), self.entrypoint_score, self.entrypoint_score * weights.entrypoint),
-            ("examples".to_string(), self.examples_score, self.examples_score * weights.examples),
+            (
+                "doc".to_string(),
+                self.doc_score,
+                self.doc_score * weights.doc,
+            ),
+            (
+                "readme".to_string(),
+                self.readme_score,
+                self.readme_score * weights.readme,
+            ),
+            (
+                "import".to_string(),
+                self.import_score,
+                self.import_score * weights.import_deg,
+            ),
+            (
+                "path".to_string(),
+                self.path_score,
+                self.path_score * weights.path,
+            ),
+            (
+                "test_link".to_string(),
+                self.test_link_score,
+                self.test_link_score * weights.test_link,
+            ),
+            (
+                "churn".to_string(),
+                self.churn_score,
+                self.churn_score * weights.churn,
+            ),
+            (
+                "centrality".to_string(),
+                self.centrality_score,
+                self.centrality_score * weights.centrality,
+            ),
+            (
+                "entrypoint".to_string(),
+                self.entrypoint_score,
+                self.entrypoint_score * weights.entrypoint,
+            ),
+            (
+                "examples".to_string(),
+                self.examples_score,
+                self.examples_score * weights.examples,
+            ),
         ]
     }
 }
@@ -162,30 +197,29 @@ impl ScoreComponents {
 pub struct HeuristicWeights {
     /// Documentation weight
     pub doc: f64,
-    
+
     /// README file weight
     pub readme: f64,
-    
+
     /// Import degree weight
     pub import_deg: f64,
-    
+
     /// Path depth weight
     pub path: f64,
-    
+
     /// Test linkage weight
     pub test_link: f64,
-    
+
     /// Code churn weight
     pub churn: f64,
-    
+
     // V2 feature weights
-    
     /// PageRank centrality weight
     pub centrality: f64,
-    
+
     /// Entrypoint detection weight
     pub entrypoint: f64,
-    
+
     /// Examples/usage weight
     pub examples: f64,
 }
@@ -226,12 +260,12 @@ impl HeuristicWeights {
     /// Create weights with V2 features enabled
     pub fn with_v2_features() -> Self {
         let mut weights = Self::default();
-        
+
         // Enable V2 features
         weights.centrality = 0.15;
         weights.entrypoint = 0.10;
         weights.examples = 0.05;
-        
+
         // Reduce other weights proportionally
         let reduction_factor = 0.7;
         weights.doc *= reduction_factor;
@@ -240,16 +274,22 @@ impl HeuristicWeights {
         weights.path *= reduction_factor;
         weights.test_link *= reduction_factor;
         weights.churn *= reduction_factor;
-        
+
         weights.normalize()
     }
 
     /// Normalize weights to sum to 1.0
     pub fn normalize(mut self) -> Self {
-        let total = self.doc + self.readme + self.import_deg + self.path + 
-                   self.test_link + self.churn + self.centrality + 
-                   self.entrypoint + self.examples;
-        
+        let total = self.doc
+            + self.readme
+            + self.import_deg
+            + self.path
+            + self.test_link
+            + self.churn
+            + self.centrality
+            + self.entrypoint
+            + self.examples;
+
         if total > 0.0 {
             self.doc /= total;
             self.readme /= total;
@@ -261,7 +301,7 @@ impl HeuristicWeights {
             self.entrypoint /= total;
             self.examples /= total;
         }
-        
+
         self
     }
 
@@ -276,40 +316,40 @@ impl HeuristicWeights {
 pub struct RepositoryInfo {
     /// Repository root path
     pub root_path: PathBuf,
-    
+
     /// Repository name (from directory name or git remote)
     pub name: String,
-    
+
     /// Git remote URL (if available)
     pub remote_url: Option<String>,
-    
+
     /// Current branch name
     pub branch: Option<String>,
-    
+
     /// Last commit hash
     pub last_commit: Option<String>,
-    
+
     /// Repository creation/initialization time
     pub created: Option<SystemTime>,
-    
+
     /// Last modification time
     pub modified: Option<SystemTime>,
-    
+
     /// Total number of files in repository
     pub total_files: usize,
-    
+
     /// Number of files included in analysis
     pub analyzed_files: usize,
-    
+
     /// File size statistics
     pub size_stats: SizeStatistics,
-    
+
     /// Language breakdown
     pub languages: HashMap<Language, LanguageStats>,
-    
+
     /// File type breakdown
     pub file_types: FileTypeStats,
-    
+
     /// Git statistics (if available)
     pub git_stats: Option<GitStatistics>,
 }
@@ -319,19 +359,19 @@ pub struct RepositoryInfo {
 pub struct SizeStatistics {
     /// Total size in bytes
     pub total_bytes: u64,
-    
+
     /// Average file size
     pub avg_bytes: f64,
-    
+
     /// Median file size
     pub median_bytes: u64,
-    
+
     /// Largest file size
     pub max_bytes: u64,
-    
+
     /// Smallest file size
     pub min_bytes: u64,
-    
+
     /// Standard deviation of file sizes
     pub std_dev: f64,
 }
@@ -345,20 +385,22 @@ impl SizeStatistics {
 
         let total_bytes: u64 = sizes.iter().sum();
         let avg_bytes = total_bytes as f64 / sizes.len() as f64;
-        
+
         let mut sorted_sizes = sizes.to_vec();
         sorted_sizes.sort_unstable();
         let median_bytes = sorted_sizes[sizes.len() / 2];
         let max_bytes = sorted_sizes[sizes.len() - 1];
         let min_bytes = sorted_sizes[0];
-        
+
         // Calculate standard deviation
-        let variance = sizes.iter()
+        let variance = sizes
+            .iter()
             .map(|&size| {
                 let diff = size as f64 - avg_bytes;
                 diff * diff
             })
-            .sum::<f64>() / sizes.len() as f64;
+            .sum::<f64>()
+            / sizes.len() as f64;
         let std_dev = variance.sqrt();
 
         Self {
@@ -389,13 +431,13 @@ impl SizeStatistics {
 pub struct LanguageStats {
     /// Number of files in this language
     pub file_count: usize,
-    
+
     /// Total lines of code (if available)
     pub total_lines: Option<usize>,
-    
+
     /// Total size in bytes
     pub total_bytes: u64,
-    
+
     /// Percentage of repository (by file count)
     pub percentage: f64,
 }
@@ -405,22 +447,22 @@ pub struct LanguageStats {
 pub struct FileTypeStats {
     /// Source code files
     pub source_files: usize,
-    
+
     /// Test files
     pub test_files: usize,
-    
+
     /// Documentation files
     pub doc_files: usize,
-    
+
     /// Configuration files
     pub config_files: usize,
-    
+
     /// Binary files (excluded)
     pub binary_files: usize,
-    
+
     /// Generated files (excluded)
     pub generated_files: usize,
-    
+
     /// Unknown file types
     pub unknown_files: usize,
 }
@@ -441,9 +483,13 @@ impl FileTypeStats {
 
     /// Get total file count
     pub fn total(&self) -> usize {
-        self.source_files + self.test_files + self.doc_files + 
-        self.config_files + self.binary_files + self.generated_files + 
-        self.unknown_files
+        self.source_files
+            + self.test_files
+            + self.doc_files
+            + self.config_files
+            + self.binary_files
+            + self.generated_files
+            + self.unknown_files
     }
 
     /// Get analyzed file count (excluding binary and generated)
@@ -463,22 +509,22 @@ impl Default for FileTypeStats {
 pub struct GitStatistics {
     /// Total number of commits
     pub commit_count: usize,
-    
+
     /// Number of contributors
     pub contributor_count: usize,
-    
+
     /// Repository age in days
     pub age_days: Option<u64>,
-    
+
     /// Files with most commits (churn analysis)
     pub high_churn_files: Vec<ChurnInfo>,
-    
+
     /// Recent activity (commits in last 30 days)
     pub recent_commits: usize,
-    
+
     /// Branch count
     pub branch_count: usize,
-    
+
     /// Tag count
     pub tag_count: usize,
 }
@@ -488,16 +534,16 @@ pub struct GitStatistics {
 pub struct ChurnInfo {
     /// File path
     pub path: String,
-    
+
     /// Number of commits affecting this file
     pub commit_count: usize,
-    
+
     /// Lines added (total)
     pub lines_added: usize,
-    
+
     /// Lines deleted (total)
     pub lines_deleted: usize,
-    
+
     /// Last modification date
     pub last_modified: Option<SystemTime>,
 }
@@ -507,13 +553,13 @@ pub struct ChurnInfo {
 pub struct CentralityScores {
     /// PageRank scores for each file
     pub pagerank_scores: HashMap<String, f64>,
-    
+
     /// Number of iterations until convergence
     pub iterations_converged: usize,
-    
+
     /// Convergence epsilon achieved
     pub convergence_epsilon: f64,
-    
+
     /// Graph statistics
     pub graph_stats: GraphStats,
 }
@@ -523,25 +569,25 @@ pub struct CentralityScores {
 pub struct GraphStats {
     /// Total number of nodes (files)
     pub total_nodes: usize,
-    
+
     /// Total number of edges (dependencies)
     pub total_edges: usize,
-    
+
     /// Average in-degree (how many files depend on average file)
     pub in_degree_avg: f64,
-    
+
     /// Maximum in-degree
     pub in_degree_max: usize,
-    
+
     /// Average out-degree (how many files average file depends on)
     pub out_degree_avg: f64,
-    
+
     /// Maximum out-degree
     pub out_degree_max: usize,
-    
+
     /// Number of strongly connected components
     pub strongly_connected_components: usize,
-    
+
     /// Graph density (edges / possible_edges)
     pub graph_density: f64,
 }
@@ -567,16 +613,16 @@ impl GraphStats {
 pub struct AnalysisResult {
     /// File information
     pub file_info: FileInfo,
-    
+
     /// Heuristic scores
     pub scores: ScoreComponents,
-    
+
     /// Analysis duration in milliseconds
     pub analysis_duration_ms: u64,
-    
+
     /// Any warnings or issues encountered
     pub warnings: Vec<String>,
-    
+
     /// Analysis metadata
     pub metadata: AnalysisMetadata,
 }
@@ -586,13 +632,13 @@ pub struct AnalysisResult {
 pub struct AnalysisMetadata {
     /// Timestamp when analysis was performed
     pub timestamp: SystemTime,
-    
+
     /// Version of Scribe that performed the analysis
     pub scribe_version: String,
-    
+
     /// Features enabled during analysis
     pub features_enabled: Vec<String>,
-    
+
     /// Configuration hash (for cache invalidation)
     pub config_hash: Option<String>,
 }
@@ -654,9 +700,15 @@ mod tests {
         assert!(v2_weights.centrality > 0.0);
 
         // Test normalization
-        let total = v2_weights.doc + v2_weights.readme + v2_weights.import_deg + 
-                   v2_weights.path + v2_weights.test_link + v2_weights.churn + 
-                   v2_weights.centrality + v2_weights.entrypoint + v2_weights.examples;
+        let total = v2_weights.doc
+            + v2_weights.readme
+            + v2_weights.import_deg
+            + v2_weights.path
+            + v2_weights.test_link
+            + v2_weights.churn
+            + v2_weights.centrality
+            + v2_weights.entrypoint
+            + v2_weights.examples;
         assert!((total - 1.0).abs() < 1e-10); // Should sum to 1.0
     }
 

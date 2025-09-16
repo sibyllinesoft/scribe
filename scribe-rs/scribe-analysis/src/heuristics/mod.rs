@@ -6,8 +6,8 @@
 //!
 //! ## Core Scoring Formula
 //! ```text
-//! score = w_doc*doc + w_readme*readme + w_imp*imp_deg + w_path*path_depth^-1 + 
-//!         w_test*test_link + w_churn*churn + w_centrality*centrality + 
+//! score = w_doc*doc + w_readme*readme + w_imp*imp_deg + w_path*path_depth^-1 +
+//!         w_test*test_link + w_churn*churn + w_centrality*centrality +
 //!         w_entrypoint*entrypoint + w_examples*examples + priority_boost
 //! ```
 //!
@@ -20,42 +20,28 @@
 //! - **Configurable Weighting**: V1/V2 feature flags with dynamic weight adjustment
 //! - **Performance Optimized**: Caching and lazy evaluation for large codebases
 
-pub mod template_detection;
-pub mod scoring;
-pub mod import_analysis;
 pub mod enhanced_scoring;
+pub mod import_analysis;
+pub mod scoring;
+pub mod template_detection;
 
 pub use scoring::{
-    HeuristicScorer, 
-    ScoreComponents,
-    RawScoreComponents,
-    HeuristicWeights,
-    ScoringFeatures,
+    HeuristicScorer, HeuristicWeights, RawScoreComponents, ScoreComponents, ScoringFeatures,
     WeightPreset,
 };
 
 pub use template_detection::{
-    TemplateDetector,
+    get_template_score_boost, is_template_file, TemplateDetectionMethod, TemplateDetector,
     TemplateEngine,
-    TemplateDetectionMethod,
-    is_template_file,
-    get_template_score_boost,
 };
 
 pub use import_analysis::{
-    ImportGraphBuilder,
-    ImportGraph,
-    CentralityCalculator,
-    import_matches_file,
+    import_matches_file, CentralityCalculator, ImportGraph, ImportGraphBuilder,
 };
 
 pub use enhanced_scoring::{
-    EnhancedHeuristicScorer,
-    EnhancedScoreComponents,
-    EnhancedWeights,
-    AdaptiveFactors,
-    RepositoryCharacteristics,
-    ProjectType,
+    AdaptiveFactors, EnhancedHeuristicScorer, EnhancedScoreComponents, EnhancedWeights,
+    ProjectType, RepositoryCharacteristics,
 };
 
 use scribe_core::Result;
@@ -81,7 +67,7 @@ impl HeuristicSystem {
             import_builder: ImportGraphBuilder::new()?,
         })
     }
-    
+
     /// Create with custom weights
     pub fn with_weights(weights: HeuristicWeights) -> Result<Self> {
         Ok(Self {
@@ -90,7 +76,7 @@ impl HeuristicSystem {
             import_builder: ImportGraphBuilder::new()?,
         })
     }
-    
+
     /// Create with V2 features enabled
     pub fn with_v2_features() -> Result<Self> {
         Ok(Self {
@@ -99,36 +85,44 @@ impl HeuristicSystem {
             import_builder: ImportGraphBuilder::new()?,
         })
     }
-    
+
     /// Score a single file within the context of all scanned files
-    pub fn score_file<T>(&mut self, file: &T, all_files: &[T]) -> Result<ScoreComponents> 
-    where 
+    pub fn score_file<T>(&mut self, file: &T, all_files: &[T]) -> Result<ScoreComponents>
+    where
         T: ScanResult,
     {
         self.scorer.score_file(file, all_files)
     }
-    
+
     /// Score all files and return ranked results
     pub fn score_all_files<T>(&mut self, files: &[T]) -> Result<Vec<(usize, ScoreComponents)>>
-    where 
+    where
         T: ScanResult,
     {
         self.scorer.score_all_files(files)
     }
-    
+
     /// Get top-K files by heuristic score
-    pub fn get_top_files<T>(&mut self, files: &[T], top_k: usize) -> Result<Vec<(usize, ScoreComponents)>>
-    where 
+    pub fn get_top_files<T>(
+        &mut self,
+        files: &[T],
+        top_k: usize,
+    ) -> Result<Vec<(usize, ScoreComponents)>>
+    where
         T: ScanResult,
     {
-        Ok(self.score_all_files(files)?.into_iter().take(top_k).collect())
+        Ok(self
+            .score_all_files(files)?
+            .into_iter()
+            .take(top_k)
+            .collect())
     }
-    
+
     /// Get template score boost for a file path
     pub fn get_template_boost(&self, file_path: &str) -> Result<f64> {
         self.template_detector.get_score_boost(file_path)
     }
-    
+
     /// Check if two imports match (for import graph construction)
     pub fn import_matches(&self, import_name: &str, file_path: &str) -> bool {
         import_analysis::import_matches_file(import_name, file_path)
@@ -145,40 +139,40 @@ impl Default for HeuristicSystem {
 pub trait ScanResult {
     /// Get the file path
     fn path(&self) -> &str;
-    
+
     /// Get the relative path from repository root
     fn relative_path(&self) -> &str;
-    
+
     /// Get file depth (directory nesting level)
     fn depth(&self) -> usize;
-    
+
     /// Check if this is a documentation file
     fn is_docs(&self) -> bool;
-    
+
     /// Check if this is a README file
     fn is_readme(&self) -> bool;
-    
+
     /// Check if this is a test file
     fn is_test(&self) -> bool;
-    
+
     /// Check if this is an entrypoint file (main, index, etc.)
     fn is_entrypoint(&self) -> bool;
-    
+
     /// Check if this file contains examples
     fn has_examples(&self) -> bool;
-    
+
     /// Get the priority boost value (from scanner)
     fn priority_boost(&self) -> f64;
-    
+
     /// Get the churn score (git activity)
     fn churn_score(&self) -> f64;
-    
+
     /// Get centrality in score (PageRank)
     fn centrality_in(&self) -> f64;
-    
+
     /// Get list of import statements
     fn imports(&self) -> Option<&[String]>;
-    
+
     /// Get document analysis results (if available)
     fn doc_analysis(&self) -> Option<&DocumentAnalysis>;
 }
@@ -208,31 +202,31 @@ impl DocumentAnalysis {
             is_well_structured: false,
         }
     }
-    
+
     /// Calculate structure score based on analysis
     pub fn structure_score(&self) -> f64 {
         let mut score = 0.0;
-        
+
         // Heading structure bonus
         if self.heading_count > 0 {
             score += (self.heading_count as f64 / 10.0).min(0.5);
         }
-        
+
         // TOC indicates well-organized document
         if self.toc_indicators > 0 {
             score += 0.3;
         }
-        
+
         // Links indicate reference document
         if self.link_count > 0 {
             score += (self.link_count as f64 / 20.0).min(0.3);
         }
-        
+
         // Code blocks in docs indicate technical documentation
         if self.code_block_count > 0 {
             score += (self.code_block_count as f64 / 10.0).min(0.2);
         }
-        
+
         score
     }
 }
@@ -271,10 +265,11 @@ impl HeuristicMetrics {
             cache_hit_rates: HashMap::new(),
         }
     }
-    
+
     pub fn finalize(&mut self) {
         if self.files_processed > 0 {
-            self.avg_time_per_file_ms = self.processing_time_ms as f64 / self.files_processed as f64;
+            self.avg_time_per_file_ms =
+                self.processing_time_ms as f64 / self.files_processed as f64;
         }
     }
 }
@@ -288,35 +283,35 @@ impl Default for HeuristicMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_heuristic_system_creation() {
         let system = HeuristicSystem::new();
         assert!(system.is_ok());
-        
+
         let v2_system = HeuristicSystem::with_v2_features();
         assert!(v2_system.is_ok());
     }
-    
+
     #[test]
     fn test_document_analysis() {
         let mut doc = DocumentAnalysis::new();
         doc.heading_count = 5;
         doc.link_count = 10;
         doc.code_block_count = 3;
-        
+
         let score = doc.structure_score();
         assert!(score > 0.0);
         assert!(score < 2.0); // Should be reasonable
     }
-    
+
     #[test]
     fn test_metrics() {
         let mut metrics = HeuristicMetrics::new();
         metrics.files_processed = 100;
         metrics.processing_time_ms = 500;
         metrics.finalize();
-        
+
         assert_eq!(metrics.avg_time_per_file_ms, 5.0);
     }
 }

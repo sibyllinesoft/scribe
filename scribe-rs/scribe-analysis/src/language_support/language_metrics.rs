@@ -3,9 +3,9 @@
 //! Calculates language-specific complexity and quality metrics that are
 //! tailored to each programming language's characteristics.
 
-use serde::{Deserialize, Serialize};
-use scribe_core::Result;
 use super::ast_language::AstLanguage;
+use scribe_core::Result;
+use serde::{Deserialize, Serialize};
 
 /// Language-specific complexity factors
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,19 +42,19 @@ impl LanguageMetrics {
     pub fn calculate(content: &str, language: AstLanguage) -> Result<Self> {
         let lines: Vec<&str> = content.lines().collect();
         let lines_of_code = lines.len();
-        
+
         // Basic pattern counting - can be enhanced with AST analysis
         let function_count = Self::count_functions(content, language);
         let class_count = Self::count_classes(content, language);
-        
+
         let complexity = Self::calculate_language_complexity(content, language);
         let maintainability_score = Self::calculate_maintainability(
             lines_of_code,
             function_count,
             class_count,
-            &complexity
+            &complexity,
         );
-        
+
         Ok(Self {
             language,
             lines_of_code,
@@ -64,78 +64,75 @@ impl LanguageMetrics {
             maintainability_score,
         })
     }
-    
+
     /// Count functions using language-specific patterns
     fn count_functions(content: &str, language: AstLanguage) -> usize {
         match language {
-            AstLanguage::Python => {
-                content.lines()
-                    .filter(|line| line.trim().starts_with("def ") || line.trim().starts_with("async def "))
-                    .count()
-            }
-            AstLanguage::JavaScript | AstLanguage::TypeScript => {
-                content.lines()
-                    .filter(|line| {
-                        let trimmed = line.trim();
-                        trimmed.starts_with("function ") ||
-                        trimmed.contains("=> ") ||
-                        trimmed.contains("function(")
-                    })
-                    .count()
-            }
-            AstLanguage::Rust => {
-                content.lines()
-                    .filter(|line| line.trim().starts_with("fn ") || line.trim().starts_with("pub fn "))
-                    .count()
-            }
-            AstLanguage::Go => {
-                content.lines()
-                    .filter(|line| line.trim().starts_with("func "))
-                    .count()
-            }
+            AstLanguage::Python => content
+                .lines()
+                .filter(|line| {
+                    line.trim().starts_with("def ") || line.trim().starts_with("async def ")
+                })
+                .count(),
+            AstLanguage::JavaScript | AstLanguage::TypeScript => content
+                .lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    trimmed.starts_with("function ")
+                        || trimmed.contains("=> ")
+                        || trimmed.contains("function(")
+                })
+                .count(),
+            AstLanguage::Rust => content
+                .lines()
+                .filter(|line| line.trim().starts_with("fn ") || line.trim().starts_with("pub fn "))
+                .count(),
+            AstLanguage::Go => content
+                .lines()
+                .filter(|line| line.trim().starts_with("func "))
+                .count(),
             _ => 0,
         }
     }
-    
+
     /// Count classes using language-specific patterns
     fn count_classes(content: &str, language: AstLanguage) -> usize {
         match language {
-            AstLanguage::Python => {
-                content.lines()
-                    .filter(|line| line.trim().starts_with("class "))
-                    .count()
-            }
-            AstLanguage::JavaScript | AstLanguage::TypeScript => {
-                content.lines()
-                    .filter(|line| line.trim().starts_with("class "))
-                    .count()
-            }
-            AstLanguage::Rust => {
-                content.lines()
-                    .filter(|line| {
-                        let trimmed = line.trim();
-                        trimmed.starts_with("struct ") ||
-                        trimmed.starts_with("pub struct ") ||
-                        trimmed.starts_with("enum ") ||
-                        trimmed.starts_with("pub enum ")
-                    })
-                    .count()
-            }
-            AstLanguage::Go => {
-                content.lines()
-                    .filter(|line| line.trim().starts_with("type ") && line.contains("struct"))
-                    .count()
-            }
+            AstLanguage::Python => content
+                .lines()
+                .filter(|line| line.trim().starts_with("class "))
+                .count(),
+            AstLanguage::JavaScript | AstLanguage::TypeScript => content
+                .lines()
+                .filter(|line| line.trim().starts_with("class "))
+                .count(),
+            AstLanguage::Rust => content
+                .lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    trimmed.starts_with("struct ")
+                        || trimmed.starts_with("pub struct ")
+                        || trimmed.starts_with("enum ")
+                        || trimmed.starts_with("pub enum ")
+                })
+                .count(),
+            AstLanguage::Go => content
+                .lines()
+                .filter(|line| line.trim().starts_with("type ") && line.contains("struct"))
+                .count(),
             _ => 0,
         }
     }
-    
+
     /// Calculate language-specific complexity factors
-    fn calculate_language_complexity(content: &str, language: AstLanguage) -> LanguageSpecificComplexity {
+    fn calculate_language_complexity(
+        content: &str,
+        language: AstLanguage,
+    ) -> LanguageSpecificComplexity {
         let mut language_factors = 0.0;
         let mut idiom_score = 0.0;
         let mut framework_complexity = 0.0;
-        
+
         match language {
             AstLanguage::Python => {
                 // Python-specific complexity factors
@@ -148,7 +145,7 @@ impl LanguageMetrics {
                 if content.contains("[") && content.contains("for ") && content.contains("in ") {
                     language_factors += 0.1; // List comprehensions
                 }
-                
+
                 // Framework detection
                 if content.contains("import django") || content.contains("from django") {
                     framework_complexity += 0.2;
@@ -157,7 +154,7 @@ impl LanguageMetrics {
                     framework_complexity += 0.1;
                 }
             }
-            
+
             AstLanguage::Rust => {
                 // Rust-specific complexity factors
                 if content.contains("'") && content.contains("&") {
@@ -169,13 +166,13 @@ impl LanguageMetrics {
                 if content.contains("macro_rules!") || content.contains("!") {
                     language_factors += 0.3; // Macros
                 }
-                
+
                 // Idiomatic Rust patterns
                 if content.contains("Result<") || content.contains("Option<") {
                     idiom_score += 0.2; // Good error handling
                 }
             }
-            
+
             AstLanguage::JavaScript | AstLanguage::TypeScript => {
                 // JS/TS complexity factors
                 if content.contains("async ") || content.contains("await ") {
@@ -189,13 +186,13 @@ impl LanguageMetrics {
                         language_factors += 0.2; // Generics
                     }
                 }
-                
+
                 // Framework detection
                 if content.contains("import React") || content.contains("from 'react'") {
                     framework_complexity += 0.1;
                 }
             }
-            
+
             AstLanguage::Go => {
                 // Go-specific complexity factors
                 if content.contains("go ") && content.contains("()") {
@@ -208,15 +205,15 @@ impl LanguageMetrics {
                     language_factors += 0.1; // Defer statements
                 }
             }
-            
+
             _ => {
                 // Generic complexity assessment
                 language_factors = 0.1;
             }
         }
-        
+
         let base_complexity = 1.0; // Base complexity
-        
+
         LanguageSpecificComplexity {
             base_complexity,
             language_factors,
@@ -224,7 +221,7 @@ impl LanguageMetrics {
             framework_complexity,
         }
     }
-    
+
     /// Calculate maintainability score
     fn calculate_maintainability(
         lines_of_code: usize,
@@ -233,12 +230,12 @@ impl LanguageMetrics {
         complexity: &LanguageSpecificComplexity,
     ) -> f64 {
         let mut score = 100.0;
-        
+
         // Penalize large files
         if lines_of_code > 500 {
             score -= (lines_of_code as f64 - 500.0) * 0.01;
         }
-        
+
         // Reward modular code
         if function_count > 0 {
             let avg_lines_per_function = lines_of_code as f64 / function_count as f64;
@@ -248,12 +245,12 @@ impl LanguageMetrics {
                 score -= 10.0; // Large functions are bad
             }
         }
-        
+
         // Adjust for language complexity
         score -= complexity.language_factors * 10.0;
         score += complexity.idiom_score * 5.0;
         score -= complexity.framework_complexity * 5.0;
-        
+
         score.max(0.0).min(100.0)
     }
 }
@@ -261,7 +258,7 @@ impl LanguageMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_python_metrics() {
         let python_code = r#"
@@ -275,14 +272,14 @@ class Calculator:
     def add(self, a, b):
         return a + b
 "#;
-        
+
         let metrics = LanguageMetrics::calculate(python_code, AstLanguage::Python).unwrap();
         assert_eq!(metrics.language, AstLanguage::Python);
         assert!(metrics.function_count >= 2);
         assert_eq!(metrics.class_count, 1);
         assert!(metrics.complexity.language_factors > 0.0); // Should detect async
     }
-    
+
     #[test]
     fn test_rust_metrics() {
         let rust_code = r#"
@@ -300,7 +297,7 @@ impl Calculator {
     }
 }
 "#;
-        
+
         let metrics = LanguageMetrics::calculate(rust_code, AstLanguage::Rust).unwrap();
         assert_eq!(metrics.language, AstLanguage::Rust);
         assert!(metrics.function_count >= 1);

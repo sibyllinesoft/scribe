@@ -5,16 +5,14 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
-use scribe_core::config::{
-    Config as RustConfig, 
-    GeneralConfig, FilteringConfig, AnalysisConfig, 
-    ScoringConfig, PerformanceConfig, GitConfig, 
-    FeatureFlags, OutputConfig
-};
 use crate::error::ToPyResult;
+use scribe_core::config::{
+    AnalysisConfig, Config as RustConfig, FeatureFlags, FilteringConfig, GeneralConfig, GitConfig,
+    OutputConfig, PerformanceConfig, ScoringConfig,
+};
 
 /// Python wrapper for the Rust Config struct
 #[pyclass(name = "Config")]
@@ -106,7 +104,11 @@ impl PyConfig {
     /// Get working directory
     #[getter]
     pub fn working_dir(&self) -> Option<String> {
-        self.inner.general.working_dir.as_ref().map(|p| p.to_string_lossy().to_string())
+        self.inner
+            .general
+            .working_dir
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
     }
 
     /// Set working directory
@@ -206,19 +208,29 @@ impl PyConfig {
     /// Convert configuration to a Python dictionary
     pub fn to_dict(&self, py: Python) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        
+
         // General settings
         dict.set_item("verbosity", self.inner.general.verbosity)?;
         dict.set_item("show_progress", self.inner.general.show_progress)?;
         dict.set_item("use_colors", self.inner.general.use_colors)?;
         dict.set_item("max_threads", self.inner.general.max_threads)?;
-        dict.set_item("working_dir", self.inner.general.working_dir.as_ref().map(|p| p.to_string_lossy().to_string()))?;
+        dict.set_item(
+            "working_dir",
+            self.inner
+                .general
+                .working_dir
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+        )?;
 
         // Filtering settings
         dict.set_item("max_file_size", self.inner.filtering.max_file_size)?;
 
         // Analysis settings
-        dict.set_item("enable_dependency_analysis", self.inner.analysis.enable_dependency_analysis)?;
+        dict.set_item(
+            "enable_dependency_analysis",
+            self.inner.analysis.enable_dependency_analysis,
+        )?;
 
         // Scoring settings
         dict.set_item("pagerank_damping", self.inner.scoring.pagerank_damping)?;
@@ -228,10 +240,12 @@ impl PyConfig {
 
     /// String representation for debugging
     pub fn __repr__(&self) -> String {
-        format!("Config(verbosity={}, max_threads={}, hash={})", 
-                self.inner.general.verbosity, 
-                self.inner.general.max_threads,
-                self.inner.compute_hash())
+        format!(
+            "Config(verbosity={}, max_threads={}, hash={})",
+            self.inner.general.verbosity,
+            self.inner.general.max_threads,
+            self.inner.compute_hash()
+        )
     }
 }
 

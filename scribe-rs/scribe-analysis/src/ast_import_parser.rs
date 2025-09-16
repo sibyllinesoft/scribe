@@ -4,9 +4,9 @@
 //! import statements from source code without the full complexity of the
 //! scribe-selection module.
 
-use std::collections::HashMap;
 use scribe_core::Result;
-use tree_sitter::{Parser, Language, Node, Tree};
+use std::collections::HashMap;
+use tree_sitter::{Language, Node, Parser, Tree};
 
 /// Simple import information
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ impl ImportLanguage {
             ImportLanguage::Rust => tree_sitter_rust::language(),
         }
     }
-    
+
     /// Detect language from file extension
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext.to_lowercase().as_str() {
@@ -69,7 +69,7 @@ impl SimpleAstParser {
     /// Create a new simple AST parser
     pub fn new() -> Result<Self> {
         let mut parsers = HashMap::new();
-        
+
         for language in [
             ImportLanguage::Python,
             ImportLanguage::JavaScript,
@@ -78,27 +78,41 @@ impl SimpleAstParser {
             ImportLanguage::Rust,
         ] {
             let mut parser = Parser::new();
-            parser.set_language(language.tree_sitter_language())
-                .map_err(|e| scribe_core::ScribeError::parse(format!("Failed to set tree-sitter language: {}", e)))?;
+            parser
+                .set_language(language.tree_sitter_language())
+                .map_err(|e| {
+                    scribe_core::ScribeError::parse(format!(
+                        "Failed to set tree-sitter language: {}",
+                        e
+                    ))
+                })?;
             parsers.insert(language, parser);
         }
-        
+
         Ok(Self { parsers })
     }
-    
+
     /// Extract imports from the given content using tree-sitter
-    pub fn extract_imports(&self, content: &str, language: ImportLanguage) -> Result<Vec<SimpleImport>> {
+    pub fn extract_imports(
+        &self,
+        content: &str,
+        language: ImportLanguage,
+    ) -> Result<Vec<SimpleImport>> {
         // Create a fresh parser for this operation to avoid mutable borrow issues
         let mut parser = Parser::new();
-        parser.set_language(language.tree_sitter_language()).map_err(|e| 
-            scribe_core::ScribeError::parse(format!("Failed to set language: {}", e)))?;
-        
-        let tree = parser.parse(content, None)
+        parser
+            .set_language(language.tree_sitter_language())
+            .map_err(|e| {
+                scribe_core::ScribeError::parse(format!("Failed to set language: {}", e))
+            })?;
+
+        let tree = parser
+            .parse(content, None)
             .ok_or_else(|| scribe_core::ScribeError::parse("Failed to parse content"))?;
-        
+
         let mut imports = Vec::new();
         let root_node = tree.root_node();
-        
+
         // Extract imports based on language
         match language {
             ImportLanguage::Python => {
@@ -114,12 +128,17 @@ impl SimpleAstParser {
                 self.extract_rust_imports(&root_node, content, &mut imports)?;
             }
         }
-        
+
         Ok(imports)
     }
 
     /// Extract Python imports from AST
-    fn extract_python_imports(&self, node: &Node, content: &str, imports: &mut Vec<SimpleImport>) -> Result<()> {
+    fn extract_python_imports(
+        &self,
+        node: &Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
         if node.kind() == "import_statement" {
             // Handle import statements like "import os" or "import sys as system"
             for i in 0..node.child_count() {
@@ -127,7 +146,7 @@ impl SimpleAstParser {
                     if child.kind() == "dotted_name" || child.kind() == "identifier" {
                         let module = self.node_text(child, content);
                         let line_number = child.start_position().row + 1;
-                        
+
                         imports.push(SimpleImport {
                             module,
                             line_number,
@@ -145,19 +164,24 @@ impl SimpleAstParser {
                 });
             }
         }
-        
+
         // Recursively process children
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
                 self.extract_python_imports(&child, content, imports)?;
             }
         }
-        
+
         Ok(())
     }
 
     /// Extract JavaScript/TypeScript imports from AST
-    fn extract_js_ts_imports(&self, node: &Node, content: &str, imports: &mut Vec<SimpleImport>) -> Result<()> {
+    fn extract_js_ts_imports(
+        &self,
+        node: &Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
         if node.kind() == "import_statement" {
             // Find the source
             for i in 0..node.child_count() {
@@ -176,19 +200,24 @@ impl SimpleAstParser {
                 }
             }
         }
-        
+
         // Recursively process children
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
                 self.extract_js_ts_imports(&child, content, imports)?;
             }
         }
-        
+
         Ok(())
     }
 
     /// Extract Go imports from AST
-    fn extract_go_imports(&self, node: &Node, content: &str, imports: &mut Vec<SimpleImport>) -> Result<()> {
+    fn extract_go_imports(
+        &self,
+        node: &Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
         if node.kind() == "import_spec" {
             for i in 0..node.child_count() {
                 if let Some(child) = node.child(i) {
@@ -196,7 +225,7 @@ impl SimpleAstParser {
                         let module = self.node_text(child, content);
                         let module = module.trim_matches('"').to_string();
                         let line_number = child.start_position().row + 1;
-                        
+
                         imports.push(SimpleImport {
                             module,
                             line_number,
@@ -205,38 +234,43 @@ impl SimpleAstParser {
                 }
             }
         }
-        
+
         // Recursively process children
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
                 self.extract_go_imports(&child, content, imports)?;
             }
         }
-        
+
         Ok(())
     }
 
     /// Extract Rust imports from AST
-    fn extract_rust_imports(&self, node: &Node, content: &str, imports: &mut Vec<SimpleImport>) -> Result<()> {
+    fn extract_rust_imports(
+        &self,
+        node: &Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
         if node.kind() == "use_declaration" {
             if let Some(use_tree) = node.child_by_field_name("argument") {
                 let module = self.node_text(use_tree, content);
                 let line_number = node.start_position().row + 1;
-                
+
                 imports.push(SimpleImport {
                     module,
                     line_number,
                 });
             }
         }
-        
+
         // Recursively process children
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
                 self.extract_rust_imports(&child, content, imports)?;
             }
         }
-        
+
         Ok(())
     }
 

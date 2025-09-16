@@ -1,44 +1,28 @@
-use std::path::Path;
-use std::collections::HashSet;
-use thiserror::Error;
 use regex::Regex;
+use std::collections::HashSet;
+use std::path::Path;
+use thiserror::Error;
 
 /// Validation errors for patterns and configurations
 #[derive(Error, Debug)]
 pub enum ValidationError {
     #[error("Invalid glob pattern '{pattern}': {reason}")]
-    InvalidGlobPattern {
-        pattern: String,
-        reason: String,
-    },
+    InvalidGlobPattern { pattern: String, reason: String },
 
     #[error("Invalid gitignore pattern '{pattern}': {reason}")]
-    InvalidGitignorePattern {
-        pattern: String,
-        reason: String,
-    },
+    InvalidGitignorePattern { pattern: String, reason: String },
 
     #[error("Pattern too complex: {reason}")]
-    PatternTooComplex {
-        reason: String,
-    },
+    PatternTooComplex { reason: String },
 
     #[error("Conflicting patterns detected: {conflict}")]
-    ConflictingPatterns {
-        conflict: String,
-    },
+    ConflictingPatterns { conflict: String },
 
     #[error("Invalid path '{path}': {reason}")]
-    InvalidPath {
-        path: String,
-        reason: String,
-    },
+    InvalidPath { path: String, reason: String },
 
     #[error("Pattern limit exceeded: maximum {max} patterns allowed, got {actual}")]
-    PatternLimitExceeded {
-        max: usize,
-        actual: usize,
-    },
+    PatternLimitExceeded { max: usize, actual: usize },
 
     #[error("Empty pattern not allowed")]
     EmptyPattern,
@@ -105,11 +89,10 @@ impl PatternValidator {
     /// Create a new pattern validator
     pub fn new(config: ValidationConfig) -> ValidationResult<Self> {
         // Regex to detect potentially dangerous glob patterns
-        let glob_regex = Regex::new(r"[\*\?\[\]{}]")
-            .map_err(|e| ValidationError::RegexError {
-                pattern: r"[\*\?\[\]{}]".to_string(),
-                source: e,
-            })?;
+        let glob_regex = Regex::new(r"[\*\?\[\]{}]").map_err(|e| ValidationError::RegexError {
+            pattern: r"[\*\?\[\]{}]".to_string(),
+            source: e,
+        })?;
 
         // Known dangerous or problematic patterns
         let mut dangerous_patterns = HashSet::new();
@@ -221,7 +204,10 @@ impl PatternValidator {
                 '\\' => {
                     // Check for valid escape sequences
                     if let Some(next_ch) = chars.next() {
-                        if !matches!(next_ch, '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '/' | '!' | '-' | '^') {
+                        if !matches!(
+                            next_ch,
+                            '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '/' | '!' | '-' | '^'
+                        ) {
                             return Err(ValidationError::InvalidGlobPattern {
                                 pattern: pattern.to_string(),
                                 reason: format!("Invalid escape sequence '\\{}'", next_ch),
@@ -263,8 +249,7 @@ impl PatternValidator {
             return Err(ValidationError::PatternTooComplex {
                 reason: format!(
                     "Pattern depth {} exceeds maximum {}",
-                    depth,
-                    self.config.max_glob_depth
+                    depth, self.config.max_glob_depth
                 ),
             });
         }
@@ -393,7 +378,7 @@ impl PatternValidator {
 
         for pattern in patterns {
             let pattern_str = pattern.as_ref();
-            
+
             // Check for duplicate patterns
             if !seen_patterns.insert(pattern_str.to_string()) {
                 return Err(ValidationError::ConflictingPatterns {
@@ -447,7 +432,11 @@ impl PatternValidator {
         if path_str.len() > MAX_PATH_LEN {
             return Err(ValidationError::InvalidPath {
                 path: path_str.to_string(),
-                reason: format!("Path too long: {} characters (max: {})", path_str.len(), MAX_PATH_LEN),
+                reason: format!(
+                    "Path too long: {} characters (max: {})",
+                    path_str.len(),
+                    MAX_PATH_LEN
+                ),
             });
         }
 
@@ -485,7 +474,9 @@ impl PatternValidator {
         let recursive_count = pattern.matches("**/").count();
         if recursive_count > 3 {
             risk_score += 4;
-            issues.push("Multiple recursive patterns may cause exponential matching time".to_string());
+            issues.push(
+                "Multiple recursive patterns may cause exponential matching time".to_string(),
+            );
         }
 
         // Check for alternations
@@ -510,7 +501,7 @@ impl PatternValidator {
         };
 
         let recommendations = self.generate_performance_recommendations(risk_score, &issues);
-        
+
         Ok(PerformanceRisk {
             level: risk_level,
             score: risk_score,
@@ -520,23 +511,34 @@ impl PatternValidator {
     }
 
     /// Generate performance recommendations
-    fn generate_performance_recommendations(&self, risk_score: u32, issues: &[String]) -> Vec<String> {
+    fn generate_performance_recommendations(
+        &self,
+        risk_score: u32,
+        issues: &[String],
+    ) -> Vec<String> {
         let mut recommendations = Vec::new();
 
         if risk_score > 5 {
-            recommendations.push("Consider simplifying the pattern to improve performance".to_string());
+            recommendations
+                .push("Consider simplifying the pattern to improve performance".to_string());
         }
 
         if issues.iter().any(|i| i.contains("recursive")) {
-            recommendations.push("Limit recursive patterns (**/) to essential cases only".to_string());
+            recommendations
+                .push("Limit recursive patterns (**/) to essential cases only".to_string());
         }
 
         if issues.iter().any(|i| i.contains("wildcards")) {
-            recommendations.push("Use specific patterns instead of multiple wildcards where possible".to_string());
+            recommendations.push(
+                "Use specific patterns instead of multiple wildcards where possible".to_string(),
+            );
         }
 
         if issues.iter().any(|i| i.contains("alternations")) {
-            recommendations.push("Consider splitting complex alternations into multiple simpler patterns".to_string());
+            recommendations.push(
+                "Consider splitting complex alternations into multiple simpler patterns"
+                    .to_string(),
+            );
         }
 
         recommendations
@@ -564,7 +566,10 @@ pub enum PerformanceRiskLevel {
 impl PerformanceRiskLevel {
     /// Check if the risk level requires attention
     pub fn needs_attention(&self) -> bool {
-        matches!(self, PerformanceRiskLevel::High | PerformanceRiskLevel::Critical)
+        matches!(
+            self,
+            PerformanceRiskLevel::High | PerformanceRiskLevel::Critical
+        )
     }
 
     /// Check if the risk level should prevent pattern usage
@@ -636,7 +641,11 @@ mod tests {
         ];
 
         for pattern in &valid_patterns {
-            assert!(validator.validate_glob_pattern(pattern).is_ok(), "Pattern should be valid: {}", pattern);
+            assert!(
+                validator.validate_glob_pattern(pattern).is_ok(),
+                "Pattern should be valid: {}",
+                pattern
+            );
         }
     }
 
@@ -645,16 +654,20 @@ mod tests {
         let validator = create_validator();
 
         let invalid_patterns = [
-            "[",           // Unclosed bracket
-            "}",           // Unmatched brace
-            "\\",          // Trailing backslash
-            "[]",          // Empty character class
-            "****",        // Too many wildcards
-            "????",        // Too many single wildcards
+            "[",    // Unclosed bracket
+            "}",    // Unmatched brace
+            "\\",   // Trailing backslash
+            "[]",   // Empty character class
+            "****", // Too many wildcards
+            "????", // Too many single wildcards
         ];
 
         for pattern in &invalid_patterns {
-            assert!(validator.validate_glob_pattern(pattern).is_err(), "Pattern should be invalid: {}", pattern);
+            assert!(
+                validator.validate_glob_pattern(pattern).is_err(),
+                "Pattern should be invalid: {}",
+                pattern
+            );
         }
     }
 
@@ -673,7 +686,11 @@ mod tests {
         ];
 
         for pattern in &valid_patterns {
-            assert!(validator.validate_gitignore_pattern(pattern).is_ok(), "Gitignore pattern should be valid: {}", pattern);
+            assert!(
+                validator.validate_gitignore_pattern(pattern).is_ok(),
+                "Gitignore pattern should be valid: {}",
+                pattern
+            );
         }
     }
 
@@ -682,11 +699,12 @@ mod tests {
         let validator = create_validator();
 
         let conflicting_patterns = [
-            "*.rs",
-            "!*.rs",  // Conflicts with first pattern
+            "*.rs", "!*.rs", // Conflicts with first pattern
         ];
 
-        assert!(validator.validate_patterns(conflicting_patterns.iter()).is_err());
+        assert!(validator
+            .validate_patterns(conflicting_patterns.iter())
+            .is_err());
     }
 
     #[test]
@@ -694,12 +712,12 @@ mod tests {
         let validator = create_validator();
 
         let duplicate_patterns = [
-            "*.rs",
-            "*.py",
-            "*.rs",  // Duplicate
+            "*.rs", "*.py", "*.rs", // Duplicate
         ];
 
-        assert!(validator.validate_patterns(duplicate_patterns.iter()).is_err());
+        assert!(validator
+            .validate_patterns(duplicate_patterns.iter())
+            .is_err());
     }
 
     #[test]
@@ -711,7 +729,9 @@ mod tests {
         let validator = PatternValidator::new(config).unwrap();
 
         let too_many_patterns = ["*.rs", "*.py", "*.js"];
-        assert!(validator.validate_patterns(too_many_patterns.iter()).is_err());
+        assert!(validator
+            .validate_patterns(too_many_patterns.iter())
+            .is_err());
     }
 
     #[test]
@@ -742,8 +762,13 @@ mod tests {
         assert_eq!(low_risk.level, PerformanceRiskLevel::Low);
 
         // High risk pattern with many wildcards
-        let high_risk = validator.validate_pattern_performance("**/**/**/**/**/**/*****.rs").unwrap();
-        assert!(matches!(high_risk.level, PerformanceRiskLevel::High | PerformanceRiskLevel::Critical));
+        let high_risk = validator
+            .validate_pattern_performance("**/**/**/**/**/**/*****.rs")
+            .unwrap();
+        assert!(matches!(
+            high_risk.level,
+            PerformanceRiskLevel::High | PerformanceRiskLevel::Critical
+        ));
         assert!(high_risk.level.needs_attention());
     }
 
@@ -764,7 +789,7 @@ mod tests {
         assert_eq!(sanitize_pattern("****"), "**");
         assert_eq!(sanitize_pattern("a****b"), "a**b");
         assert_eq!(sanitize_pattern("normal.rs"), "normal.rs");
-        
+
         // Test length limiting
         let long_pattern = "a".repeat(2000);
         let sanitized = sanitize_pattern(&long_pattern);

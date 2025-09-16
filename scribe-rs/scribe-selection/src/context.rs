@@ -1,7 +1,7 @@
 //! Context extraction module - stub implementation
 
-use scribe_core::Result;
 use crate::selector::SelectionResult;
+use scribe_core::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ impl ContextExtractor {
     pub async fn extract(
         &self,
         _selection: &SelectionResult,
-        _options: &ContextOptions
+        _options: &ContextOptions,
     ) -> Result<CodeContext> {
         // Stub implementation
         Ok(CodeContext {

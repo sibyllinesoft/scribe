@@ -1,5 +1,5 @@
 //! # Scribe Scaling
-//! 
+//!
 //! Advanced scaling optimizations for handling large repositories (10k-100k+ files) efficiently.
 //! This crate implements progressive loading, intelligent caching, parallel processing, and
 //! adaptive threshold management for optimal performance at scale.
@@ -30,15 +30,15 @@
 //!   Fast scanning      Lightweight load    Smart filtering   Parallel work   Optimized result
 //! ```
 
-pub mod error;
-pub mod streaming;
-pub mod caching;
-pub mod parallel;
 pub mod adaptive;
-pub mod signatures;
-pub mod profiling;
+pub mod caching;
+pub mod error;
 pub mod memory;
 pub mod metrics;
+pub mod parallel;
+pub mod profiling;
+pub mod signatures;
+pub mod streaming;
 
 // Context positioning optimization
 pub mod positioning;
@@ -50,17 +50,21 @@ pub mod engine;
 pub mod selector;
 
 // Re-export main types
-pub use engine::{ScalingEngine, ScalingConfig, ProcessingResult};
-pub use selector::{ScalingSelector, ScalingSelectionConfig, ScalingSelectionResult, SelectionAlgorithm};
-pub use positioning::{ContextPositioner, ContextPositioningConfig, PositionedSelection, ContextPositioning};
-pub use streaming::{StreamingConfig, FileMetadata, FileChunk};
-pub use caching::CacheConfig;
-pub use parallel::ParallelConfig;
 pub use adaptive::AdaptiveConfig;
-pub use signatures::{SignatureLevel, SignatureConfig};
-pub use profiling::{RepositoryProfiler, RepositoryProfile, RepositoryType};
+pub use caching::CacheConfig;
+pub use engine::{ProcessingResult, ScalingConfig, ScalingEngine};
 pub use memory::{MemoryConfig, MemoryStats};
-pub use metrics::{ScalingMetrics, BenchmarkResult};
+pub use metrics::{BenchmarkResult, ScalingMetrics};
+pub use parallel::ParallelConfig;
+pub use positioning::{
+    ContextPositioner, ContextPositioning, ContextPositioningConfig, PositionedSelection,
+};
+pub use profiling::{RepositoryProfile, RepositoryProfiler, RepositoryType};
+pub use selector::{
+    ScalingSelectionConfig, ScalingSelectionResult, ScalingSelector, SelectionAlgorithm,
+};
+pub use signatures::{SignatureConfig, SignatureLevel};
+pub use streaming::{FileChunk, FileMetadata, StreamingConfig};
 
 // Re-export error types
 pub use error::{ScalingError, ScalingResult};
@@ -80,7 +84,7 @@ pub async fn create_scaling_engine<P: AsRef<std::path::Path>>(
     let profiler = RepositoryProfiler::new();
     let profile = profiler.profile_repository(repo_path.as_ref()).await?;
     let config = profile.to_scaling_config();
-    
+
     Ok(ScalingEngine::with_config(config))
 }
 
@@ -89,24 +93,25 @@ pub async fn quick_scale_estimate<P: AsRef<std::path::Path>>(
     repo_path: P,
 ) -> ScalingResult<(usize, std::time::Duration, usize)> {
     let profiler = RepositoryProfiler::new();
-    let (file_count, estimated_duration, memory_usage) = profiler.quick_estimate(repo_path.as_ref()).await?;
+    let (file_count, estimated_duration, memory_usage) =
+        profiler.quick_estimate(repo_path.as_ref()).await?;
     Ok((file_count, estimated_duration, memory_usage))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_scaling_engine_creation() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create some test files
         fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
         fs::write(temp_dir.path().join("lib.rs"), "pub fn test() {}").unwrap();
-        
+
         let engine = create_scaling_engine(temp_dir.path()).await.unwrap();
         assert!(engine.is_ready());
     }
@@ -114,12 +119,16 @@ mod tests {
     #[tokio::test]
     async fn test_quick_scale_estimate() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create test files
         for i in 0..10 {
-            fs::write(temp_dir.path().join(format!("file_{}.rs", i)), "// test file").unwrap();
+            fs::write(
+                temp_dir.path().join(format!("file_{}.rs", i)),
+                "// test file",
+            )
+            .unwrap();
         }
-        
+
         let (file_count, duration, memory) = quick_scale_estimate(temp_dir.path()).await.unwrap();
         assert!(file_count >= 10);
         assert!(duration.as_millis() > 0);

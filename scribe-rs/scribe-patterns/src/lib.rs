@@ -1,5 +1,5 @@
 //! # Scribe Patterns
-//! 
+//!
 //! Advanced pattern matching and search algorithms for the Scribe library.
 //! This crate provides high-performance pattern matching capabilities including
 //! glob patterns, gitignore integration, and flexible include/exclude logic.
@@ -38,20 +38,18 @@
 //! ```
 
 // Core modules
-pub mod glob;
 pub mod gitignore;
+pub mod glob;
 pub mod matcher;
 pub mod validation;
 
 // Re-export main types for convenience
-pub use glob::{GlobMatcher, GlobPattern, GlobOptions, GlobMatchResult};
 pub use gitignore::{GitignoreMatcher, GitignorePattern, GitignoreRule, GitignoreStats};
-pub use matcher::{
-    PatternMatcher, MatchResult, MatcherOptions, PatternMatcherBuilder
-};
+pub use glob::{GlobMatchResult, GlobMatcher, GlobOptions, GlobPattern};
+pub use matcher::{MatchResult, MatcherOptions, PatternMatcher, PatternMatcherBuilder};
 pub use validation::{
-    PatternValidator, ValidationResult, ValidationError, ValidationConfig,
-    PerformanceRisk, PerformanceRiskLevel
+    PatternValidator, PerformanceRisk, PerformanceRiskLevel, ValidationConfig, ValidationError,
+    ValidationResult,
 };
 
 use scribe_core::{Result, ScribeError};
@@ -69,45 +67,53 @@ impl QuickMatcher {
     /// Create a new quick matcher with include and exclude patterns
     pub fn new(include_patterns: &[&str], exclude_patterns: &[&str]) -> Result<Self> {
         let mut builder = PatternMatcherBuilder::new();
-        
+
         for pattern in include_patterns {
             builder = builder.include(*pattern);
         }
-        
+
         for pattern in exclude_patterns {
             builder = builder.exclude(*pattern);
         }
-        
-        let matcher = builder.build().map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))?;
+
+        let matcher = builder
+            .build()
+            .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))?;
         Ok(Self { matcher })
     }
 
     /// Create a quick matcher from comma-separated pattern strings
     pub fn from_patterns(include_csv: Option<&str>, exclude_csv: Option<&str>) -> Result<Self> {
         let mut builder = PatternMatcherBuilder::new();
-        
+
         if let Some(includes) = include_csv {
             let patterns = utils::parse_csv_patterns(includes);
             builder = builder.includes(patterns);
         }
-        
+
         if let Some(excludes) = exclude_csv {
             let patterns = utils::parse_csv_patterns(excludes);
             builder = builder.excludes(patterns);
         }
-        
-        let matcher = builder.build().map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))?;
+
+        let matcher = builder
+            .build()
+            .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))?;
         Ok(Self { matcher })
     }
 
     /// Test if a path should be included
     pub fn matches<P: AsRef<Path>>(&mut self, path: P) -> Result<bool> {
-        self.matcher.should_process(path).map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
+        self.matcher
+            .should_process(path)
+            .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
     }
 
     /// Get detailed match information
     pub fn match_details<P: AsRef<Path>>(&mut self, path: P) -> Result<MatchResult> {
-        self.matcher.is_match(path).map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
+        self.matcher
+            .is_match(path)
+            .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
     }
 }
 
@@ -191,18 +197,17 @@ impl PatternBuilder {
         };
 
         let mut builder = PatternMatcherBuilder::new();
-        
+
         if !self.includes.is_empty() {
             builder = builder.includes(self.includes);
         }
-        
+
         if !self.excludes.is_empty() {
             builder = builder.excludes(self.excludes);
         }
-        
-        builder = builder
-            .case_sensitive(self.case_sensitive);
-            
+
+        builder = builder.case_sensitive(self.case_sensitive);
+
         // Set up gitignore with first gitignore file if available
         if let Some(first_gitignore) = options.custom_gitignore_files.first() {
             if let Some(parent) = first_gitignore.parent() {
@@ -210,7 +215,9 @@ impl PatternBuilder {
             }
         }
 
-        builder.build().map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
+        builder
+            .build()
+            .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
     }
 }
 
@@ -222,16 +229,16 @@ pub mod utils {
     /// Normalize a path for consistent pattern matching across platforms
     pub fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
         let path = path.as_ref();
-        
+
         // Convert to forward slashes for consistent matching
         let normalized = path.to_string_lossy().replace('\\', "/");
-        
+
         // Remove redundant separators and resolve . and ..
         let components: Vec<&str> = normalized
             .split('/')
             .filter(|c| !c.is_empty() && *c != ".")
             .collect();
-            
+
         let mut result = Vec::new();
         for component in components {
             if component == ".." && !result.is_empty() && result.last() != Some(&"..") {
@@ -240,7 +247,7 @@ pub mod utils {
                 result.push(component);
             }
         }
-        
+
         PathBuf::from(result.join("/"))
     }
 
@@ -280,7 +287,8 @@ pub mod utils {
 
     /// Convert multiple extensions to include patterns
     pub fn extensions_to_globs(extensions: &[&str]) -> Vec<String> {
-        extensions.iter()
+        extensions
+            .iter()
             .map(|ext| extension_to_glob(ext))
             .collect()
     }
@@ -294,14 +302,40 @@ pub mod presets {
     pub fn source_code() -> Result<PatternMatcher> {
         PatternMatcherBuilder::new()
             .includes([
-                "**/*.rs", "**/*.py", "**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx",
-                "**/*.java", "**/*.kt", "**/*.scala", "**/*.go", "**/*.c", "**/*.cpp",
-                "**/*.cxx", "**/*.cc", "**/*.h", "**/*.hpp", "**/*.cs", "**/*.swift",
-                "**/*.dart", "**/*.rb", "**/*.php", "**/*.sh", "**/*.bash", "**/*.zsh"
+                "**/*.rs",
+                "**/*.py",
+                "**/*.js",
+                "**/*.ts",
+                "**/*.jsx",
+                "**/*.tsx",
+                "**/*.java",
+                "**/*.kt",
+                "**/*.scala",
+                "**/*.go",
+                "**/*.c",
+                "**/*.cpp",
+                "**/*.cxx",
+                "**/*.cc",
+                "**/*.h",
+                "**/*.hpp",
+                "**/*.cs",
+                "**/*.swift",
+                "**/*.dart",
+                "**/*.rb",
+                "**/*.php",
+                "**/*.sh",
+                "**/*.bash",
+                "**/*.zsh",
             ])
             .excludes([
-                "**/node_modules/**", "**/target/**", "**/build/**", "**/dist/**",
-                "**/__pycache__/**", "**/*.pyc", "**/.git/**", "**/vendor/**"
+                "**/node_modules/**",
+                "**/target/**",
+                "**/build/**",
+                "**/dist/**",
+                "**/__pycache__/**",
+                "**/*.pyc",
+                "**/.git/**",
+                "**/vendor/**",
             ])
             .build()
             .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
@@ -311,12 +345,23 @@ pub mod presets {
     pub fn documentation() -> Result<PatternMatcher> {
         PatternMatcherBuilder::new()
             .includes([
-                "**/*.md", "**/*.rst", "**/*.txt", "**/*.adoc", "**/*.org",
-                "**/README*", "**/CHANGELOG*", "**/LICENSE*", "**/COPYING*",
-                "**/*.tex", "**/*.latex"
+                "**/*.md",
+                "**/*.rst",
+                "**/*.txt",
+                "**/*.adoc",
+                "**/*.org",
+                "**/README*",
+                "**/CHANGELOG*",
+                "**/LICENSE*",
+                "**/COPYING*",
+                "**/*.tex",
+                "**/*.latex",
             ])
             .excludes([
-                "**/node_modules/**", "**/target/**", "**/build/**", "**/dist/**"
+                "**/node_modules/**",
+                "**/target/**",
+                "**/build/**",
+                "**/dist/**",
             ])
             .build()
             .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
@@ -326,12 +371,24 @@ pub mod presets {
     pub fn configuration() -> Result<PatternMatcher> {
         PatternMatcherBuilder::new()
             .includes([
-                "**/*.json", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.ini",
-                "**/*.cfg", "**/*.conf", "**/*.xml", "**/Dockerfile*", "**/Makefile*",
-                "**/.env*", "**/*.env"
+                "**/*.json",
+                "**/*.yaml",
+                "**/*.yml",
+                "**/*.toml",
+                "**/*.ini",
+                "**/*.cfg",
+                "**/*.conf",
+                "**/*.xml",
+                "**/Dockerfile*",
+                "**/Makefile*",
+                "**/.env*",
+                "**/*.env",
             ])
             .excludes([
-                "**/node_modules/**", "**/target/**", "**/build/**", "**/dist/**"
+                "**/node_modules/**",
+                "**/target/**",
+                "**/build/**",
+                "**/dist/**",
             ])
             .build()
             .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
@@ -341,12 +398,26 @@ pub mod presets {
     pub fn web_assets() -> Result<PatternMatcher> {
         PatternMatcherBuilder::new()
             .includes([
-                "**/*.html", "**/*.css", "**/*.scss", "**/*.sass", "**/*.less",
-                "**/*.js", "**/*.ts", "**/*.jsx", "**/*.tsx", "**/*.vue", "**/*.svelte"
+                "**/*.html",
+                "**/*.css",
+                "**/*.scss",
+                "**/*.sass",
+                "**/*.less",
+                "**/*.js",
+                "**/*.ts",
+                "**/*.jsx",
+                "**/*.tsx",
+                "**/*.vue",
+                "**/*.svelte",
             ])
             .excludes([
-                "**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**",
-                "**/coverage/**", "**/*.min.js", "**/*.min.css"
+                "**/node_modules/**",
+                "**/dist/**",
+                "**/build/**",
+                "**/.next/**",
+                "**/coverage/**",
+                "**/*.min.js",
+                "**/*.min.css",
             ])
             .build()
             .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
@@ -357,12 +428,29 @@ pub mod presets {
         PatternMatcherBuilder::new()
             .include("**/*")
             .excludes([
-                "**/target/**", "**/build/**", "**/dist/**", "**/out/**",
-                "**/node_modules/**", "**/__pycache__/**", "**/*.pyc",
-                "**/vendor/**", "**/deps/**", "**/.git/**", "**/.svn/**",
-                "**/bin/**", "**/obj/**", "**/*.o", "**/*.a", "**/*.so",
-                "**/*.dylib", "**/*.dll", "**/*.exe", "**/coverage/**",
-                "**/.nyc_output/**", "**/junit.xml", "**/test-results/**"
+                "**/target/**",
+                "**/build/**",
+                "**/dist/**",
+                "**/out/**",
+                "**/node_modules/**",
+                "**/__pycache__/**",
+                "**/*.pyc",
+                "**/vendor/**",
+                "**/deps/**",
+                "**/.git/**",
+                "**/.svn/**",
+                "**/bin/**",
+                "**/obj/**",
+                "**/*.o",
+                "**/*.a",
+                "**/*.so",
+                "**/*.dylib",
+                "**/*.dll",
+                "**/*.exe",
+                "**/coverage/**",
+                "**/.nyc_output/**",
+                "**/junit.xml",
+                "**/test-results/**",
             ])
             .build()
             .map_err(|e| ScribeError::pattern(e.to_string(), "unknown"))
@@ -372,9 +460,9 @@ pub mod presets {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[test]
     fn test_quick_matcher_creation() {
@@ -387,9 +475,10 @@ mod tests {
     fn test_quick_matcher_csv() {
         let mut matcher = QuickMatcher::from_patterns(
             Some("**/*.rs,**/*.py"),
-            Some("**/target/**,**/__pycache__/**")
-        ).unwrap();
-        
+            Some("**/target/**,**/__pycache__/**"),
+        )
+        .unwrap();
+
         assert!(matcher.matches("src/lib.rs").unwrap());
         assert!(matcher.matches("src/main.py").unwrap());
         assert!(!matcher.matches("target/debug/lib.rs").unwrap());
@@ -429,21 +518,24 @@ mod tests {
     #[test]
     fn test_utils_path_normalization() {
         use super::utils::*;
-        
+
         assert_eq!(normalize_path("src/lib.rs"), PathBuf::from("src/lib.rs"));
         assert_eq!(normalize_path("src//lib.rs"), PathBuf::from("src/lib.rs"));
         assert_eq!(normalize_path("src/./lib.rs"), PathBuf::from("src/lib.rs"));
-        assert_eq!(normalize_path("src/../src/lib.rs"), PathBuf::from("src/lib.rs"));
+        assert_eq!(
+            normalize_path("src/../src/lib.rs"),
+            PathBuf::from("src/lib.rs")
+        );
     }
 
     #[test]
     fn test_utils_pattern_validation() {
         use super::utils::*;
-        
+
         assert!(is_valid_glob_pattern("**/*.rs"));
         assert!(is_valid_glob_pattern("src/**"));
         assert!(is_valid_glob_pattern("*.{rs,py}"));
-        
+
         assert!(is_valid_gitignore_pattern("*.rs"));
         assert!(is_valid_gitignore_pattern("!important.rs"));
         assert!(is_valid_gitignore_pattern("build/"));
@@ -452,17 +544,14 @@ mod tests {
     #[test]
     fn test_utils_csv_parsing() {
         use super::utils::*;
-        
+
         assert_eq!(
             parse_csv_patterns("*.rs,*.py, *.js "),
             vec!["*.rs", "*.py", "*.js"]
         );
-        
-        assert_eq!(
-            parse_csv_patterns("single"),
-            vec!["single"]
-        );
-        
+
+        assert_eq!(parse_csv_patterns("single"), vec!["single"]);
+
         assert!(parse_csv_patterns("").is_empty());
         assert!(parse_csv_patterns(",,,").is_empty());
     }
@@ -470,10 +559,10 @@ mod tests {
     #[test]
     fn test_utils_extension_conversion() {
         use super::utils::*;
-        
+
         assert_eq!(extension_to_glob("rs"), "**/*.rs");
         assert_eq!(extension_to_glob(".py"), "**/*.py");
-        
+
         assert_eq!(
             extensions_to_globs(&["rs", "py", "js"]),
             vec!["**/*.rs", "**/*.py", "**/*.js"]
@@ -483,7 +572,7 @@ mod tests {
     #[test]
     fn test_utils_glob_escaping() {
         use super::utils::*;
-        
+
         assert_eq!(escape_glob_pattern("file*.txt"), r"file\*.txt");
         assert_eq!(escape_glob_pattern("test?file.txt"), r"test\?file.txt");
         assert_eq!(escape_glob_pattern("file[1-3].txt"), r"file\[1-3\].txt");
@@ -493,7 +582,7 @@ mod tests {
     #[test]
     fn test_presets_source_code() {
         let mut matcher = presets::source_code().unwrap();
-        
+
         assert!(matcher.should_process("src/lib.rs").unwrap());
         assert!(matcher.should_process("src/main.py").unwrap());
         assert!(matcher.should_process("src/app.js").unwrap());
@@ -504,18 +593,20 @@ mod tests {
     #[test]
     fn test_presets_documentation() {
         let mut matcher = presets::documentation().unwrap();
-        
+
         assert!(matcher.should_process("README.md").unwrap());
         assert!(matcher.should_process("docs/guide.rst").unwrap());
         assert!(matcher.should_process("CHANGELOG.txt").unwrap());
         assert!(!matcher.should_process("src/main.rs").unwrap());
-        assert!(!matcher.should_process("node_modules/package/README.md").unwrap());
+        assert!(!matcher
+            .should_process("node_modules/package/README.md")
+            .unwrap());
     }
 
     #[test]
     fn test_presets_configuration() {
         let mut matcher = presets::configuration().unwrap();
-        
+
         assert!(matcher.should_process("config.json").unwrap());
         assert!(matcher.should_process("docker-compose.yml").unwrap());
         assert!(matcher.should_process("Dockerfile").unwrap());
@@ -526,7 +617,7 @@ mod tests {
     #[test]
     fn test_presets_web_assets() {
         let mut matcher = presets::web_assets().unwrap();
-        
+
         assert!(matcher.should_process("index.html").unwrap());
         assert!(matcher.should_process("styles.css").unwrap());
         assert!(matcher.should_process("app.js").unwrap());
@@ -538,7 +629,7 @@ mod tests {
     #[test]
     fn test_presets_no_build_artifacts() {
         let mut matcher = presets::no_build_artifacts().unwrap();
-        
+
         assert!(matcher.should_process("src/lib.rs").unwrap());
         assert!(matcher.should_process("README.md").unwrap());
         assert!(!matcher.should_process("target/debug/main").unwrap());
@@ -551,12 +642,12 @@ mod tests {
     async fn test_integration_with_file_system() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
-        
+
         // Create test files
         fs::create_dir_all(base_path.join("src")).unwrap();
         fs::create_dir_all(base_path.join("target/debug")).unwrap();
         fs::create_dir_all(base_path.join("docs")).unwrap();
-        
+
         fs::write(base_path.join("src/lib.rs"), "fn main() {}").unwrap();
         fs::write(base_path.join("src/main.py"), "print('hello')").unwrap();
         fs::write(base_path.join("target/debug/main"), "binary").unwrap();
@@ -564,12 +655,12 @@ mod tests {
         fs::write(base_path.join("docs/guide.md"), "# Guide").unwrap();
 
         let mut matcher = presets::source_code().unwrap();
-        
+
         // Test paths relative to the base directory
         assert!(matcher.should_process("src/lib.rs").unwrap());
         assert!(matcher.should_process("src/main.py").unwrap());
         assert!(!matcher.should_process("target/debug/main").unwrap());
-        
+
         // Documentation should not match source code preset
         assert!(!matcher.should_process("README.md").unwrap());
         assert!(!matcher.should_process("docs/guide.md").unwrap());

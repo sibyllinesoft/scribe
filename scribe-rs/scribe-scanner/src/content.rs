@@ -6,14 +6,14 @@
 //! - Code complexity metrics and statistics
 //! - Text content classification and analysis
 
-use scribe_core::{Result, ScribeError, Language};
-use scribe_selection::ast_parser::{AstParser, AstLanguage, AstImport};
-use std::path::{Path, PathBuf};
+use once_cell::sync::Lazy;
+use regex::Regex;
+use scribe_core::{Language, Result, ScribeError};
+use scribe_selection::ast_parser::{AstImport, AstLanguage, AstParser};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use regex::Regex;
-use serde::{Serialize, Deserialize};
-use once_cell::sync::Lazy;
+use std::path::{Path, PathBuf};
 
 /// Comprehensive content analysis results
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,11 +50,11 @@ pub struct ImportSource {
 /// Type of import statement
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportType {
-    Standard,     // Standard library
-    External,     // Third-party package
-    Internal,     // Internal module/package
-    Relative,     // Relative import
-    Dynamic,      // Dynamic/runtime import
+    Standard, // Standard library
+    External, // Third-party package
+    Internal, // Internal module/package
+    Relative, // Relative import
+    Dynamic,  // Dynamic/runtime import
 }
 
 /// Documentation structure information
@@ -91,10 +91,10 @@ pub struct Link {
 /// Type of link
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LinkType {
-    Internal,   // Internal document link
-    External,   // External URL
-    Relative,   // Relative file path
-    Anchor,     // In-document anchor
+    Internal, // Internal document link
+    External, // External URL
+    Relative, // Relative file path
+    Anchor,   // In-document anchor
 }
 
 /// Code block in documentation
@@ -254,16 +254,14 @@ pub struct ContentAnalyzer {
     ast_parser: AstParser,
 }
 
-
 // Compile-time regex patterns for common operations
 static HEADING_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#{1,6})\s+(.+)").unwrap());
 static LINK_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 static TODO_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(?://|#|/\*|\*|<!--)\s*(TODO|FIXME|NOTE|BUG|HACK|WARNING):?\s*(.*)").unwrap()
 });
-static CODE_BLOCK_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"```(\w+)?\n((?s).*?)```").unwrap()
-});
+static CODE_BLOCK_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"```(\w+)?\n((?s).*?)```").unwrap());
 
 impl Default for ContentStats {
     fn default() -> Self {
@@ -371,15 +369,20 @@ impl ContentAnalyzer {
 
     /// Analyze a file and extract comprehensive content information
     pub async fn analyze_file(&self, path: &Path) -> Result<ContentStats> {
-        let content = tokio::fs::read_to_string(path).await
-            .map_err(|e| ScribeError::io(format!("Failed to read file {}: {}", path.display(), e), e))?;
+        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+            ScribeError::io(format!("Failed to read file {}: {}", path.display(), e), e)
+        })?;
 
         let language = self.detect_language_from_path(path);
         self.analyze_content(&content, &language).await
     }
 
     /// Analyze content string directly
-    pub async fn analyze_content(&self, content: &str, language: &Language) -> Result<ContentStats> {
+    pub async fn analyze_content(
+        &self,
+        content: &str,
+        language: &Language,
+    ) -> Result<ContentStats> {
         let mut stats = ContentStats::default();
 
         // Parallel analysis of all aspects
@@ -401,9 +404,13 @@ impl ContentAnalyzer {
     }
 
     /// Analyze imports and dependencies using tree-sitter AST parsing
-    async fn analyze_imports_async(&self, content: &str, language: &Language) -> Result<ImportInfo> {
+    async fn analyze_imports_async(
+        &self,
+        content: &str,
+        language: &Language,
+    ) -> Result<ImportInfo> {
         let mut import_info = ImportInfo::default();
-        
+
         // Convert Language to AstLanguage
         let ast_language = match language {
             Language::Python => Some(AstLanguage::Python),
@@ -413,14 +420,14 @@ impl ContentAnalyzer {
             Language::Rust => Some(AstLanguage::Rust),
             _ => None, // Fall back to regex for unsupported languages
         };
-        
+
         if let Some(ast_lang) = ast_language {
             // Use tree-sitter to extract imports
             match self.ast_parser.extract_imports(content, ast_lang) {
                 Ok(imports) => {
                     for (line_number, import) in imports.into_iter().enumerate() {
                         let import_type = self.classify_import_type(&import.module);
-                        
+
                         let import_source = ImportSource {
                             module: import.module.clone(),
                             alias: import.alias,
@@ -428,9 +435,9 @@ impl ContentAnalyzer {
                             line_number: line_number + 1,
                             import_type: import_type.clone(),
                         };
-                        
+
                         import_info.import_sources.push(import_source);
-                        
+
                         // Classify import type
                         match import_type {
                             ImportType::External => {
@@ -449,10 +456,10 @@ impl ContentAnalyzer {
                             }
                         }
                     }
-                    
+
                     import_info.total_imports = import_info.import_sources.len();
-                    import_info.unique_imports = import_info.external_dependencies.len() + 
-                                               import_info.internal_dependencies.len();
+                    import_info.unique_imports = import_info.external_dependencies.len()
+                        + import_info.internal_dependencies.len();
                 }
                 Err(_) => {
                     // If tree-sitter parsing fails, return empty import info
@@ -474,7 +481,7 @@ impl ContentAnalyzer {
             if let Some(captures) = HEADING_REGEX.captures(line) {
                 let level = captures.get(1).unwrap().as_str().len();
                 let text = captures.get(2).unwrap().as_str().trim().to_string();
-                
+
                 doc_info.headings.push(Heading {
                     level,
                     text: text.clone(),
@@ -487,7 +494,7 @@ impl ContentAnalyzer {
             for captures in LINK_REGEX.captures_iter(line) {
                 let text = captures.get(1).unwrap().as_str().to_string();
                 let url = captures.get(2).unwrap().as_str().to_string();
-                
+
                 doc_info.links.push(Link {
                     text,
                     url: url.clone(),
@@ -507,9 +514,11 @@ impl ContentAnalyzer {
                     "WARNING" => TodoType::Warning,
                     _ => TodoType::Todo,
                 };
-                
-                let text = captures.get(2).map_or(String::new(), |m| m.as_str().trim().to_string());
-                
+
+                let text = captures
+                    .get(2)
+                    .map_or(String::new(), |m| m.as_str().trim().to_string());
+
                 doc_info.todo_comments.push(TodoComment {
                     comment_type,
                     text,
@@ -522,8 +531,14 @@ impl ContentAnalyzer {
             if line.starts_with('|') && line.ends_with('|') {
                 doc_info.tables += 1;
             }
-            if line.trim_start().starts_with('-') || line.trim_start().starts_with('*') || 
-               line.trim_start().chars().next().map_or(false, |c| c.is_digit(10)) {
+            if line.trim_start().starts_with('-')
+                || line.trim_start().starts_with('*')
+                || line
+                    .trim_start()
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_digit(10))
+            {
                 doc_info.lists += 1;
             }
 
@@ -535,7 +550,7 @@ impl ContentAnalyzer {
             let language = captures.get(1).map(|m| m.as_str().to_string());
             let content_str = captures.get(2).unwrap().as_str().to_string();
             let line_count = content_str.lines().count();
-            
+
             doc_info.code_blocks.push(CodeBlock {
                 language,
                 content: content_str,
@@ -548,25 +563,29 @@ impl ContentAnalyzer {
     }
 
     /// Analyze code complexity metrics
-    async fn analyze_complexity_async(&self, content: &str, language: &Language) -> Result<ComplexityMetrics> {
+    async fn analyze_complexity_async(
+        &self,
+        content: &str,
+        language: &Language,
+    ) -> Result<ComplexityMetrics> {
         let mut complexity = ComplexityMetrics::default();
 
         // Basic complexity analysis - could be enhanced with proper AST parsing
         let lines: Vec<&str> = content.lines().collect();
-        
+
         for line in &lines {
             let trimmed = line.trim();
-            
+
             // Count functions (basic pattern matching)
             if self.is_function_declaration(trimmed, language) {
                 complexity.function_count += 1;
             }
-            
+
             // Count classes
             if self.is_class_declaration(trimmed, language) {
                 complexity.class_count += 1;
             }
-            
+
             // Simple cyclomatic complexity (count decision points)
             if self.is_decision_point(trimmed, language) {
                 complexity.cyclomatic_complexity += 1;
@@ -575,7 +594,7 @@ impl ContentAnalyzer {
 
         // Calculate nesting depth
         complexity.nesting_depth = self.calculate_max_nesting_depth(content, language);
-        
+
         // Basic Halstead metrics
         complexity.halstead_metrics = self.calculate_halstead_metrics(content, language);
 
@@ -583,28 +602,36 @@ impl ContentAnalyzer {
     }
 
     /// Analyze code structure
-    async fn analyze_structure_async(&self, content: &str, language: &Language) -> Result<StructureInfo> {
+    async fn analyze_structure_async(
+        &self,
+        content: &str,
+        language: &Language,
+    ) -> Result<StructureInfo> {
         let mut structure = StructureInfo::default();
-        
+
         // This would ideally use a proper AST parser for each language
         // For now, we'll use basic pattern matching
         let mut line_number = 1;
-        
+
         for line in content.lines() {
             let trimmed = line.trim();
-            
-            if let Some(function_info) = self.parse_function_declaration(trimmed, line_number, language) {
+
+            if let Some(function_info) =
+                self.parse_function_declaration(trimmed, line_number, language)
+            {
                 structure.functions.push(function_info);
             }
-            
+
             if let Some(class_info) = self.parse_class_declaration(trimmed, line_number, language) {
                 structure.classes.push(class_info);
             }
-            
-            if let Some(constant_info) = self.parse_constant_declaration(trimmed, line_number, language) {
+
+            if let Some(constant_info) =
+                self.parse_constant_declaration(trimmed, line_number, language)
+            {
                 structure.constants.push(constant_info);
             }
-            
+
             line_number += 1;
         }
 
@@ -617,11 +644,11 @@ impl ContentAnalyzer {
         let line_count = lines.len();
         let character_count = content.len();
         let word_count = content.split_whitespace().count();
-        
+
         let mut non_empty_line_count = 0;
         let mut comment_line_count = 0;
         let mut blank_line_count = 0;
-        
+
         for line in &lines {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -633,7 +660,7 @@ impl ContentAnalyzer {
                 }
             }
         }
-        
+
         let code_line_count = non_empty_line_count - comment_line_count;
         let comment_density = if code_line_count > 0 {
             comment_line_count as f64 / code_line_count as f64
@@ -652,8 +679,6 @@ impl ContentAnalyzer {
             comment_density,
         })
     }
-
-
 
     /// Classify import type based on module name
     fn classify_import_type(&self, module: &str) -> ImportType {
@@ -741,33 +766,41 @@ impl ContentAnalyzer {
     /// Check if line is a decision point for complexity calculation
     fn is_decision_point(&self, line: &str, _language: &Language) -> bool {
         // Common decision points across languages
-        line.contains("if ") || line.contains("elif ") || line.contains("else ") ||
-        line.contains("for ") || line.contains("while ") || line.contains("match ") ||
-        line.contains("switch ") || line.contains("case ") || line.contains("catch ") ||
-        line.contains("&&") || line.contains("||") || line.contains("?")
+        line.contains("if ")
+            || line.contains("elif ")
+            || line.contains("else ")
+            || line.contains("for ")
+            || line.contains("while ")
+            || line.contains("match ")
+            || line.contains("switch ")
+            || line.contains("case ")
+            || line.contains("catch ")
+            || line.contains("&&")
+            || line.contains("||")
+            || line.contains("?")
     }
 
     /// Calculate maximum nesting depth
     fn calculate_max_nesting_depth(&self, content: &str, _language: &Language) -> usize {
         let mut max_depth = 0;
         let mut current_depth = 0;
-        
+
         for line in content.lines() {
             let trimmed = line.trim();
-            
+
             // Count opening braces/indentation
-            let opens = trimmed.matches('{').count() + 
-                       trimmed.matches('(').count() + 
-                       trimmed.matches('[').count();
-            let closes = trimmed.matches('}').count() + 
-                        trimmed.matches(')').count() + 
-                        trimmed.matches(']').count();
-            
+            let opens = trimmed.matches('{').count()
+                + trimmed.matches('(').count()
+                + trimmed.matches('[').count();
+            let closes = trimmed.matches('}').count()
+                + trimmed.matches(')').count()
+                + trimmed.matches(']').count();
+
             current_depth += opens;
             max_depth = max_depth.max(current_depth);
             current_depth = current_depth.saturating_sub(closes);
         }
-        
+
         max_depth
     }
 
@@ -776,11 +809,13 @@ impl ContentAnalyzer {
         // This is a simplified version - real Halstead metrics need proper tokenization
         let words: Vec<&str> = content.split_whitespace().collect();
         let unique_words: HashSet<&str> = words.iter().cloned().collect();
-        
-        let operators = ["+", "-", "*", "/", "=", "==", "!=", "&&", "||", "!", "<", ">", "<=", ">="];
+
+        let operators = [
+            "+", "-", "*", "/", "=", "==", "!=", "&&", "||", "!", "<", ">", "<=", ">=",
+        ];
         let mut operator_count = 0;
         let mut unique_operators = HashSet::new();
-        
+
         for word in &words {
             for &op in &operators {
                 if word.contains(op) {
@@ -789,22 +824,22 @@ impl ContentAnalyzer {
                 }
             }
         }
-        
+
         let distinct_operators = unique_operators.len();
         let distinct_operands = unique_words.len().saturating_sub(distinct_operators);
         let total_operators = operator_count;
         let total_operands = words.len().saturating_sub(operator_count);
         let vocabulary = distinct_operators + distinct_operands;
         let length = total_operators + total_operands;
-        
+
         let difficulty = if distinct_operands > 0 {
             (distinct_operators as f64 / 2.0) * (total_operands as f64 / distinct_operands as f64)
         } else {
             0.0
         };
-        
+
         let effort = difficulty * length as f64;
-        
+
         HalsteadMetrics {
             distinct_operators,
             distinct_operands,
@@ -818,11 +853,16 @@ impl ContentAnalyzer {
     }
 
     /// Parse function declaration (simplified)
-    fn parse_function_declaration(&self, line: &str, line_number: usize, language: &Language) -> Option<FunctionInfo> {
+    fn parse_function_declaration(
+        &self,
+        line: &str,
+        line_number: usize,
+        language: &Language,
+    ) -> Option<FunctionInfo> {
         if !self.is_function_declaration(line, language) {
             return None;
         }
-        
+
         // This is a very basic parser - would need proper AST parsing for production
         let name = match language {
             Language::Python => {
@@ -851,14 +891,14 @@ impl ContentAnalyzer {
             }
             _ => None,
         };
-        
+
         if let Some(function_name) = name {
             Some(FunctionInfo {
                 name: function_name,
                 line_number,
-                line_count: 1, // Would need multi-line parsing
+                line_count: 1,      // Would need multi-line parsing
                 parameters: vec![], // Would need parameter parsing
-                return_type: None, // Would need return type parsing
+                return_type: None,  // Would need return type parsing
                 visibility: Visibility::Unknown,
                 is_async: line.contains("async"),
                 is_generator: line.contains("yield") || line.contains("generator"),
@@ -870,17 +910,30 @@ impl ContentAnalyzer {
     }
 
     /// Parse class declaration (simplified)
-    fn parse_class_declaration(&self, line: &str, line_number: usize, language: &Language) -> Option<ClassInfo> {
+    fn parse_class_declaration(
+        &self,
+        line: &str,
+        line_number: usize,
+        language: &Language,
+    ) -> Option<ClassInfo> {
         if !self.is_class_declaration(line, language) {
             return None;
         }
-        
+
         let name = match language {
             Language::Python => {
                 if let Some(start) = line.find("class ") {
                     let after_class = &line[start + 6..];
                     if let Some(colon_pos) = after_class.find(':') {
-                        Some(after_class[..colon_pos].trim().split('(').next().unwrap().trim().to_string())
+                        Some(
+                            after_class[..colon_pos]
+                                .trim()
+                                .split('(')
+                                .next()
+                                .unwrap()
+                                .trim()
+                                .to_string(),
+                        )
                     } else {
                         None
                     }
@@ -890,15 +943,15 @@ impl ContentAnalyzer {
             }
             _ => None,
         };
-        
+
         if let Some(class_name) = name {
             Some(ClassInfo {
                 name: class_name,
                 line_number,
-                line_count: 1, // Would need multi-line parsing
+                line_count: 1,          // Would need multi-line parsing
                 parent_classes: vec![], // Would need inheritance parsing
-                methods: vec![], // Would need method parsing
-                attributes: vec![], // Would need attribute parsing
+                methods: vec![],        // Would need method parsing
+                attributes: vec![],     // Would need attribute parsing
                 visibility: Visibility::Unknown,
                 docstring: None,
             })
@@ -908,15 +961,23 @@ impl ContentAnalyzer {
     }
 
     /// Parse constant declaration (simplified)
-    fn parse_constant_declaration(&self, line: &str, line_number: usize, _language: &Language) -> Option<ConstantInfo> {
+    fn parse_constant_declaration(
+        &self,
+        line: &str,
+        line_number: usize,
+        _language: &Language,
+    ) -> Option<ConstantInfo> {
         // Very basic constant detection
-        if line.contains("const ") || line.contains("final ") || (line.contains("=") && line.to_uppercase() == line) {
+        if line.contains("const ")
+            || line.contains("final ")
+            || (line.contains("=") && line.to_uppercase() == line)
+        {
             if let Some(equals_pos) = line.find('=') {
                 let before_equals = line[..equals_pos].trim();
-                
+
                 // Extract identifier name based on language patterns
                 let tokens: Vec<&str> = before_equals.split_whitespace().collect();
-                
+
                 if tokens.len() >= 2 {
                     // For patterns like "const IDENTIFIER" or "const IDENTIFIER: type"
                     if tokens[0] == "const" || tokens[0] == "final" {
@@ -931,7 +992,7 @@ impl ContentAnalyzer {
                         });
                     }
                 }
-                
+
                 // Fallback for other patterns
                 if let Some(name) = tokens.get(1) {
                     let clean_name = name.trim_end_matches(':');
@@ -950,9 +1011,12 @@ impl ContentAnalyzer {
     /// Check if line is a comment
     fn is_comment_line(&self, line: &str) -> bool {
         let trimmed = line.trim();
-        trimmed.starts_with("//") || trimmed.starts_with('#') || 
-        trimmed.starts_with("/*") || trimmed.starts_with('*') ||
-        trimmed.starts_with("<!--") || trimmed.starts_with("--")
+        trimmed.starts_with("//")
+            || trimmed.starts_with('#')
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("<!--")
+            || trimmed.starts_with("--")
     }
 }
 
@@ -965,8 +1029,8 @@ impl Default for ContentAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_content_analyzer_creation() {
@@ -986,20 +1050,26 @@ from .local_module import LocalClass
 import third_party.package
         "#;
 
-        let stats = analyzer.analyze_content(python_code, &Language::Python).await.unwrap();
-        
+        let stats = analyzer
+            .analyze_content(python_code, &Language::Python)
+            .await
+            .unwrap();
+
         // The line `from collections import defaultdict, Counter` should count as 1 import
         // with 2 items, not 2 separate imports
         assert_eq!(stats.imports.total_imports, 5);
-        
+
         // Standard library modules should not be in external_dependencies
         assert!(!stats.imports.external_dependencies.contains("os"));
         assert!(!stats.imports.external_dependencies.contains("sys"));
         assert!(!stats.imports.external_dependencies.contains("collections"));
-        
+
         // Third party packages should be in external_dependencies
-        assert!(stats.imports.external_dependencies.contains("third_party.package"));
-        
+        assert!(stats
+            .imports
+            .external_dependencies
+            .contains("third_party.package"));
+
         assert_eq!(stats.imports.relative_imports, 1);
         assert!(stats.imports.absolute_imports > 0);
     }
@@ -1029,8 +1099,11 @@ def example():
 <!-- TODO: Add more examples -->
         "#;
 
-        let stats = analyzer.analyze_content(markdown_content, &Language::Markdown).await.unwrap();
-        
+        let stats = analyzer
+            .analyze_content(markdown_content, &Language::Markdown)
+            .await
+            .unwrap();
+
         assert_eq!(stats.documentation.headings.len(), 2);
         assert_eq!(stats.documentation.headings[0].level, 1);
         assert_eq!(stats.documentation.headings[0].text, "Main Title");
@@ -1054,8 +1127,11 @@ function example() {
 // Final comment
         "#;
 
-        let stats = analyzer.analyze_content(code_content, &Language::JavaScript).await.unwrap();
-        
+        let stats = analyzer
+            .analyze_content(code_content, &Language::JavaScript)
+            .await
+            .unwrap();
+
         assert!(stats.text_stats.line_count > 0);
         assert!(stats.text_stats.comment_line_count >= 3);
         assert!(stats.text_stats.code_line_count > 0);
@@ -1086,8 +1162,11 @@ class ExampleClass:
         pass
         "#;
 
-        let stats = analyzer.analyze_content(code_content, &Language::Python).await.unwrap();
-        
+        let stats = analyzer
+            .analyze_content(code_content, &Language::Python)
+            .await
+            .unwrap();
+
         assert!(stats.complexity.function_count >= 2);
         assert!(stats.complexity.class_count >= 1);
         assert!(stats.complexity.cyclomatic_complexity > 0);
@@ -1113,11 +1192,22 @@ pub struct MyStruct {
 const CONSTANT_VALUE: i32 = 42;
         "#;
 
-        let stats = analyzer.analyze_content(rust_code, &Language::Rust).await.unwrap();
-        
+        let stats = analyzer
+            .analyze_content(rust_code, &Language::Rust)
+            .await
+            .unwrap();
+
         assert_eq!(stats.structure.functions.len(), 2);
-        assert!(stats.structure.functions.iter().any(|f| f.name == "public_function"));
-        assert!(stats.structure.functions.iter().any(|f| f.name == "private_function"));
+        assert!(stats
+            .structure
+            .functions
+            .iter()
+            .any(|f| f.name == "public_function"));
+        assert!(stats
+            .structure
+            .functions
+            .iter()
+            .any(|f| f.name == "private_function"));
         assert_eq!(stats.structure.constants.len(), 1);
         assert_eq!(stats.structure.constants[0].name, "CONSTANT_VALUE");
     }
@@ -1126,7 +1216,7 @@ const CONSTANT_VALUE: i32 = 42;
     async fn test_file_analysis() {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.py");
-        
+
         let content = r#"
 """
 This is a module docstring.
@@ -1146,12 +1236,12 @@ class Person:
     def speak(self):
         return self.greet()
         "#;
-        
+
         fs::write(&test_file, content).unwrap();
 
         let analyzer = ContentAnalyzer::new();
         let stats = analyzer.analyze_file(&test_file).await.unwrap();
-        
+
         assert!(stats.imports.total_imports >= 2);
         assert!(stats.structure.functions.len() >= 2);
         assert!(stats.structure.classes.len() >= 1);
@@ -1162,29 +1252,50 @@ class Person:
     #[test]
     fn test_import_type_classification() {
         let analyzer = ContentAnalyzer::new();
-        
+
         assert_eq!(analyzer.classify_import_type("os"), ImportType::Standard);
-        assert_eq!(analyzer.classify_import_type("./local"), ImportType::Relative);
-        assert_eq!(analyzer.classify_import_type("../parent"), ImportType::Relative);
-        assert_eq!(analyzer.classify_import_type("third_party.package"), ImportType::External);
+        assert_eq!(
+            analyzer.classify_import_type("./local"),
+            ImportType::Relative
+        );
+        assert_eq!(
+            analyzer.classify_import_type("../parent"),
+            ImportType::Relative
+        );
+        assert_eq!(
+            analyzer.classify_import_type("third_party.package"),
+            ImportType::External
+        );
     }
 
     #[test]
     fn test_link_classification() {
         let analyzer = ContentAnalyzer::new();
-        
-        assert_eq!(analyzer.classify_link("https://example.com"), LinkType::External);
+
+        assert_eq!(
+            analyzer.classify_link("https://example.com"),
+            LinkType::External
+        );
         assert_eq!(analyzer.classify_link("#anchor"), LinkType::Anchor);
-        assert_eq!(analyzer.classify_link("./relative/path"), LinkType::Relative);
+        assert_eq!(
+            analyzer.classify_link("./relative/path"),
+            LinkType::Relative
+        );
         assert_eq!(analyzer.classify_link("internal-link"), LinkType::Internal);
     }
 
     #[test]
     fn test_anchor_generation() {
         let analyzer = ContentAnalyzer::new();
-        
+
         assert_eq!(analyzer.generate_anchor("Main Title"), "main-title");
-        assert_eq!(analyzer.generate_anchor("Complex Title With Symbols!"), "complex-title-with-symbols");
-        assert_eq!(analyzer.generate_anchor("Numbers 123 and More"), "numbers-123-and-more");
+        assert_eq!(
+            analyzer.generate_anchor("Complex Title With Symbols!"),
+            "complex-title-with-symbols"
+        );
+        assert_eq!(
+            analyzer.generate_anchor("Numbers 123 and More"),
+            "numbers-123-and-more"
+        );
     }
 }

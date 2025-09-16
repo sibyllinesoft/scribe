@@ -16,8 +16,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Command::new("scribe-web")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Nathan Rice <nathan@sibylline.dev>")
-        .about("Scribe Web Service - Interactive repository analysis with automatic browser opening")
-        .long_about("
+        .about(
+            "Scribe Web Service - Interactive repository analysis with automatic browser opening",
+        )
+        .long_about(
+            "
 Scribe Web Service provides a modern web interface for repository analysis and bundle generation.
 Unlike the old static HTML approach, this creates a real HTTP server with:
 
@@ -29,7 +32,8 @@ Unlike the old static HTML approach, this creates a real HTTP server with:
 
 The web service automatically opens your browser and provides a much better user experience
 than the previous static file approach.
-        ")
+        ",
+        )
         .arg(
             Arg::new("repo")
                 .help("Repository path to analyze")
@@ -49,7 +53,7 @@ than the previous static file approach.
             Arg::new("host")
                 .long("host")
                 .help("Host to bind to")
-                .value_name("HOST")  
+                .value_name("HOST")
                 .default_value("127.0.0.1"),
         )
         .arg(
@@ -129,7 +133,10 @@ than the previous static file approach.
     }
 
     if !repo_path.is_dir() {
-        error!("Repository path is not a directory: {}", repo_path.display());
+        error!(
+            "Repository path is not a directory: {}",
+            repo_path.display()
+        );
         std::process::exit(1);
     }
 
@@ -151,12 +158,15 @@ than the previous static file approach.
     info!("Token budget: {}", config.token_budget);
     info!("Auto-exclude tests: {}", config.auto_exclude_tests);
     info!("Max file size: {} MB", config.max_file_size / 1024 / 1024);
-    
+
     if config.auto_open_browser {
         info!("Browser will open automatically when ready");
     } else {
         info!("Browser auto-opening disabled");
-        info!("Navigate to http://{}:{} when ready", config.host, config.port);
+        info!(
+            "Navigate to http://{}:{} when ready",
+            config.host, config.port
+        );
     }
 
     // Create and start web service

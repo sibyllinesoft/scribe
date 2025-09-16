@@ -6,12 +6,12 @@
 //! - Progressive degradation preserves critical functionality
 //! - Language-specific semantic chunking and signature extraction using tree-sitter AST parsing
 
-use serde::{Serialize, Deserialize};
+use crate::ast_parser::{AstChunk as AstParserChunk, AstLanguage, AstParser, AstSignature};
+use scribe_core::{Result, ScribeError};
+use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
-use scribe_core::{Result, ScribeError};
-use crate::ast_parser::{AstParser, AstLanguage, AstChunk as AstParserChunk, AstSignature};
 
 /// Content fidelity levels for demotion system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +72,8 @@ impl CodeChunker {
         let ext = file_path.split('.').last().unwrap_or("");
         let language = AstLanguage::from_extension(ext);
 
-        self.language_cache.insert(file_path.to_string(), language.clone());
+        self.language_cache
+            .insert(file_path.to_string(), language.clone());
         language
     }
 
@@ -84,15 +85,21 @@ impl CodeChunker {
 
         // Use AST parser to get semantic chunks
         // Create a temporary file path with the correct extension
-        let temp_path = format!("temp.{}", match language {
-            AstLanguage::Python => "py",
-            AstLanguage::JavaScript => "js", 
-            AstLanguage::TypeScript => "ts",
-            AstLanguage::Go => "go",
-            AstLanguage::Rust => "rs",
-        });
-        let ast_chunks = self.ast_parser.borrow_mut().parse_chunks(content, &temp_path)?;
-        
+        let temp_path = format!(
+            "temp.{}",
+            match language {
+                AstLanguage::Python => "py",
+                AstLanguage::JavaScript => "js",
+                AstLanguage::TypeScript => "ts",
+                AstLanguage::Go => "go",
+                AstLanguage::Rust => "rs",
+            }
+        );
+        let ast_chunks = self
+            .ast_parser
+            .borrow_mut()
+            .parse_chunks(content, &temp_path)?;
+
         let mut chunks = Vec::new();
         for ast_chunk in ast_chunks {
             let chunk = ChunkInfo {
@@ -119,7 +126,7 @@ impl CodeChunker {
             let start_line = i * chunk_size + 1;
             let end_line = start_line + chunk_lines.len() - 1;
             let content = chunk_lines.join("\n");
-            
+
             let chunk = ChunkInfo {
                 start_line,
                 end_line,
@@ -138,7 +145,11 @@ impl CodeChunker {
     pub fn select_chunks_by_budget(&self, chunks: &[ChunkInfo], token_budget: usize) -> Vec<usize> {
         // Sort chunks by importance score (descending)
         let mut indexed_chunks: Vec<(usize, &ChunkInfo)> = chunks.iter().enumerate().collect();
-        indexed_chunks.sort_by(|a, b| b.1.importance_score.partial_cmp(&a.1.importance_score).unwrap());
+        indexed_chunks.sort_by(|a, b| {
+            b.1.importance_score
+                .partial_cmp(&a.1.importance_score)
+                .unwrap()
+        });
 
         let mut selected_indices = Vec::new();
         let mut used_tokens = 0;
@@ -158,7 +169,9 @@ impl CodeChunker {
 
 impl Default for CodeChunker {
     fn default() -> Self {
-        let ast_parser = Rc::new(RefCell::new(AstParser::new().expect("Failed to create AstParser")));
+        let ast_parser = Rc::new(RefCell::new(
+            AstParser::new().expect("Failed to create AstParser"),
+        ));
         Self::new(ast_parser)
     }
 }
@@ -170,15 +183,11 @@ pub struct SignatureExtractor {
 
 impl SignatureExtractor {
     pub fn new(ast_parser: Rc<RefCell<AstParser>>) -> Self {
-        Self {
-            ast_parser,
-        }
+        Self { ast_parser }
     }
 
     pub fn extract_signatures(&mut self, content: &str, file_path: &str) -> Result<Vec<String>> {
-        let language = AstLanguage::from_extension(
-            file_path.split('.').last().unwrap_or("")
-        );
+        let language = AstLanguage::from_extension(file_path.split('.').last().unwrap_or(""));
 
         let language = match language {
             Some(lang) => lang,
@@ -186,19 +195,26 @@ impl SignatureExtractor {
         };
 
         // Use AST parser to extract signatures
-        // Create a temporary file path with the correct extension  
-        let temp_path = format!("temp.{}", match language {
-            AstLanguage::Python => "py",
-            AstLanguage::JavaScript => "js", 
-            AstLanguage::TypeScript => "ts",
-            AstLanguage::Go => "go",
-            AstLanguage::Rust => "rs",
-        });
-        let signatures = self.ast_parser.borrow_mut().extract_signatures(content, &temp_path)?;
-        
-        Ok(signatures.into_iter().map(|sig| {
-            format!("{}:{} // {}", sig.name, sig.signature_type, sig.signature)
-        }).collect())
+        // Create a temporary file path with the correct extension
+        let temp_path = format!(
+            "temp.{}",
+            match language {
+                AstLanguage::Python => "py",
+                AstLanguage::JavaScript => "js",
+                AstLanguage::TypeScript => "ts",
+                AstLanguage::Go => "go",
+                AstLanguage::Rust => "rs",
+            }
+        );
+        let signatures = self
+            .ast_parser
+            .borrow_mut()
+            .extract_signatures(content, &temp_path)?;
+
+        Ok(signatures
+            .into_iter()
+            .map(|sig| format!("{}:{} // {}", sig.name, sig.signature_type, sig.signature))
+            .collect())
     }
 
     fn extract_generic_signatures(&self, content: &str) -> String {
@@ -213,9 +229,13 @@ impl SignatureExtractor {
             }
 
             // Look for function-like patterns (very basic heuristic)
-            if trimmed.contains("(") && trimmed.contains(")") && 
-               (trimmed.contains("def ") || trimmed.contains("function ") || 
-                trimmed.contains("fn ") || trimmed.contains("func ")) {
+            if trimmed.contains("(")
+                && trimmed.contains(")")
+                && (trimmed.contains("def ")
+                    || trimmed.contains("function ")
+                    || trimmed.contains("fn ")
+                    || trimmed.contains("func "))
+            {
                 signatures.push(trimmed.to_string());
             }
         }
@@ -226,7 +246,9 @@ impl SignatureExtractor {
 
 impl Default for SignatureExtractor {
     fn default() -> Self {
-        let ast_parser = Rc::new(RefCell::new(AstParser::new().expect("Failed to create AstParser")));
+        let ast_parser = Rc::new(RefCell::new(
+            AstParser::new().expect("Failed to create AstParser"),
+        ));
         Self::new(ast_parser)
     }
 }
@@ -256,19 +278,17 @@ impl DemotionEngine {
         let original_tokens = content.len() / 4; // Rough estimate
 
         match target_mode {
-            FidelityMode::Full => {
-                Ok(DemotionResult {
-                    original_path: file_path.to_string(),
-                    original_tokens,
-                    demoted_tokens: original_tokens,
-                    fidelity_mode: FidelityMode::Full,
-                    content: content.to_string(),
-                    chunks_kept: 1,
-                    chunks_total: 1,
-                    compression_ratio: 1.0,
-                    quality_score: 1.0,
-                })
-            }
+            FidelityMode::Full => Ok(DemotionResult {
+                original_path: file_path.to_string(),
+                original_tokens,
+                demoted_tokens: original_tokens,
+                fidelity_mode: FidelityMode::Full,
+                content: content.to_string(),
+                chunks_kept: 1,
+                chunks_total: 1,
+                compression_ratio: 1.0,
+                quality_score: 1.0,
+            }),
             FidelityMode::Chunk => {
                 self.demote_to_chunks(content, file_path, token_budget, original_tokens)
             }
@@ -304,26 +324,35 @@ impl DemotionEngine {
         let demoted_content = if selected_chunks.is_empty() {
             // Fallback: create basic structure summary if no chunks extracted
             let lines: Vec<&str> = content.lines().collect();
-            lines.iter()
+            lines
+                .iter()
                 .filter(|line| !line.trim().is_empty())
-                .take(10)  // Take more lines for chunks than signatures
+                .take(10) // Take more lines for chunks than signatures
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {
             selected_chunks.join("\n\n// ... [content omitted] ...\n\n")
         };
-        
+
         let demoted_tokens = if demoted_content.is_empty() {
             if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("CHUNK DEMOTION BUG: Empty demoted content for {}", file_path);
+                eprintln!(
+                    "CHUNK DEMOTION BUG: Empty demoted content for {}",
+                    file_path
+                );
             }
             1 // Minimum tokens for empty content
         } else {
             let word_count = demoted_content.split_whitespace().count();
             if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("CHUNK DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens", 
-                         file_path, demoted_content.len(), word_count, std::cmp::max(1, word_count));
+                eprintln!(
+                    "CHUNK DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens",
+                    file_path,
+                    demoted_content.len(),
+                    word_count,
+                    std::cmp::max(1, word_count)
+                );
             }
             std::cmp::max(1, word_count)
         };
@@ -332,7 +361,8 @@ impl DemotionEngine {
             selected_indices
                 .iter()
                 .map(|&i| chunks[i].importance_score)
-                .sum::<f64>() / chunks_total as f64
+                .sum::<f64>()
+                / chunks_total as f64
         } else {
             0.0
         };
@@ -356,30 +386,40 @@ impl DemotionEngine {
         file_path: &str,
         original_tokens: usize,
     ) -> Result<DemotionResult> {
-        let signatures = self.signature_extractor.extract_signatures(content, file_path)?;
-        
+        let signatures = self
+            .signature_extractor
+            .extract_signatures(content, file_path)?;
+
         // If no signatures extracted, fall back to basic fallback
         let demoted_content = if signatures.is_empty() {
             // Create basic fallback signatures for Rust files
             let lines: Vec<&str> = content.lines().collect();
             let mut fallback_signatures = Vec::new();
-            
+
             // Extract key lines (function definitions, struct/type definitions, imports)
             for line in lines.iter() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") ||
-                   trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") ||
-                   trimmed.starts_with("pub enum ") || trimmed.starts_with("enum ") ||
-                   trimmed.starts_with("pub trait ") || trimmed.starts_with("trait ") ||
-                   trimmed.starts_with("impl ") || trimmed.starts_with("use ") ||
-                   trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
+                if trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("fn ")
+                    || trimmed.starts_with("pub struct ")
+                    || trimmed.starts_with("struct ")
+                    || trimmed.starts_with("pub enum ")
+                    || trimmed.starts_with("enum ")
+                    || trimmed.starts_with("pub trait ")
+                    || trimmed.starts_with("trait ")
+                    || trimmed.starts_with("impl ")
+                    || trimmed.starts_with("use ")
+                    || trimmed.starts_with("mod ")
+                    || trimmed.starts_with("pub mod ")
+                {
                     fallback_signatures.push(trimmed.to_string());
                 }
             }
-            
+
             if fallback_signatures.is_empty() {
                 // Last resort: take first few non-empty lines
-                lines.iter()
+                lines
+                    .iter()
                     .filter(|line| !line.trim().is_empty())
                     .take(5)
                     .map(|s| s.to_string())
@@ -391,7 +431,7 @@ impl DemotionEngine {
         } else {
             signatures.join("\n")
         };
-        
+
         // Better token estimation based on actual content
         let demoted_tokens = if demoted_content.is_empty() {
             if std::env::var("SCRIBE_DEBUG").is_ok() {
@@ -401,8 +441,13 @@ impl DemotionEngine {
         } else {
             let word_count = demoted_content.split_whitespace().count();
             if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens", 
-                         file_path, demoted_content.len(), word_count, std::cmp::max(1, word_count));
+                eprintln!(
+                    "DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens",
+                    file_path,
+                    demoted_content.len(),
+                    word_count,
+                    std::cmp::max(1, word_count)
+                );
             }
             std::cmp::max(1, word_count)
         };
@@ -435,10 +480,19 @@ mod tests {
     fn test_language_detection() {
         let ast_parser = Rc::new(RefCell::new(AstParser::new().unwrap()));
         let mut chunker = CodeChunker::new(ast_parser);
-        
-        assert_eq!(chunker.detect_language("test.py"), Some(AstLanguage::Python));
-        assert_eq!(chunker.detect_language("test.js"), Some(AstLanguage::JavaScript));
-        assert_eq!(chunker.detect_language("test.ts"), Some(AstLanguage::TypeScript));
+
+        assert_eq!(
+            chunker.detect_language("test.py"),
+            Some(AstLanguage::Python)
+        );
+        assert_eq!(
+            chunker.detect_language("test.js"),
+            Some(AstLanguage::JavaScript)
+        );
+        assert_eq!(
+            chunker.detect_language("test.ts"),
+            Some(AstLanguage::TypeScript)
+        );
         assert_eq!(chunker.detect_language("test.go"), Some(AstLanguage::Go));
         assert_eq!(chunker.detect_language("test.rs"), Some(AstLanguage::Rust));
         assert_eq!(chunker.detect_language("test.txt"), None);
@@ -447,7 +501,7 @@ mod tests {
     #[test]
     fn test_fidelity_modes() {
         let engine = DemotionEngine::new().unwrap();
-        
+
         // Test that all fidelity modes are correctly represented
         assert_eq!(FidelityMode::Full as u8, 0);
         assert_ne!(FidelityMode::Chunk, FidelityMode::Signature);
@@ -457,7 +511,7 @@ mod tests {
     fn test_chunk_budget_selection() {
         let ast_parser = Rc::new(RefCell::new(AstParser::new().unwrap()));
         let chunker = CodeChunker::new(ast_parser);
-        
+
         let chunks = vec![
             ChunkInfo {
                 start_line: 1,

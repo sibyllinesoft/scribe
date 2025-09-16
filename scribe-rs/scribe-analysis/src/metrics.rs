@@ -1,5 +1,5 @@
 //! # Code Metrics Calculation
-//! 
+//!
 //! Placeholder module for various code quality metrics.
 
 #[derive(Debug, Clone, Default)]

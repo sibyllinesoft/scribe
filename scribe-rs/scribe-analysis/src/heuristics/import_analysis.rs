@@ -11,11 +11,11 @@
 //! The centrality scores help identify important files that are heavily depended upon.
 //! Uses tree-sitter AST parsing instead of regex patterns for accurate import extraction.
 
+use super::ScanResult;
+use crate::ast_import_parser::{ImportLanguage, SimpleAstParser, SimpleImport};
+use scribe_core::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use scribe_core::Result;
-use super::ScanResult;
-use crate::ast_import_parser::{SimpleAstParser, ImportLanguage, SimpleImport};
 
 /// Dependency graph for centrality calculation
 #[derive(Debug, Clone)]
@@ -42,50 +42,51 @@ struct ImportKeyMap {
 }
 
 impl ImportKeyMap {
-    fn new<T>(files: &[T]) -> Self 
-    where T: ScanResult 
+    fn new<T>(files: &[T]) -> Self
+    where
+        T: ScanResult,
     {
         let mut exact = HashMap::with_capacity(files.len());
         let mut suffix = HashMap::with_capacity(files.len() * 2);
-        
+
         for (i, file) in files.iter().enumerate() {
             let path = file.path();
-            
+
             // Add exact normalized keys
             for key in Self::normalized_keys(path) {
                 exact.insert(key, i);
             }
-            
-            // Add suffix keys  
+
+            // Add suffix keys
             for key in Self::suffix_keys(path) {
                 suffix.insert(key, i);
             }
         }
-        
+
         Self { exact, suffix }
     }
-    
+
     fn resolve_import(&self, normalized_import: &str) -> Option<usize> {
         // Try exact match first
         if let Some(&idx) = self.exact.get(normalized_import) {
             return Some(idx);
         }
-        
+
         // Try suffix match
         self.suffix.get(normalized_import).copied()
     }
-    
+
     fn normalized_keys(path: &str) -> Vec<String> {
         let mut keys = Vec::new();
-        
+
         // Add the path as-is
         keys.push(path.to_string());
-        
+
         // Add without leading ./
         if path.starts_with("./") {
             keys.push(path[2..].to_string());
         }
-        
+
         // Add path with common extensions removed
         if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
             if let Some(parent) = Path::new(path).parent().and_then(|p| p.to_str()) {
@@ -96,23 +97,23 @@ impl ImportKeyMap {
                 }
             }
         }
-        
+
         keys
     }
-    
+
     fn suffix_keys(path: &str) -> Vec<String> {
         let mut keys = Vec::new();
-        
+
         // Add filename without extension
         if let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str()) {
             keys.push(stem.to_string());
         }
-        
+
         // Add directory/filename patterns
         if let Some(filename) = Path::new(path).file_name().and_then(|s| s.to_str()) {
             keys.push(filename.to_string());
         }
-        
+
         keys
     }
 }
@@ -125,7 +126,6 @@ pub struct ImportGraphBuilder {
     /// AST parser for extracting imports
     ast_parser: SimpleAstParser,
 }
-
 
 /// Centrality calculator implementing PageRank algorithm
 #[derive(Debug)]
@@ -152,22 +152,22 @@ impl ImportGraphBuilder {
             ast_parser: SimpleAstParser::new()?,
         })
     }
-    
+
     /// Build import graph from scan results (OPTIMIZED: O(1) lookups instead of O(F×I))
-    pub fn build_graph<T>(&mut self, files: &[T]) -> Result<ImportGraph> 
-    where 
+    pub fn build_graph<T>(&mut self, files: &[T]) -> Result<ImportGraph>
+    where
         T: ScanResult,
     {
         let mut graph = ImportGraph::new();
-        
+
         // Add all files as nodes
         for file in files {
             graph.add_node(file.path().to_string());
         }
-        
+
         // Build keymap for O(1) import resolution (MAJOR PERFORMANCE FIX!)
         let keymap = ImportKeyMap::new(files);
-        
+
         // Build edges based on import relationships
         for (file_idx, file) in files.iter().enumerate() {
             if let Some(imports) = file.imports() {
@@ -179,48 +179,51 @@ impl ImportGraphBuilder {
                 }
             }
         }
-        
+
         Ok(graph)
     }
-    
+
     /// Find which file an import statement refers to
     fn find_matching_file<T>(&mut self, import_path: &str, files: &[T]) -> Option<usize>
-    where 
+    where
         T: ScanResult,
     {
         let normalized_import = self.normalize_import_path(import_path);
-        
+
         for (idx, file) in files.iter().enumerate() {
             if import_matches_file(&normalized_import, file.path()) {
                 return Some(idx);
             }
         }
-        
+
         None
     }
-    
+
     /// Normalize import path for matching
     fn normalize_import_path(&mut self, import_path: &str) -> String {
         // Check cache first
         if let Some(cached) = self.normalization_cache.get(import_path) {
             return cached.clone();
         }
-        
+
         let normalized = self.perform_normalization(import_path);
-        self.normalization_cache.insert(import_path.to_string(), normalized.clone());
+        self.normalization_cache
+            .insert(import_path.to_string(), normalized.clone());
         normalized
     }
-    
+
     /// Perform actual import path normalization
     fn perform_normalization(&self, import_path: &str) -> String {
         let mut normalized = import_path.to_string();
-        
+
         // Remove quotes and whitespace
-        normalized = normalized.trim_matches(|c| c == '"' || c == '\'' || c == ' ').to_string();
-        
+        normalized = normalized
+            .trim_matches(|c| c == '"' || c == '\'' || c == ' ')
+            .to_string();
+
         // Normalize path separators
         normalized = normalized.replace('\\', "/");
-        
+
         // Remove file extensions for language-agnostic matching
         if let Some(dot_pos) = normalized.rfind('.') {
             // Keep extension only for specific cases
@@ -235,28 +238,28 @@ impl ImportGraphBuilder {
                 }
             }
         }
-        
+
         // Handle relative imports
         if normalized.starts_with("./") || normalized.starts_with("../") {
             // Keep relative structure but normalize
             normalized = self.normalize_relative_path(&normalized);
         }
-        
+
         // Convert module-style imports to file paths
         normalized = normalized.replace("::", "/").replace('.', "/");
-        
+
         // Handle common import aliases
         normalized = self.resolve_import_aliases(&normalized);
-        
+
         normalized
     }
-    
+
     /// Normalize relative path imports
     fn normalize_relative_path(&self, path: &str) -> String {
         // Simple path normalization - in practice, this would be more sophisticated
         let components: Vec<&str> = path.split('/').collect();
         let mut normalized = Vec::new();
-        
+
         for component in components {
             match component {
                 "" | "." => continue,
@@ -266,10 +269,10 @@ impl ImportGraphBuilder {
                 _ => normalized.push(component),
             }
         }
-        
+
         normalized.join("/")
     }
-    
+
     /// Resolve common import aliases and patterns
     fn resolve_import_aliases(&self, import_path: &str) -> String {
         // Handle common aliases
@@ -284,31 +287,31 @@ impl ImportGraphBuilder {
             }
             _ => {}
         }
-        
+
         let mut resolved = import_path.to_string();
-        
+
         // Common alias patterns
         if resolved.starts_with("@/") {
             resolved = resolved.replacen("@/", "src/", 1);
         }
-        
+
         if resolved.starts_with("~") {
             resolved = resolved.replacen("~", "src", 1);
         }
-        
+
         resolved
     }
-    
+
     /// Detect language from file extension for AST parsing
     fn detect_language_from_path(&self, file_path: &str) -> Option<ImportLanguage> {
         let extension = Path::new(file_path)
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("");
-        
+
         ImportLanguage::from_extension(extension)
     }
-    
+
     /// Extract imports from file content using AST parsing
     pub fn extract_imports(&self, content: &str, file_path: &str) -> Vec<String> {
         // Detect language from file path
@@ -316,14 +319,13 @@ impl ImportGraphBuilder {
             Some(lang) => lang,
             None => return Vec::new(),
         };
-        
+
         // Use AST parser to extract imports
         match self.ast_parser.extract_imports(content, language) {
-            Ok(simple_imports) => {
-                simple_imports.into_iter()
-                    .map(|import| import.module)
-                    .collect()
-            }
+            Ok(simple_imports) => simple_imports
+                .into_iter()
+                .map(|import| import.module)
+                .collect(),
             Err(_) => {
                 // Fall back to empty list if parsing fails
                 Vec::new()
@@ -343,25 +345,25 @@ impl ImportGraph {
             pagerank_scores: None,
         }
     }
-    
+
     /// Add a node to the graph
     pub fn add_node(&mut self, path: String) -> usize {
         if let Some(&existing_idx) = self.path_to_index.get(&path) {
             return existing_idx;
         }
-        
+
         let index = self.nodes.len();
         self.nodes.push(path.clone());
         self.path_to_index.insert(path, index);
         self.dependencies.push(Vec::new());
         self.dependents.push(Vec::new());
-        
+
         // Invalidate cached PageRank scores
         self.pagerank_scores = None;
-        
+
         index
     }
-    
+
     /// Add an edge from source to target (source depends on target)
     pub fn add_edge(&mut self, source: usize, target: usize) {
         if source < self.dependencies.len() && target < self.dependents.len() && source != target {
@@ -369,13 +371,13 @@ impl ImportGraph {
             if !self.dependencies[source].contains(&target) {
                 self.dependencies[source].push(target);
                 self.dependents[target].push(source);
-                
+
                 // Invalidate cached PageRank scores
                 self.pagerank_scores = None;
             }
         }
     }
-    
+
     /// Get node degrees (in-degree, out-degree)
     pub fn get_node_degrees(&self, path: &str) -> Option<(usize, usize)> {
         let index = *self.path_to_index.get(path)?;
@@ -383,7 +385,7 @@ impl ImportGraph {
         let out_degree = self.dependencies[index].len();
         Some((in_degree, out_degree))
     }
-    
+
     /// Get PageRank scores for all nodes
     pub fn get_pagerank_scores(&mut self) -> Result<&[f64]> {
         if self.pagerank_scores.is_none() {
@@ -391,46 +393,46 @@ impl ImportGraph {
             let scores = calculator.calculate_pagerank(self)?;
             self.pagerank_scores = Some(scores);
         }
-        
+
         Ok(self.pagerank_scores.as_ref().unwrap())
     }
-    
+
     /// Get PageRank score for a specific file
     pub fn get_pagerank_score(&mut self, path: &str) -> Result<f64> {
         let index = *self.path_to_index.get(path).unwrap_or(&0);
         let scores = self.get_pagerank_scores()?;
         Ok(*scores.get(index).unwrap_or(&0.0))
     }
-    
+
     /// Get graph statistics
     pub fn stats(&self) -> GraphStats {
         let node_count = self.nodes.len();
         let edge_count: usize = self.dependencies.iter().map(|deps| deps.len()).sum();
-        
+
         let in_degrees: Vec<usize> = self.dependents.iter().map(|deps| deps.len()).collect();
         let out_degrees: Vec<usize> = self.dependencies.iter().map(|deps| deps.len()).collect();
-        
+
         let avg_in_degree = if node_count > 0 {
             in_degrees.iter().sum::<usize>() as f64 / node_count as f64
         } else {
             0.0
         };
-        
+
         let avg_out_degree = if node_count > 0 {
             out_degrees.iter().sum::<usize>() as f64 / node_count as f64
         } else {
             0.0
         };
-        
+
         let max_in_degree = in_degrees.iter().max().cloned().unwrap_or(0);
         let max_out_degree = out_degrees.iter().max().cloned().unwrap_or(0);
-        
+
         let density = if node_count > 1 {
             edge_count as f64 / (node_count * (node_count - 1)) as f64
         } else {
             0.0
         };
-        
+
         GraphStats {
             node_count,
             edge_count,
@@ -458,7 +460,7 @@ impl CentralityCalculator {
             tolerance: 1e-6,
         }
     }
-    
+
     /// Create with custom parameters
     pub fn with_params(damping_factor: f64, max_iterations: usize, tolerance: f64) -> Self {
         Self {
@@ -467,23 +469,23 @@ impl CentralityCalculator {
             tolerance,
         }
     }
-    
+
     /// Calculate PageRank scores for the graph
     pub fn calculate_pagerank(&self, graph: &ImportGraph) -> Result<Vec<f64>> {
         let n = graph.nodes.len();
         if n == 0 {
             return Ok(Vec::new());
         }
-        
+
         // Initialize scores uniformly
         let mut scores = vec![1.0 / n as f64; n];
         let mut new_scores = vec![0.0; n];
-        
+
         for _iteration in 0..self.max_iterations {
             // Calculate new scores
             for (i, new_score) in new_scores.iter_mut().enumerate() {
                 let mut rank_sum = 0.0;
-                
+
                 // Sum contributions from nodes pointing to this one
                 for &source in &graph.dependents[i] {
                     let out_degree = graph.dependencies[source].len();
@@ -491,11 +493,12 @@ impl CentralityCalculator {
                         rank_sum += scores[source] / out_degree as f64;
                     }
                 }
-                
+
                 // Apply PageRank formula
-                *new_score = (1.0 - self.damping_factor) / n as f64 + self.damping_factor * rank_sum;
+                *new_score =
+                    (1.0 - self.damping_factor) / n as f64 + self.damping_factor * rank_sum;
             }
-            
+
             // Check for convergence
             let mut max_diff = 0.0;
             for i in 0..n {
@@ -504,15 +507,15 @@ impl CentralityCalculator {
                     max_diff = diff;
                 }
             }
-            
+
             // Swap score vectors
             std::mem::swap(&mut scores, &mut new_scores);
-            
+
             if max_diff < self.tolerance {
                 break;
             }
         }
-        
+
         Ok(scores)
     }
 }
@@ -540,37 +543,39 @@ pub fn import_matches_file(import_path: &str, file_path: &str) -> bool {
     // Normalize both paths for comparison
     let normalized_import = normalize_for_matching(import_path);
     let normalized_file = normalize_for_matching(file_path);
-    
+
     // Direct match
     if normalized_import == normalized_file {
         return true;
     }
-    
+
     // Check if import is a substring of file path (for module imports)
     if normalized_file.contains(&normalized_import) {
         return true;
     }
-    
+
     // Check if file path ends with import (common for relative imports)
     if normalized_file.ends_with(&normalized_import) {
         return true;
     }
-    
+
     // Check module-style imports (convert :: to /)
     let module_import = normalized_import.replace("::", "/");
-    if normalized_file.contains(&module_import) || 
-       module_import.contains(&normalized_file) {
+    if normalized_file.contains(&module_import) || module_import.contains(&normalized_file) {
         return true;
     }
-    
+
     // Special handling for std library and common patterns
     if normalized_import.starts_with("std::") {
         let std_path = normalized_import.replace("::", "/");
-        if normalized_file.replace("_", "").contains(&std_path.replace("_", "")) {
+        if normalized_file
+            .replace("_", "")
+            .contains(&std_path.replace("_", ""))
+        {
             return true;
         }
     }
-    
+
     // Handle index files
     if is_index_file(file_path) {
         let directory = std::path::Path::new(file_path)
@@ -582,31 +587,31 @@ pub fn import_matches_file(import_path: &str, file_path: &str) -> bool {
             return true;
         }
     }
-    
+
     false
 }
 
 /// Normalize paths for matching comparison
 fn normalize_for_matching(path: &str) -> String {
     let mut normalized = path.to_lowercase();
-    
+
     // Remove common prefixes
     if normalized.starts_with("./") {
         normalized = normalized[2..].to_string();
     }
-    
+
     if normalized.starts_with("src/") {
         normalized = normalized[4..].to_string();
     }
-    
+
     // Remove file extensions
     if let Some(dot_pos) = normalized.rfind('.') {
         normalized.truncate(dot_pos);
     }
-    
+
     // Normalize separators
     normalized = normalized.replace('\\', "/");
-    
+
     // Remove trailing slashes
     normalized.trim_end_matches('/').to_string()
 }
@@ -617,15 +622,15 @@ fn is_index_file(file_path: &str) -> bool {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("");
-    
+
     matches!(file_name, "index" | "__init__" | "mod" | "main")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::DocumentAnalysis;
-    
+    use super::*;
+
     // Mock scan result for testing
     #[derive(Debug)]
     struct MockScanResult {
@@ -634,7 +639,7 @@ mod tests {
         depth: usize,
         imports: Option<Vec<String>>,
     }
-    
+
     impl MockScanResult {
         fn new(path: &str, imports: Vec<&str>) -> Self {
             Self {
@@ -645,39 +650,65 @@ mod tests {
             }
         }
     }
-    
+
     impl ScanResult for MockScanResult {
-        fn path(&self) -> &str { &self.path }
-        fn relative_path(&self) -> &str { &self.relative_path }
-        fn depth(&self) -> usize { self.depth }
-        fn is_docs(&self) -> bool { false }
-        fn is_readme(&self) -> bool { false }
-        fn is_test(&self) -> bool { false }
-        fn is_entrypoint(&self) -> bool { false }
-        fn has_examples(&self) -> bool { false }
-        fn priority_boost(&self) -> f64 { 0.0 }
-        fn churn_score(&self) -> f64 { 0.0 }
-        fn centrality_in(&self) -> f64 { 0.0 }
-        fn imports(&self) -> Option<&[String]> { self.imports.as_deref() }
-        fn doc_analysis(&self) -> Option<&DocumentAnalysis> { None }
+        fn path(&self) -> &str {
+            &self.path
+        }
+        fn relative_path(&self) -> &str {
+            &self.relative_path
+        }
+        fn depth(&self) -> usize {
+            self.depth
+        }
+        fn is_docs(&self) -> bool {
+            false
+        }
+        fn is_readme(&self) -> bool {
+            false
+        }
+        fn is_test(&self) -> bool {
+            false
+        }
+        fn is_entrypoint(&self) -> bool {
+            false
+        }
+        fn has_examples(&self) -> bool {
+            false
+        }
+        fn priority_boost(&self) -> f64 {
+            0.0
+        }
+        fn churn_score(&self) -> f64 {
+            0.0
+        }
+        fn centrality_in(&self) -> f64 {
+            0.0
+        }
+        fn imports(&self) -> Option<&[String]> {
+            self.imports.as_deref()
+        }
+        fn doc_analysis(&self) -> Option<&DocumentAnalysis> {
+            None
+        }
     }
-    
+
     #[test]
     fn test_import_graph_creation() {
         let mut graph = ImportGraph::new();
-        
+
         let idx1 = graph.add_node("file1.rs".to_string());
         let idx2 = graph.add_node("file2.rs".to_string());
-        
+
         assert_eq!(idx1, 0);
         assert_eq!(idx2, 1);
         assert_eq!(graph.nodes.len(), 2);
-        
+
         graph.add_edge(idx1, idx2);
         assert_eq!(graph.dependencies[idx1].len(), 1);
         assert_eq!(graph.dependents[idx2].len(), 1);
     }
-    
+
     #[test]
     fn test_graph_builder() {
         let files = vec![
@@ -685,139 +716,145 @@ mod tests {
             MockScanResult::new("src/lib.rs", vec!["src/utils.rs"]),
             MockScanResult::new("src/utils.rs", vec![]),
         ];
-        
+
         let mut builder = ImportGraphBuilder::new().unwrap();
         let result = builder.build_graph(&files);
         assert!(result.is_ok());
-        
+
         let graph = result.unwrap();
         assert_eq!(graph.nodes.len(), 3);
-        
+
         let stats = graph.stats();
         assert_eq!(stats.node_count, 3);
         assert!(stats.edge_count > 0);
     }
-    
+
     #[test]
     fn test_import_matching() {
         // Direct matches
         assert!(import_matches_file("src/utils", "src/utils.rs"));
         assert!(import_matches_file("./lib", "src/lib.js"));
-        
+
         // Module-style matches
-        assert!(import_matches_file("std::collections::HashMap", "std/collections/hash_map.rs"));
-        
+        assert!(import_matches_file(
+            "std::collections::HashMap",
+            "std/collections/hash_map.rs"
+        ));
+
         // Index file matches
-        assert!(import_matches_file("src/components", "src/components/index.js"));
-        
+        assert!(import_matches_file(
+            "src/components",
+            "src/components/index.js"
+        ));
+
         // Non-matches
         assert!(!import_matches_file("completely_different", "src/utils.rs"));
     }
-    
+
     #[test]
     fn test_path_normalization() {
         let mut builder = ImportGraphBuilder::new().unwrap();
-        
+
         // Test various import formats
         let normalized1 = builder.normalize_import_path("\"./utils.js\"");
         assert_eq!(normalized1, "utils");
-        
+
         let normalized2 = builder.normalize_import_path("../lib/helper.ts");
         assert!(normalized2.contains("helper"));
-        
+
         let normalized3 = builder.normalize_import_path("@/components/Button");
         assert!(normalized3.contains("src/components/Button"));
     }
-    
+
     #[test]
     fn test_pagerank_calculation() {
         let mut graph = ImportGraph::new();
-        
+
         // Create a simple graph: A -> B -> C, A -> C
         let idx_a = graph.add_node("A".to_string());
         let idx_b = graph.add_node("B".to_string());
         let idx_c = graph.add_node("C".to_string());
-        
+
         graph.add_edge(idx_a, idx_b);
         graph.add_edge(idx_b, idx_c);
         graph.add_edge(idx_a, idx_c);
-        
+
         let scores = graph.get_pagerank_scores();
         assert!(scores.is_ok());
-        
+
         let scores = scores.unwrap();
         assert_eq!(scores.len(), 3);
-        
+
         // C should have the highest score (most depended upon)
         assert!(scores[idx_c] > scores[idx_a]);
         assert!(scores[idx_c] > scores[idx_b]);
     }
-    
+
     #[test]
     fn test_import_extraction() {
         let builder = ImportGraphBuilder::new().unwrap();
-        
+
         // JavaScript content
         let js_content = r#"
             import { Component } from 'react';
             import utils from './utils.js';
             const fs = require('fs');
         "#;
-        
+
         let imports = builder.extract_imports(js_content, "test.js");
         assert!(imports.len() >= 2);
         assert!(imports.contains(&"react".to_string()));
         assert!(imports.contains(&"./utils.js".to_string()));
-        
+
         // Rust content
         let rust_content = r#"
             use std::collections::HashMap;
             use crate::utils::helper;
             mod tests;
         "#;
-        
+
         let imports = builder.extract_imports(rust_content, "test.rs");
         assert!(imports.len() >= 2);
         assert!(imports.contains(&"std::collections::HashMap".to_string()));
         assert!(imports.contains(&"crate::utils::helper".to_string()));
     }
-    
+
     #[test]
     fn test_centrality_calculator() {
         let mut graph = ImportGraph::new();
-        
+
         // Create a star graph with central node
         let center = graph.add_node("center.rs".to_string());
         for i in 1..=5 {
             let node = graph.add_node(format!("node{}.rs", i));
             graph.add_edge(node, center); // All nodes depend on center
         }
-        
+
         let calculator = CentralityCalculator::default();
         let scores = calculator.calculate_pagerank(&graph);
         assert!(scores.is_ok());
-        
+
         let scores = scores.unwrap();
         assert_eq!(scores.len(), 6);
-        
+
         // Center node should have highest PageRank
         assert!(scores[center] > scores[1]); // Higher than any leaf node
     }
-    
+
     #[test]
     fn test_graph_statistics() {
         let mut graph = ImportGraph::new();
-        
+
         for i in 0..5 {
             graph.add_node(format!("file{}.rs", i));
         }
-        
+
         // Add some edges
         graph.add_edge(0, 1);
         graph.add_edge(1, 2);
         graph.add_edge(2, 3);
         graph.add_edge(0, 4);
-        
+
         let stats = graph.stats();
         assert_eq!(stats.node_count, 5);
         assert_eq!(stats.edge_count, 4);

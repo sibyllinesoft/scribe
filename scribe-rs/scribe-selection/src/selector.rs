@@ -1,8 +1,8 @@
 //! Code selector module - stub implementation
 //! This module provides the CodeSelector for intelligent file selection
 
-use scribe_core::Result;
 use scribe_analysis::AnalysisResult;
+use scribe_core::Result;
 use scribe_graph::CodeGraph;
 use serde::{Deserialize, Serialize};
 
@@ -38,10 +38,10 @@ impl CodeSelector {
     }
 
     pub async fn select(
-        &self, 
+        &self,
         _analysis: &AnalysisResult,
         _graph: &CodeGraph,
-        _criteria: &SelectionCriteria
+        _criteria: &SelectionCriteria,
     ) -> Result<SelectionResult> {
         // Stub implementation
         Ok(SelectionResult {

@@ -1,64 +1,48 @@
 //! # Scribe Analysis
-//! 
+//!
 //! Code analysis algorithms and heuristic scoring for the Scribe library.
-//! This crate provides sophisticated file prioritization using multi-dimensional 
+//! This crate provides sophisticated file prioritization using multi-dimensional
 //! heuristic scoring, template detection, and import graph analysis.
 
-pub mod heuristics;
 pub mod ast_import_parser;
 pub mod complexity;
+pub mod heuristics;
 pub mod language_support;
 
 // Legacy modules (kept for compatibility)
-pub mod ast;
-pub mod parser;
 pub mod analyzer;
-pub mod metrics;
-pub mod symbols;
+pub mod ast;
 pub mod dependencies;
+pub mod metrics;
+pub mod parser;
+pub mod symbols;
 
 // Re-export main heuristics types
 pub use heuristics::{
-    HeuristicSystem, 
-    HeuristicScorer, 
-    ScoreComponents, 
-    HeuristicWeights,
-    ScoringFeatures,
-    DocumentAnalysis,
-    TemplateDetector,
-    TemplateEngine,
-    ImportGraphBuilder,
-    ImportGraph,
-    is_template_file,
-    get_template_score_boost,
-    import_matches_file,
+    get_template_score_boost, import_matches_file, is_template_file, DocumentAnalysis,
+    HeuristicScorer, HeuristicSystem, HeuristicWeights, ImportGraph, ImportGraphBuilder,
+    ScoreComponents, ScoringFeatures, TemplateDetector, TemplateEngine,
 };
 
 // Re-export complexity analysis types
 pub use complexity::{
-    ComplexityAnalyzer,
-    ComplexityMetrics as ComplexityAnalysisMetrics,
-    ComplexityConfig,
-    ComplexityThresholds,
-    LanguageSpecificMetrics,
+    ComplexityAnalyzer, ComplexityConfig, ComplexityMetrics as ComplexityAnalysisMetrics,
+    ComplexityThresholds, LanguageSpecificMetrics,
 };
 
 // Re-export language support types
 pub use language_support::{
-    AstLanguage, LanguageTier, LanguageFeatures,
-    FunctionExtractor, FunctionInfo, ClassInfo,
-    DocumentationAnalyzer, DocumentationCoverage,
-    SymbolAnalyzer, SymbolUsage, SymbolType,
-    LanguageMetrics, LanguageSpecificComplexity,
-    LanguageSupport, LanguageAnalysisResult,
-    analyze_file_language,
+    analyze_file_language, AstLanguage, ClassInfo, DocumentationAnalyzer, DocumentationCoverage,
+    FunctionExtractor, FunctionInfo, LanguageAnalysisResult, LanguageFeatures, LanguageMetrics,
+    LanguageSpecificComplexity, LanguageSupport, LanguageTier, SymbolAnalyzer, SymbolType,
+    SymbolUsage,
 };
 
 // Legacy re-exports
+pub use analyzer::{AnalysisResult, CodeAnalyzer};
 pub use ast::{AstNode, AstWalker};
-pub use parser::{Parser, ParseResult};
-pub use analyzer::{CodeAnalyzer, AnalysisResult};
-pub use metrics::{Metrics, ComplexityMetrics as LegacyComplexityMetrics};
+pub use metrics::{ComplexityMetrics as LegacyComplexityMetrics, Metrics};
+pub use parser::{ParseResult, Parser};
 pub use symbols::{Symbol, SymbolTable};
 
 use scribe_core::Result;

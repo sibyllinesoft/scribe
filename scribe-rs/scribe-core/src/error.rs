@@ -1,5 +1,5 @@
 //! Error handling for the Scribe library.
-//! 
+//!
 //! Provides comprehensive error types with proper context and error chaining
 //! for all Scribe operations.
 
@@ -103,10 +103,7 @@ pub enum ScribeError {
 
     /// Invalid input or operation
     #[error("Invalid operation: {message}")]
-    InvalidOperation {
-        message: String,
-        operation: String,
-    },
+    InvalidOperation { message: String, operation: String },
 
     /// Parse errors (AST parsing, tree-sitter failures)
     #[error("Parse error: {message} (file: {file:?})")]
@@ -335,7 +332,10 @@ impl ScribeError {
     }
 
     /// Create a new internal error with location
-    pub fn internal_with_location<S: Into<String>, L: Into<String>>(message: S, location: L) -> Self {
+    pub fn internal_with_location<S: Into<String>, L: Into<String>>(
+        message: S,
+        location: L,
+    ) -> Self {
         Self::Internal {
             message: message.into(),
             location: Some(location.into()),

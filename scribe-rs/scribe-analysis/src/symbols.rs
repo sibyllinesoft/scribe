@@ -1,5 +1,5 @@
 //! # Symbol Table Management
-//! 
+//!
 //! Placeholder module for symbol resolution and scoping.
 
 use std::collections::HashMap;
@@ -30,11 +30,11 @@ impl SymbolTable {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn insert(&mut self, symbol: Symbol) {
         self.symbols.insert(symbol.name.clone(), symbol);
     }
-    
+
     pub fn lookup(&self, name: &str) -> Option<&Symbol> {
         self.symbols.get(name)
     }

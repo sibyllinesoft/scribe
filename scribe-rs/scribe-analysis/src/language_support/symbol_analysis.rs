@@ -3,9 +3,9 @@
 //! Analyzes symbol usage patterns, variable definitions, and cross-references
 //! within source code files.
 
-use serde::{Deserialize, Serialize};
-use scribe_core::Result;
 use super::ast_language::AstLanguage;
+use scribe_core::Result;
+use serde::{Deserialize, Serialize};
 
 /// Type of symbol
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +44,7 @@ impl SymbolAnalyzer {
     pub fn new(language: AstLanguage) -> Result<Self> {
         Ok(Self { language })
     }
-    
+
     /// Analyze symbol usage patterns
     pub fn analyze_symbols(&self, content: &str) -> Result<Vec<SymbolUsage>> {
         // Basic implementation - can be enhanced with proper AST analysis
@@ -55,7 +55,7 @@ impl SymbolAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_symbol_analyzer_creation() {
         let analyzer = SymbolAnalyzer::new(AstLanguage::Python);

@@ -3,36 +3,36 @@
 //! This module provides true streaming file discovery and processing, avoiding
 //! the memory bottleneck of loading all file metadata at once.
 
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-use std::collections::BinaryHeap;
 use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::SystemTime;
 
-use serde::{Deserialize, Serialize};
 use futures::{Stream, StreamExt};
-use tokio::fs;
-use tracing::{debug, warn, info};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tracing::{debug, info, warn};
 
-use crate::error::{ScalingResult, ScalingError};
+use crate::error::{ScalingError, ScalingResult};
 
 /// File metadata for streaming operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileMetadata {
     /// File path
     pub path: PathBuf,
-    
+
     /// File size in bytes
     pub size: u64,
-    
+
     /// Last modified time
     pub modified: SystemTime,
-    
+
     /// Detected programming language
     pub language: String,
-    
+
     /// File type classification
     pub file_type: String,
 }
@@ -42,13 +42,13 @@ pub struct FileMetadata {
 pub struct StreamingConfig {
     /// Whether to enable streaming (vs loading all at once)
     pub enable_streaming: bool,
-    
+
     /// Number of files to process concurrently
     pub concurrency_limit: usize,
-    
+
     /// Memory limit for streaming operations (bytes)
     pub memory_limit: usize,
-    
+
     /// Maximum files to hold in selection heap
     pub selection_heap_size: usize,
 }
@@ -59,7 +59,7 @@ impl Default for StreamingConfig {
             enable_streaming: true,
             concurrency_limit: num_cpus::get() * 2,
             memory_limit: 100 * 1024 * 1024, // 100MB
-            selection_heap_size: 10000, // Maximum files in selection heap
+            selection_heap_size: 10000,      // Maximum files in selection heap
         }
     }
 }
@@ -84,7 +84,8 @@ impl Ord for ScoredFile {
     fn cmp(&self, other: &Self) -> Ordering {
         // For min-heap: higher scores should be "less" so they get removed last
         // We want to keep highest scores, so lower scores should be removed first
-        self.score.partial_cmp(&other.score)
+        self.score
+            .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
             .then_with(|| other.tokens.cmp(&self.tokens)) // Prefer smaller token files when scores equal
     }
@@ -100,14 +101,14 @@ impl StreamingSelector {
     pub fn new(config: StreamingConfig) -> Self {
         Self { config }
     }
-    
+
     /// Create with default configuration
     pub fn with_defaults() -> Self {
         Self::new(StreamingConfig::default())
     }
-    
+
     /// Stream files from directory with intelligent selection
-    /// 
+    ///
     /// This uses O(N log K) complexity instead of O(N log N) where:
     /// - N = total files in repository
     /// - K = target number of files to select
@@ -120,46 +121,59 @@ impl StreamingSelector {
         token_fn: impl Fn(&FileMetadata) -> usize + Send + Sync + 'static,
     ) -> ScalingResult<Vec<ScoredFile>> {
         info!("Starting streaming file selection for: {:?}", repo_path);
-        info!("Target: {} files, Budget: {} tokens", target_count, token_budget);
-        
+        info!(
+            "Target: {} files, Budget: {} tokens",
+            target_count, token_budget
+        );
+
         if !repo_path.exists() {
-            return Err(ScalingError::path("Repository path does not exist", repo_path));
+            return Err(ScalingError::path(
+                "Repository path does not exist",
+                repo_path,
+            ));
         }
-        
+
         if !repo_path.is_dir() {
-            return Err(ScalingError::path("Repository path is not a directory", repo_path));
+            return Err(ScalingError::path(
+                "Repository path is not a directory",
+                repo_path,
+            ));
         }
-        
+
         // Use min-heap to keep only the best K files in memory
         let mut selection_heap: BinaryHeap<Reverse<ScoredFile>> = BinaryHeap::new();
         let mut total_files_seen = 0usize;
         let mut total_tokens_used = 0usize;
-        
+
         // Create file discovery stream
         let file_stream = self.create_file_stream(repo_path).await?;
-        
+
         // Process files in parallel batches
         let mut file_stream = Box::pin(file_stream);
-        
+
         while let Some(file_batch) = file_stream.next().await {
             total_files_seen += file_batch.len();
-            
+
             // Score files in parallel
             let scored_batch: Vec<ScoredFile> = file_batch
                 .into_par_iter()
                 .filter_map(|metadata| {
                     let score = score_fn(&metadata);
                     let tokens = token_fn(&metadata);
-                    
+
                     // Skip files that would exceed budget immediately
                     if tokens > token_budget {
                         return None;
                     }
-                    
-                    Some(ScoredFile { metadata, score, tokens })
+
+                    Some(ScoredFile {
+                        metadata,
+                        score,
+                        tokens,
+                    })
                 })
                 .collect();
-            
+
             // Update selection heap with O(log K) insertions
             for scored_file in scored_batch {
                 if selection_heap.len() < target_count {
@@ -173,14 +187,18 @@ impl StreamingSelector {
                         if let Some(Reverse(removed)) = selection_heap.pop() {
                             total_tokens_used = total_tokens_used.saturating_sub(removed.tokens);
                         }
-                        
+
                         // Add new file if it fits in budget
                         if total_tokens_used + scored_file.tokens <= token_budget {
                             total_tokens_used += scored_file.tokens;
                             selection_heap.push(Reverse(scored_file));
                         } else {
                             // Try to fit by removing files from heap
-                            self.optimize_heap_for_budget(&mut selection_heap, &mut total_tokens_used, token_budget);
+                            self.optimize_heap_for_budget(
+                                &mut selection_heap,
+                                &mut total_tokens_used,
+                                token_budget,
+                            );
                             if total_tokens_used + scored_file.tokens <= token_budget {
                                 total_tokens_used += scored_file.tokens;
                                 selection_heap.push(Reverse(scored_file));
@@ -189,38 +207,49 @@ impl StreamingSelector {
                     }
                 }
             }
-            
+
             // Log progress every 10k files
             if total_files_seen % 10000 == 0 {
-                debug!("Processed {} files, selected {} candidates", total_files_seen, selection_heap.len());
+                debug!(
+                    "Processed {} files, selected {} candidates",
+                    total_files_seen,
+                    selection_heap.len()
+                );
             }
         }
-        
-        info!("Streaming selection complete: {} files processed, {} selected", 
-              total_files_seen, selection_heap.len());
-        info!("Token utilization: {}/{} ({:.1}%)", 
-              total_tokens_used, token_budget, 
-              (total_tokens_used as f64 / token_budget as f64) * 100.0);
-        
+
+        info!(
+            "Streaming selection complete: {} files processed, {} selected",
+            total_files_seen,
+            selection_heap.len()
+        );
+        info!(
+            "Token utilization: {}/{} ({:.1}%)",
+            total_tokens_used,
+            token_budget,
+            (total_tokens_used as f64 / token_budget as f64) * 100.0
+        );
+
         // Convert heap to sorted vec (highest scores first)
-        let mut selected: Vec<ScoredFile> = selection_heap
-            .into_iter()
-            .map(|Reverse(sf)| sf)
-            .collect();
-        
+        let mut selected: Vec<ScoredFile> =
+            selection_heap.into_iter().map(|Reverse(sf)| sf).collect();
+
         // Sort by score descending for final output
         selected.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
-        
+
         Ok(selected)
     }
-    
+
     /// Create async stream of file metadata from directory
-    async fn create_file_stream(&self, repo_path: &Path) -> ScalingResult<impl Stream<Item = Vec<FileMetadata>> + use<'_>> {
+    async fn create_file_stream(
+        &self,
+        repo_path: &Path,
+    ) -> ScalingResult<impl Stream<Item = Vec<FileMetadata>> + use<'_>> {
         let walkdir_iter = walkdir::WalkDir::new(repo_path)
             .follow_links(false)
             .max_depth(20) // Reasonable depth limit
             .into_iter();
-        
+
         // Convert walkdir iterator to async stream
         let concurrency_limit = self.config.concurrency_limit;
         let file_stream = futures::stream::iter(walkdir_iter)
@@ -246,27 +275,26 @@ impl StreamingSelector {
                 }
             })
             .chunks(concurrency_limit); // Batch for parallel processing
-        
+
         Ok(file_stream)
     }
-    
+
     /// Create file metadata from walkdir entry (static version)
     async fn create_file_metadata_static(entry: walkdir::DirEntry) -> ScalingResult<FileMetadata> {
         let path = entry.path().to_path_buf();
-        
+
         let (size, modified) = match entry.metadata() {
             Ok(metadata) => {
                 let size = metadata.len();
-                let modified = metadata.modified()
-                    .unwrap_or_else(|_| SystemTime::now());
+                let modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
                 (size, modified)
             }
             Err(_) => (0, SystemTime::now()),
         };
-        
+
         let language = detect_language(&path);
         let file_type = classify_file_type(&path);
-        
+
         Ok(FileMetadata {
             path,
             size,
@@ -275,13 +303,13 @@ impl StreamingSelector {
             file_type,
         })
     }
-    
+
     /// Optimize heap to fit within token budget by removing lowest-value files
     fn optimize_heap_for_budget(
-        &self, 
-        heap: &mut BinaryHeap<Reverse<ScoredFile>>, 
-        current_tokens: &mut usize, 
-        budget: usize
+        &self,
+        heap: &mut BinaryHeap<Reverse<ScoredFile>>,
+        current_tokens: &mut usize,
+        budget: usize,
     ) {
         while *current_tokens > budget && !heap.is_empty() {
             if let Some(Reverse(removed)) = heap.pop() {
@@ -323,10 +351,14 @@ fn detect_language(path: &Path) -> String {
 /// Fast file type classification
 fn classify_file_type(path: &Path) -> String {
     match path.extension().and_then(|s| s.to_str()) {
-        Some("rs" | "py" | "js" | "ts" | "go" | "java" | "cpp" | "cc" | "cxx" | "c" | "php" | "rb") => "Source".to_string(),
+        Some(
+            "rs" | "py" | "js" | "ts" | "go" | "java" | "cpp" | "cc" | "cxx" | "c" | "php" | "rb",
+        ) => "Source".to_string(),
         Some("h" | "hpp" | "hxx") => "Header".to_string(),
         Some("md" | "txt" | "rst" | "adoc") => "Documentation".to_string(),
-        Some("json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf") => "Configuration".to_string(),
+        Some("json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf") => {
+            "Configuration".to_string()
+        }
         Some("html" | "htm" | "css" | "scss" | "sass" | "less") => "Web".to_string(),
         Some("jsx" | "tsx" | "vue" | "svelte") => "Frontend".to_string(),
         Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "ico") => "Image".to_string(),
@@ -343,10 +375,10 @@ fn classify_file_type(path: &Path) -> String {
 pub struct FileChunk {
     /// Files in this chunk
     pub files: Vec<FileMetadata>,
-    
+
     /// Chunk index
     pub index: usize,
-    
+
     /// Total number of chunks
     pub total_chunks: usize,
 }
@@ -360,17 +392,17 @@ impl FileChunk {
             total_chunks,
         }
     }
-    
+
     /// Get the number of files in this chunk
     pub fn len(&self) -> usize {
         self.files.len()
     }
-    
+
     /// Check if the chunk is empty
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
-    
+
     /// Get total size of all files in this chunk
     pub fn total_size(&self) -> u64 {
         self.files.iter().map(|f| f.size).sum()
@@ -380,8 +412,8 @@ impl FileChunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_streaming_selector_creation() {
@@ -394,16 +426,20 @@ mod tests {
     async fn test_streaming_file_selection() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
-        
+
         // Create test files
         fs::create_dir_all(repo_path.join("src")).unwrap();
         for i in 0..100 {
             let content = format!("// File {}\nfn main() {{ println!(\"Hello {}\"); }}", i, i);
-            fs::write(repo_path.join("src").join(format!("file_{}.rs", i)), content).unwrap();
+            fs::write(
+                repo_path.join("src").join(format!("file_{}.rs", i)),
+                content,
+            )
+            .unwrap();
         }
-        
+
         let selector = StreamingSelector::with_defaults();
-        
+
         // Simple scoring function
         let score_fn = |file: &FileMetadata| {
             if file.path.to_string_lossy().contains("file_1") {
@@ -412,22 +448,22 @@ mod tests {
                 1.0
             }
         };
-        
+
         // Simple token estimation
         let token_fn = |file: &FileMetadata| (file.size / 4) as usize;
-        
+
         let selected = selector
             .select_files_streaming(repo_path, 10, 10000, score_fn, token_fn)
             .await
             .unwrap();
-        
+
         // Should select some files
         assert!(!selected.is_empty());
         assert!(selected.len() <= 10);
-        
+
         // Files should be sorted by score (highest first)
         for i in 1..selected.len() {
-            assert!(selected[i-1].score >= selected[i].score);
+            assert!(selected[i - 1].score >= selected[i].score);
         }
     }
 
@@ -440,20 +476,28 @@ mod tests {
             language: "Rust".to_string(),
             file_type: "Source".to_string(),
         };
-        
+
         let file2 = file1.clone();
-        
-        let scored1 = ScoredFile { metadata: file1, score: 2.0, tokens: 100 };
-        let scored2 = ScoredFile { metadata: file2, score: 1.0, tokens: 50 };
-        
+
+        let scored1 = ScoredFile {
+            metadata: file1,
+            score: 2.0,
+            tokens: 100,
+        };
+        let scored2 = ScoredFile {
+            metadata: file2,
+            score: 1.0,
+            tokens: 50,
+        };
+
         // Higher score should be "greater" in our ordering
         assert!(scored1 > scored2);
-        
+
         // Test in heap
         let mut heap = BinaryHeap::new();
         heap.push(Reverse(scored1.clone()));
         heap.push(Reverse(scored2.clone()));
-        
+
         // Min-heap with Reverse should give us the lowest score first (for removal)
         assert_eq!(heap.pop().unwrap().0.score, 1.0);
         assert_eq!(heap.pop().unwrap().0.score, 2.0);
@@ -470,8 +514,14 @@ mod tests {
     #[test]
     fn test_file_type_classification() {
         assert_eq!(classify_file_type(&PathBuf::from("main.rs")), "Source");
-        assert_eq!(classify_file_type(&PathBuf::from("README.md")), "Documentation");
-        assert_eq!(classify_file_type(&PathBuf::from("config.json")), "Configuration");
+        assert_eq!(
+            classify_file_type(&PathBuf::from("README.md")),
+            "Documentation"
+        );
+        assert_eq!(
+            classify_file_type(&PathBuf::from("config.json")),
+            "Configuration"
+        );
         assert_eq!(classify_file_type(&PathBuf::from("style.css")), "Web");
         assert_eq!(classify_file_type(&PathBuf::from("image.png")), "Image");
     }

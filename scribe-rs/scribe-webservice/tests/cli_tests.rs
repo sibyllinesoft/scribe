@@ -1,5 +1,5 @@
 //! Tests for the CLI binary functionality
-//! 
+//!
 //! These tests verify the command-line interface and argument parsing
 
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ fn test_cli_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    
+
     assert!(stdout.contains("Scribe Web Service"));
     assert!(stdout.contains("repository analysis"));
     assert!(stdout.contains("--port"));
@@ -37,7 +37,7 @@ fn test_cli_version() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    
+
     // Should contain version information
     assert!(stdout.contains(env!("CARGO_PKG_VERSION")));
 }
@@ -53,40 +53,52 @@ fn test_cli_invalid_repo_path() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    
+
     // Debug output to see what we actually get
-    if !stderr.contains("Repository path does not exist") && !stdout.contains("Repository path does not exist") {
+    if !stderr.contains("Repository path does not exist")
+        && !stdout.contains("Repository path does not exist")
+    {
         println!("STDERR: {}", stderr);
         println!("STDOUT: {}", stdout);
     }
-    
+
     // The error might be in stdout or stderr depending on log configuration
-    assert!(stderr.contains("Repository path does not exist") || stdout.contains("Repository path does not exist"));
+    assert!(
+        stderr.contains("Repository path does not exist")
+            || stdout.contains("Repository path does not exist")
+    );
 }
 
 /// Test that the binary accepts valid arguments
 #[test]
 fn test_cli_valid_arguments() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test with various valid arguments - we'll kill it quickly since we just want to test parsing
     let mut child = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--port", "8081",
-            "--host", "0.0.0.0",
-            "--token-budget", "25000",
+            "--port",
+            "8081",
+            "--host",
+            "0.0.0.0",
+            "--token-budget",
+            "25000",
             "--no-browser",
-            "--max-file-size", "2048000",
-            "--no-exclude-tests"
+            "--max-file-size",
+            "2048000",
+            "--no-exclude-tests",
         ])
         .spawn()
         .expect("Failed to start process");
 
     // Give it a moment to start and parse arguments
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     // Kill the process - we just wanted to test argument parsing
     let _ = child.kill();
     let _ = child.wait();
@@ -96,17 +108,21 @@ fn test_cli_valid_arguments() {
 #[test]
 fn test_cli_edge_cases() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test minimum port
     let output = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--port", "0"  // Should be valid (OS will assign random port)
+            "--port",
+            "0", // Should be valid (OS will assign random port)
         ])
-        .env("RUST_LOG", "off")  // Reduce log output
+        .env("RUST_LOG", "off") // Reduce log output
         .spawn();
-    
+
     if let Ok(mut child) = output {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let _ = child.kill();
@@ -118,19 +134,23 @@ fn test_cli_edge_cases() {
 #[test]
 fn test_cli_invalid_port() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let output = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--port", "999999"  // Invalid port number
+            "--port",
+            "999999", // Invalid port number
         ])
         .output()
         .expect("Failed to execute command");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    
+
     assert!(stderr.contains("Invalid port number"));
 }
 
@@ -138,19 +158,23 @@ fn test_cli_invalid_port() {
 #[test]
 fn test_cli_invalid_token_budget() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let output = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--token-budget", "not_a_number"
+            "--token-budget",
+            "not_a_number",
         ])
         .output()
         .expect("Failed to execute command");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    
+
     assert!(stderr.contains("Invalid token budget"));
 }
 
@@ -158,19 +182,23 @@ fn test_cli_invalid_token_budget() {
 #[test]
 fn test_cli_invalid_max_file_size() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let output = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--max-file-size", "invalid"
+            "--max-file-size",
+            "invalid",
         ])
         .output()
         .expect("Failed to execute command");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    
+
     assert!(stderr.contains("Invalid max file size"));
 }
 
@@ -180,11 +208,14 @@ fn test_cli_file_instead_of_directory() {
     let temp_dir = TempDir::new().unwrap();
     let temp_file = temp_dir.path().join("test_file.txt");
     std::fs::write(&temp_file, "test content").unwrap();
-    
+
     let output = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
-            temp_file.to_str().unwrap()
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
+            temp_file.to_str().unwrap(),
         ])
         .output()
         .expect("Failed to execute command");
@@ -192,46 +223,57 @@ fn test_cli_file_instead_of_directory() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    
+
     // Debug output to see what we actually get
-    if !stderr.contains("Repository path is not a directory") && !stdout.contains("Repository path is not a directory") {
+    if !stderr.contains("Repository path is not a directory")
+        && !stdout.contains("Repository path is not a directory")
+    {
         println!("STDERR: {}", stderr);
         println!("STDOUT: {}", stdout);
     }
-    
+
     // The error might be in stdout or stderr depending on log configuration
-    assert!(stderr.contains("Repository path is not a directory") || stdout.contains("Repository path is not a directory"));
+    assert!(
+        stderr.contains("Repository path is not a directory")
+            || stdout.contains("Repository path is not a directory")
+    );
 }
 
 /// Test all boolean flags
 #[test]
 fn test_cli_boolean_flags() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test --no-browser flag
     let mut child = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--no-browser"
+            "--no-browser",
         ])
         .spawn();
-    
+
     if let Ok(mut proc) = child {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let _ = proc.kill();
         let _ = proc.wait();
     }
-    
+
     // Test --no-exclude-tests flag
     let mut child = Command::new("cargo")
         .args(&[
-            "run", "--bin", "scribe-web", "--",
+            "run",
+            "--bin",
+            "scribe-web",
+            "--",
             temp_dir.path().to_str().unwrap(),
-            "--no-exclude-tests"
+            "--no-exclude-tests",
         ])
         .spawn();
-    
+
     if let Ok(mut proc) = child {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let _ = proc.kill();

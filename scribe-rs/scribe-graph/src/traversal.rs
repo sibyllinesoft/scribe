@@ -1,5 +1,5 @@
 //! # Legacy Graph Traversal (Stub Implementation)
-//! 
+//!
 //! This module provides stub implementations for backward compatibility.
 //! New code should use the PageRank centrality system directly.
 

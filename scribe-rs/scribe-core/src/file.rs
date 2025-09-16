@@ -3,9 +3,9 @@
 //! Provides comprehensive file metadata structures, language detection,
 //! and file classification utilities for the Scribe analysis pipeline.
 
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, ScribeError};
 
@@ -14,14 +14,10 @@ pub const BINARY_EXTENSIONS: &[&str] = &[
     // Images
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico", ".tiff",
     // Documents
-    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
-    // Archives
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    // Media
-    ".mp3", ".mp4", ".mov", ".avi", ".mkv", ".wav", ".ogg", ".flac",
-    // Fonts
-    ".ttf", ".otf", ".eot", ".woff", ".woff2",
-    // Executables and libraries
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", // Archives
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", // Media
+    ".mp3", ".mp4", ".mov", ".avi", ".mkv", ".wav", ".ogg", ".flac", // Fonts
+    ".ttf", ".otf", ".eot", ".woff", ".woff2", // Executables and libraries
     ".so", ".dll", ".dylib", ".class", ".jar", ".exe", ".bin", ".app",
 ];
 
@@ -102,7 +98,7 @@ pub enum Language {
     Cpp,
     Go,
     Zig,
-    
+
     // Web languages
     JavaScript,
     TypeScript,
@@ -110,7 +106,7 @@ pub enum Language {
     CSS,
     SCSS,
     SASS,
-    
+
     // Backend languages
     Python,
     Java,
@@ -119,7 +115,7 @@ pub enum Language {
     Scala,
     Ruby,
     PHP,
-    
+
     // Functional languages
     Haskell,
     OCaml,
@@ -127,32 +123,32 @@ pub enum Language {
     Erlang,
     Elixir,
     Clojure,
-    
+
     // Configuration and markup
     JSON,
     YAML,
     TOML,
     XML,
     Markdown,
-    
+
     // Database
     SQL,
-    
+
     // Shell and scripts
     Bash,
     PowerShell,
     Batch,
-    
+
     // Data science
     R,
     Julia,
     Matlab,
-    
+
     // Mobile
     Swift,
     ObjectiveC,
     Dart,
-    
+
     // Other
     Unknown,
 }
@@ -324,43 +320,43 @@ pub enum ConfigurationFormat {
 pub struct FileInfo {
     /// Absolute path to the file on disk
     pub path: PathBuf,
-    
+
     /// Path relative to repository root (forward slash separated)
     pub relative_path: String,
-    
+
     /// File size in bytes
     pub size: u64,
-    
+
     /// File modification time
     pub modified: Option<SystemTime>,
-    
+
     /// Analysis decision (include/exclude)
     pub decision: RenderDecision,
-    
+
     /// Detected file type
     pub file_type: FileType,
-    
+
     /// Detected programming language
     pub language: Language,
-    
+
     /// File content (loaded on demand)
     pub content: Option<String>,
-    
+
     /// Estimated token count for LLM processing
     pub token_estimate: Option<usize>,
-    
+
     /// Line count (if text file)
     pub line_count: Option<usize>,
-    
+
     /// Character count (if text file)
     pub char_count: Option<usize>,
-    
+
     /// Whether the file is likely binary
     pub is_binary: bool,
-    
+
     /// Git status information (if available)
     pub git_status: Option<GitStatus>,
-    
+
     /// PageRank centrality score (0.0-1.0, higher means more important)
     pub centrality_score: Option<f64>,
 }
@@ -401,12 +397,9 @@ impl FileInfo {
 
         let size = metadata.len();
         let modified = metadata.modified().ok();
-        
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
-        
+
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+
         let language = Language::from_extension(extension);
         let is_binary = Self::detect_binary_by_extension(extension);
         let file_type = Self::classify_file_type(&relative_path, &language, extension);
@@ -435,11 +428,9 @@ impl FileInfo {
             return Ok(());
         }
 
-        let content = std::fs::read_to_string(&self.path)
-            .map_err(|e| ScribeError::analysis(
-                format!("Failed to read file content: {}", e), 
-                &self.path
-            ))?;
+        let content = std::fs::read_to_string(&self.path).map_err(|e| {
+            ScribeError::analysis(format!("Failed to read file content: {}", e), &self.path)
+        })?;
 
         // Compute statistics
         let line_count = content.lines().count();
@@ -455,12 +446,12 @@ impl FileInfo {
     }
 
     /// Estimate token count for LLM processing using tiktoken
-    /// 
+    ///
     /// This method uses the shared global TokenCounter instance for optimal performance.
     /// If tiktoken fails, it falls back to the legacy character-based estimation.
     pub fn estimate_tokens(content: &str) -> usize {
-        use crate::tokenization::{TokenCounter, utils};
-        
+        use crate::tokenization::{utils, TokenCounter};
+
         // Use the shared global instance for optimal performance
         match TokenCounter::global().count_tokens(content) {
             Ok(tokens) => tokens,
@@ -472,12 +463,12 @@ impl FileInfo {
     }
 
     /// Estimate token count for LLM processing with file context
-    /// 
+    ///
     /// This method uses the file path to apply language-specific multipliers
     /// for more accurate token estimation.
     pub fn estimate_tokens_with_path(content: &str, file_path: &std::path::Path) -> usize {
         use crate::tokenization::TokenCounter;
-        
+
         // Use the shared global instance for optimal performance
         match TokenCounter::global().estimate_file_tokens(content, file_path) {
             Ok(tokens) => tokens,
@@ -493,11 +484,11 @@ impl FileInfo {
     /// Classify file type based on path and language
     pub fn classify_file_type(path: &str, language: &Language, extension: &str) -> FileType {
         let path_lower = path.to_lowercase();
-        
+
         // Test files
         if path_lower.contains("test") || path_lower.contains("spec") {
-            return FileType::Test { 
-                language: language.clone() 
+            return FileType::Test {
+                language: language.clone(),
             };
         }
 
@@ -533,17 +524,18 @@ impl FileInfo {
         }
 
         // Generated files (common patterns)
-        if path_lower.contains("generated") || 
-           path_lower.contains("build") ||
-           path_lower.contains("dist") ||
-           path_lower.contains("target") {
+        if path_lower.contains("generated")
+            || path_lower.contains("build")
+            || path_lower.contains("dist")
+            || path_lower.contains("target")
+        {
             return FileType::Generated;
         }
 
         // Source code
         if language.is_programming() {
-            return FileType::Source { 
-                language: language.clone() 
+            return FileType::Source {
+                language: language.clone(),
             };
         }
 
@@ -631,13 +623,13 @@ mod tests {
             FileInfo::classify_file_type("src/lib.rs", &rust_lang, "rs"),
             FileType::Source { .. }
         ));
-        
+
         assert!(matches!(
             FileInfo::classify_file_type("scribe-rs/src/lib.rs", &rust_lang, "rs"),
             FileType::Source { .. }
         ));
 
-        // Test Python source files  
+        // Test Python source files
         assert!(matches!(
             FileInfo::classify_file_type("script.py", &py_lang, "py"),
             FileType::Source { .. }
@@ -652,36 +644,36 @@ mod tests {
     #[test]
     fn test_integration_file_classification() {
         // Test the full pipeline: extension -> language -> file_type
-        
+
         // Test Rust files
         let rust_lang = Language::from_extension("rs");
         assert_eq!(rust_lang, Language::Rust);
         assert!(rust_lang.is_programming());
-        
+
         let rust_file_type = FileInfo::classify_file_type("src/lib.rs", &rust_lang, "rs");
         assert!(matches!(rust_file_type, FileType::Source { .. }));
-        
-        // Test Python files  
+
+        // Test Python files
         let py_lang = Language::from_extension("py");
         assert_eq!(py_lang, Language::Python);
         assert!(py_lang.is_programming());
-        
+
         let py_file_type = FileInfo::classify_file_type("script.py", &py_lang, "py");
         assert!(matches!(py_file_type, FileType::Source { .. }));
-        
+
         // Test that Unknown language doesn't become Source
         let unknown_lang = Language::from_extension("xyz");
         assert_eq!(unknown_lang, Language::Unknown);
         assert!(!unknown_lang.is_programming());
-        
+
         let unknown_file_type = FileInfo::classify_file_type("file.xyz", &unknown_lang, "xyz");
         assert!(matches!(unknown_file_type, FileType::Unknown));
-        
+
         // Test Markdown files
         let md_lang = Language::from_extension("md");
         assert_eq!(md_lang, Language::Markdown);
         assert!(!md_lang.is_programming());
-        
+
         let md_file_type = FileInfo::classify_file_type("README.md", &md_lang, "md");
         assert!(matches!(md_file_type, FileType::Documentation { .. }));
     }
@@ -709,8 +701,7 @@ mod tests {
         assert!(include.should_include());
         assert_eq!(include.reason_category(), RenderDecisionCategory::Other);
 
-        let exclude = RenderDecision::exclude("binary")
-            .with_context("detected by extension");
+        let exclude = RenderDecision::exclude("binary").with_context("detected by extension");
         assert!(!exclude.should_include());
         assert_eq!(exclude.reason_category(), RenderDecisionCategory::Binary);
         assert!(exclude.context.is_some());

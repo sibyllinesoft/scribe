@@ -83,10 +83,7 @@ pub enum ScalingError {
 
     /// Timeout errors
     #[error("Timeout error: {message} (timeout: {timeout_ms}ms)")]
-    Timeout {
-        message: String,
-        timeout_ms: u64,
-    },
+    Timeout { message: String, timeout_ms: u64 },
 
     /// Resource limit exceeded
     #[error("Resource limit exceeded: {message} (limit: {limit}, actual: {actual})")]

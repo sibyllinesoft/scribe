@@ -1,11 +1,11 @@
 //! # Legacy Graph Builder (Stub Implementation)
-//! 
+//!
 //! This module provides stub implementations for backward compatibility.
 //! New code should use the PageRank centrality system directly.
 
-use scribe_core::Result;
-use scribe_analysis::AnalysisResult;
 use crate::graph::DependencyGraph;
+use scribe_analysis::AnalysisResult;
+use scribe_core::Result;
 
 /// Legacy graph builder maintained for backward compatibility
 #[derive(Debug)]
@@ -15,7 +15,7 @@ impl GraphBuilder {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub async fn build_from_analysis(&self, _analysis: &AnalysisResult) -> Result<DependencyGraph> {
         // Stub implementation - return empty graph
         Ok(DependencyGraph::new())

@@ -1,14 +1,14 @@
-use scribe_scaling::{ScalingEngine, ScalingConfig};
-use scribe_scaling::signatures::SignatureLevel;
 use scribe_scaling::profiling::RepositoryType;
-use std::path::PathBuf;
+use scribe_scaling::signatures::SignatureLevel;
+use scribe_scaling::{ScalingConfig, ScalingEngine};
 use std::fs;
+use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio_test;
 
 fn create_rust_project(temp_dir: &TempDir, file_count: usize) -> PathBuf {
     let project_path = temp_dir.path().to_path_buf();
-    
+
     // Create Cargo.toml
     let cargo_toml = r#"[package]
 name = "test-project"
@@ -20,18 +20,18 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 "#;
     fs::write(project_path.join("Cargo.toml"), cargo_toml).unwrap();
-    
+
     // Create src directory
     let src_dir = project_path.join("src");
     fs::create_dir_all(&src_dir).unwrap();
-    
+
     // Create main.rs
     let main_content = r#"fn main() {
     println!("Hello, world!");
 }
 "#;
     fs::write(src_dir.join("main.rs"), main_content).unwrap();
-    
+
     // Create lib.rs
     let lib_content = r#"pub mod utils;
 pub mod models;
@@ -40,7 +40,7 @@ pub use utils::*;
 pub use models::*;
 "#;
     fs::write(src_dir.join("lib.rs"), lib_content).unwrap();
-    
+
     // Create additional modules
     for i in 0..file_count {
         let module_content = format!(
@@ -83,10 +83,10 @@ mod tests {{
 "#,
             i, i, i, i
         );
-        
+
         fs::write(src_dir.join(format!("module_{}.rs", i)), module_content).unwrap();
     }
-    
+
     // Create utils.rs
     let utils_content = r#"use std::collections::HashMap;
 
@@ -108,7 +108,7 @@ where
 }
 "#;
     fs::write(src_dir.join("utils.rs"), utils_content).unwrap();
-    
+
     // Create models.rs
     let models_content = r#"use serde::{Serialize, Deserialize};
 
@@ -128,7 +128,7 @@ pub struct Project {
 }
 "#;
     fs::write(src_dir.join("models.rs"), models_content).unwrap();
-    
+
     project_path
 }
 
@@ -136,10 +136,10 @@ pub struct Project {
 async fn test_basic_repository_processing() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 10);
-    
+
     let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
     let result = engine.process_repository(&repo_path).await.unwrap();
-    
+
     assert!(!result.files.is_empty());
     assert!(result.total_files > 0);
     assert!(result.processing_time.as_nanos() > 0);
@@ -149,17 +149,24 @@ async fn test_basic_repository_processing() {
 async fn test_small_repository_performance() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 50);
-    
+
     let config = ScalingConfig::small_repository();
     let mut engine = ScalingEngine::new(config).await.unwrap();
-    
+
     let start = std::time::Instant::now();
     let result = engine.process_repository(&repo_path).await.unwrap();
     let duration = start.elapsed();
-    
+
     // Performance targets for small repositories
-    assert!(duration.as_secs() < 1, "Small repository should process in <1s, took {:?}", duration);
-    assert!(result.memory_peak < 50 * 1024 * 1024, "Memory usage should be <50MB");
+    assert!(
+        duration.as_secs() < 1,
+        "Small repository should process in <1s, took {:?}",
+        duration
+    );
+    assert!(
+        result.memory_peak < 50 * 1024 * 1024,
+        "Memory usage should be <50MB"
+    );
     assert!(!result.files.is_empty());
 }
 
@@ -167,17 +174,24 @@ async fn test_small_repository_performance() {
 async fn test_large_repository_performance() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 500);
-    
+
     let config = ScalingConfig::large_repository();
     let mut engine = ScalingEngine::new(config).await.unwrap();
-    
+
     let start = std::time::Instant::now();
     let result = engine.process_repository(&repo_path).await.unwrap();
     let duration = start.elapsed();
-    
+
     // Performance targets for large repositories (scaled down for test)
-    assert!(duration.as_secs() < 10, "Large repository should process in <10s, took {:?}", duration);
-    assert!(result.memory_peak < 500 * 1024 * 1024, "Memory usage should be <500MB");
+    assert!(
+        duration.as_secs() < 10,
+        "Large repository should process in <10s, took {:?}",
+        duration
+    );
+    assert!(
+        result.memory_peak < 500 * 1024 * 1024,
+        "Memory usage should be <500MB"
+    );
     assert!(!result.files.is_empty());
 }
 
@@ -185,7 +199,7 @@ async fn test_large_repository_performance() {
 async fn test_streaming_vs_batch_loading() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 100);
-    
+
     // Test streaming
     let streaming_config = ScalingConfig {
         streaming: scribe_scaling::streaming::StreamingConfig {
@@ -196,10 +210,13 @@ async fn test_streaming_vs_batch_loading() {
         },
         ..ScalingConfig::default()
     };
-    
+
     let mut streaming_engine = ScalingEngine::new(streaming_config).await.unwrap();
-    let streaming_result = streaming_engine.process_repository(&repo_path).await.unwrap();
-    
+    let streaming_result = streaming_engine
+        .process_repository(&repo_path)
+        .await
+        .unwrap();
+
     // Test batch
     let batch_config = ScalingConfig {
         streaming: scribe_scaling::streaming::StreamingConfig {
@@ -210,13 +227,13 @@ async fn test_streaming_vs_batch_loading() {
         },
         ..ScalingConfig::default()
     };
-    
+
     let mut batch_engine = ScalingEngine::new(batch_config).await.unwrap();
     let batch_result = batch_engine.process_repository(&repo_path).await.unwrap();
-    
+
     // Both should process same number of files
     assert_eq!(streaming_result.total_files, batch_result.total_files);
-    
+
     // Streaming should use less peak memory
     assert!(streaming_result.memory_peak <= batch_result.memory_peak);
 }
@@ -225,7 +242,7 @@ async fn test_streaming_vs_batch_loading() {
 async fn test_caching_effectiveness() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 50);
-    
+
     let config = ScalingConfig {
         caching: scribe_scaling::caching::CacheConfig {
             enable_persistent_cache: true,
@@ -235,19 +252,19 @@ async fn test_caching_effectiveness() {
         },
         ..ScalingConfig::default()
     };
-    
+
     // First run (cold cache)
     let mut engine1 = ScalingEngine::new(config.clone()).await.unwrap();
     let start1 = std::time::Instant::now();
     let _result1 = engine1.process_repository(&repo_path).await.unwrap();
     let duration1 = start1.elapsed();
-    
+
     // Second run (warm cache)
     let mut engine2 = ScalingEngine::new(config).await.unwrap();
     let start2 = std::time::Instant::now();
     let _result2 = engine2.process_repository(&repo_path).await.unwrap();
     let duration2 = start2.elapsed();
-    
+
     // Second run should be faster due to caching (but for small repos, timing can be inconsistent)
     // Just verify both runs completed successfully
     println!("First run: {:?}, Second run: {:?}", duration1, duration2);
@@ -257,7 +274,7 @@ async fn test_caching_effectiveness() {
 async fn test_parallel_processing_scaling() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 100);
-    
+
     // Single threaded
     let single_config = ScalingConfig {
         parallel: scribe_scaling::parallel::ParallelConfig {
@@ -269,7 +286,7 @@ async fn test_parallel_processing_scaling() {
         },
         ..ScalingConfig::default()
     };
-    
+
     // Multi threaded
     let multi_config = ScalingConfig {
         parallel: scribe_scaling::parallel::ParallelConfig {
@@ -281,26 +298,29 @@ async fn test_parallel_processing_scaling() {
         },
         ..ScalingConfig::default()
     };
-    
+
     let mut single_engine = ScalingEngine::new(single_config).await.unwrap();
     let start1 = std::time::Instant::now();
     let _result1 = single_engine.process_repository(&repo_path).await.unwrap();
     let single_duration = start1.elapsed();
-    
+
     let mut multi_engine = ScalingEngine::new(multi_config).await.unwrap();
     let start2 = std::time::Instant::now();
     let _result2 = multi_engine.process_repository(&repo_path).await.unwrap();
     let multi_duration = start2.elapsed();
-    
+
     // Multi-threaded should be faster (though not guaranteed on all systems)
-    println!("Single-threaded: {:?}, Multi-threaded: {:?}", single_duration, multi_duration);
+    println!(
+        "Single-threaded: {:?}, Multi-threaded: {:?}",
+        single_duration, multi_duration
+    );
 }
 
 #[tokio::test]
 async fn test_adaptive_configuration() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 200);
-    
+
     let config = ScalingConfig {
         adaptive: scribe_scaling::adaptive::AdaptiveConfig {
             enable_adaptive_thresholds: true,
@@ -311,13 +331,13 @@ async fn test_adaptive_configuration() {
         },
         ..ScalingConfig::default()
     };
-    
+
     let mut engine = ScalingEngine::new(config).await.unwrap();
     let result = engine.process_repository(&repo_path).await.unwrap();
-    
+
     assert!(!result.files.is_empty());
     assert!(result.total_files > 0);
-    
+
     // Verify adaptive behavior by checking that thresholds were calculated
     assert!(result.cache_hits > 0 || result.cache_misses > 0);
 }
@@ -326,7 +346,7 @@ async fn test_adaptive_configuration() {
 async fn test_signature_extraction_levels() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 20);
-    
+
     for level in [
         SignatureLevel::Minimal,
         SignatureLevel::Structural,
@@ -342,13 +362,13 @@ async fn test_signature_extraction_levels() {
             },
             ..ScalingConfig::default()
         };
-        
+
         let mut engine = ScalingEngine::new(config).await.unwrap();
         let result = engine.process_repository(&repo_path).await.unwrap();
-        
+
         assert!(!result.files.is_empty());
         assert!(result.total_files > 0);
-        
+
         // Higher levels should generally take more time (though not strictly guaranteed)
         match level {
             SignatureLevel::Minimal => assert!(result.processing_time.as_millis() >= 0),
@@ -362,12 +382,12 @@ async fn test_signature_extraction_levels() {
 async fn test_repository_profiling() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 30);
-    
+
     let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
     let result = engine.process_repository(&repo_path).await.unwrap();
-    
+
     assert!(!result.files.is_empty());
-    
+
     // The profiler should detect this as a Rust project
     // (Implementation detail: would need to expose repository type from result)
 }
@@ -376,7 +396,7 @@ async fn test_repository_profiling() {
 async fn test_memory_management() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 100);
-    
+
     let config = ScalingConfig {
         memory: scribe_scaling::memory::MemoryConfig {
             pool_size: 50,
@@ -385,13 +405,13 @@ async fn test_memory_management() {
         },
         ..ScalingConfig::default()
     };
-    
+
     let mut engine = ScalingEngine::new(config).await.unwrap();
     let result = engine.process_repository(&repo_path).await.unwrap();
-    
+
     assert!(!result.files.is_empty());
     assert!(result.memory_peak > 0);
-    
+
     // Memory should be managed efficiently
     assert!(result.memory_peak < 100 * 1024 * 1024); // Less than 100MB for test
 }
@@ -400,12 +420,12 @@ async fn test_memory_management() {
 async fn test_benchmark_functionality() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 25);
-    
+
     let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
     let benchmark_result = engine.benchmark(&repo_path, 3).await.unwrap();
-    
+
     assert_eq!(benchmark_result.len(), 3);
-    
+
     for result in benchmark_result {
         assert!(result.duration.as_nanos() > 0);
         assert!(result.memory_usage > 0);
@@ -418,10 +438,10 @@ async fn test_benchmark_functionality() {
 async fn test_error_handling() {
     let temp_dir = TempDir::new().unwrap();
     let non_existent_path = temp_dir.path().join("non_existent");
-    
+
     let mut engine = ScalingEngine::new(ScalingConfig::default()).await.unwrap();
     let result = engine.process_repository(&non_existent_path).await;
-    
+
     // Should handle error gracefully
     assert!(result.is_err());
 }
@@ -430,7 +450,7 @@ async fn test_error_handling() {
 async fn test_budget_pressure_response() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 100);
-    
+
     // High pressure config (low budget)
     let high_pressure_config = ScalingConfig {
         signatures: scribe_scaling::signatures::SignatureConfig {
@@ -445,10 +465,10 @@ async fn test_budget_pressure_response() {
         },
         ..ScalingConfig::default()
     };
-    
+
     let mut engine = ScalingEngine::new(high_pressure_config).await.unwrap();
     let result = engine.process_repository(&repo_path).await.unwrap();
-    
+
     assert!(!result.files.is_empty());
     // Under budget pressure, processing should still succeed but may be less detailed
     assert!(result.total_files > 0);
@@ -458,20 +478,32 @@ async fn test_budget_pressure_response() {
 async fn test_configuration_presets() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = create_rust_project(&temp_dir, 50);
-    
+
     // Test all configuration presets
     let configs = [
         ("small", ScalingConfig::small_repository()),
         ("default", ScalingConfig::default()),
         ("large", ScalingConfig::large_repository()),
     ];
-    
+
     for (name, config) in configs {
         let mut engine = ScalingEngine::new(config).await.unwrap();
         let result = engine.process_repository(&repo_path).await.unwrap();
-        
-        assert!(!result.files.is_empty(), "Config '{}' should process files", name);
-        assert!(result.total_files > 0, "Config '{}' should count files", name);
-        assert!(result.processing_time.as_nanos() > 0, "Config '{}' should take time", name);
+
+        assert!(
+            !result.files.is_empty(),
+            "Config '{}' should process files",
+            name
+        );
+        assert!(
+            result.total_files > 0,
+            "Config '{}' should count files",
+            name
+        );
+        assert!(
+            result.processing_time.as_nanos() > 0,
+            "Config '{}' should take time",
+            name
+        );
     }
 }

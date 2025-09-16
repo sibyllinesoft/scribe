@@ -5,7 +5,7 @@
 pub struct ScoreComponents {
     /// Final weighted score
     pub final_score: f64,
-    
+
     /// Individual component scores
     pub doc_score: f64,
     pub readme_score: f64,
@@ -16,14 +16,14 @@ pub struct ScoreComponents {
     pub centrality_score: f64,
     pub entrypoint_score: f64,
     pub examples_score: f64,
-    
+
     /// Boost components
     pub priority_boost: f64,
     pub template_boost: f64,
-    
+
     /// Raw component scores before normalization
     pub raw_scores: RawScoreComponents,
-    
+
     /// Applied weights
     pub weights: HeuristicWeights,
 }
@@ -75,7 +75,7 @@ pub struct HeuristicWeights {
     pub centrality_weight: f64, // V2 feature
     pub entrypoint_weight: f64,
     pub examples_weight: f64,
-    
+
     /// Feature flags for advanced capabilities
     pub features: ScoringFeatures,
 }
@@ -150,7 +150,7 @@ impl HeuristicWeights {
     pub fn balanced() -> Self {
         Self::default()
     }
-    
+
     /// V2 weights with enhanced features enabled
     pub fn with_v2_features() -> Self {
         Self {
@@ -176,10 +176,15 @@ impl HeuristicWeights {
 
     /// Normalize all weights to sum to 1.0 for balanced scoring
     pub fn normalized(mut self) -> Self {
-        let total_weight = self.doc_weight + self.readme_weight + self.import_weight +
-            self.test_link_weight + self.churn_weight + self.centrality_weight +
-            self.entrypoint_weight + self.examples_weight;
-        
+        let total_weight = self.doc_weight
+            + self.readme_weight
+            + self.import_weight
+            + self.test_link_weight
+            + self.churn_weight
+            + self.centrality_weight
+            + self.entrypoint_weight
+            + self.examples_weight;
+
         if total_weight > 0.0 {
             self.doc_weight /= total_weight;
             self.readme_weight /= total_weight;
@@ -190,7 +195,7 @@ impl HeuristicWeights {
             self.entrypoint_weight /= total_weight;
             self.examples_weight /= total_weight;
         }
-        
+
         self
     }
 }

@@ -1,7 +1,7 @@
 //! Score normalization logic for consistent heuristic scoring
 
-use super::types::{RawScoreComponents, HeuristicWeights};
 use super::super::ScanResult;
+use super::types::{HeuristicWeights, RawScoreComponents};
 
 /// Normalized score components after statistical normalization
 #[derive(Debug, Clone)]
@@ -32,8 +32,8 @@ pub struct NormalizationStats {
 }
 
 /// Build normalization statistics from all files
-pub fn build_normalization_stats<T>(files: &[T]) -> NormalizationStats 
-where 
+pub fn build_normalization_stats<T>(files: &[T]) -> NormalizationStats
+where
     T: ScanResult,
 {
     let mut stats = NormalizationStats {
@@ -47,7 +47,7 @@ where
         max_centrality_raw: 0.0,
         max_examples_count: 0,
     };
-    
+
     for file in files {
         // Documentation stats
         if file.is_docs() {
@@ -56,30 +56,30 @@ where
                 stats.max_doc_raw = stats.max_doc_raw.max(doc_analysis.structure_score());
             }
         }
-        
+
         // README stats
         if file.is_readme() {
             let readme_score = if file.depth() <= 1 { 1.5 } else { 1.0 };
             stats.max_readme_raw = stats.max_readme_raw.max(readme_score);
         }
-        
+
         // Path depth
         stats.max_path_depth = stats.max_path_depth.max(file.depth());
-        
+
         // Test links (use is_test as proxy)
         if file.is_test() {
             stats.max_test_links = stats.max_test_links.max(1);
         }
-        
+
         // Git churn (use churn_score from trait)
         let churn_score = file.churn_score() as usize;
         stats.max_churn_commits = stats.max_churn_commits.max(churn_score);
-        
+
         // Count examples
         let examples_count = count_examples_in_file(file);
         stats.max_examples_count = stats.max_examples_count.max(examples_count);
     }
-    
+
     // Ensure minimums to avoid division by zero
     stats.max_doc_raw = stats.max_doc_raw.max(1.0);
     stats.max_readme_raw = stats.max_readme_raw.max(1.0);
@@ -90,14 +90,14 @@ where
     stats.max_churn_commits = stats.max_churn_commits.max(1);
     stats.max_centrality_raw = stats.max_centrality_raw.max(0.1);
     stats.max_examples_count = stats.max_examples_count.max(1);
-    
+
     stats
 }
 
 /// Normalize raw scores using statistics
 pub fn normalize_scores(
-    raw_scores: &RawScoreComponents, 
-    stats: &NormalizationStats
+    raw_scores: &RawScoreComponents,
+    stats: &NormalizationStats,
 ) -> NormalizedScores {
     NormalizedScores {
         doc_score: raw_scores.doc_raw / stats.max_doc_raw,
@@ -116,7 +116,7 @@ pub fn normalize_scores(
 fn calculate_import_score(raw_scores: &RawScoreComponents, stats: &NormalizationStats) -> f64 {
     let in_score = raw_scores.import_degree_in as f64 / stats.max_import_degree_in as f64;
     let out_score = raw_scores.import_degree_out as f64 / stats.max_import_degree_out as f64;
-    
+
     // Weight incoming imports higher (more important files are imported more)
     0.7 * in_score + 0.3 * out_score
 }
@@ -130,14 +130,18 @@ fn calculate_path_score(raw_scores: &RawScoreComponents, stats: &NormalizationSt
 /// Count examples or example-like content in a file
 fn count_examples_in_file<T: ScanResult>(file: &T) -> usize {
     // Use the built-in method from ScanResult trait
-    if file.has_examples() { 1 } else { 0 }
+    if file.has_examples() {
+        1
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    
+
     // Mock implementation for testing
     struct MockFile {
         path: String,
@@ -146,23 +150,49 @@ mod tests {
         depth: usize,
         content: Option<String>,
     }
-    
+
     impl ScanResult for MockFile {
-        fn path(&self) -> &str { &self.path }
-        fn relative_path(&self) -> &str { &self.path }
-        fn depth(&self) -> usize { self.depth }
-        fn is_docs(&self) -> bool { self.is_docs }
-        fn is_readme(&self) -> bool { self.is_readme }
-        fn is_test(&self) -> bool { false }
-        fn is_entrypoint(&self) -> bool { false }
-        fn has_examples(&self) -> bool { false }
-        fn priority_boost(&self) -> f64 { 0.0 }
-        fn churn_score(&self) -> f64 { 0.0 }
-        fn centrality_in(&self) -> f64 { 0.0 }
-        fn imports(&self) -> Option<&[String]> { None }
-        fn doc_analysis(&self) -> Option<&crate::heuristics::DocumentAnalysis> { None }
+        fn path(&self) -> &str {
+            &self.path
+        }
+        fn relative_path(&self) -> &str {
+            &self.path
+        }
+        fn depth(&self) -> usize {
+            self.depth
+        }
+        fn is_docs(&self) -> bool {
+            self.is_docs
+        }
+        fn is_readme(&self) -> bool {
+            self.is_readme
+        }
+        fn is_test(&self) -> bool {
+            false
+        }
+        fn is_entrypoint(&self) -> bool {
+            false
+        }
+        fn has_examples(&self) -> bool {
+            false
+        }
+        fn priority_boost(&self) -> f64 {
+            0.0
+        }
+        fn churn_score(&self) -> f64 {
+            0.0
+        }
+        fn centrality_in(&self) -> f64 {
+            0.0
+        }
+        fn imports(&self) -> Option<&[String]> {
+            None
+        }
+        fn doc_analysis(&self) -> Option<&crate::heuristics::DocumentAnalysis> {
+            None
+        }
     }
-    
+
     #[test]
     fn test_normalization_stats() {
         let files = vec![
@@ -181,13 +211,13 @@ mod tests {
                 content: None,
             },
         ];
-        
+
         let stats = build_normalization_stats(&files);
         assert!(stats.max_readme_raw > 0.0);
         assert!(stats.max_doc_raw > 0.0);
         assert_eq!(stats.max_path_depth, 2);
     }
-    
+
     #[test]
     fn test_path_score_inversion() {
         let raw_scores = RawScoreComponents {
@@ -202,7 +232,7 @@ mod tests {
             is_entrypoint: false,
             examples_count: 0,
         };
-        
+
         let stats = NormalizationStats {
             max_doc_raw: 1.0,
             max_readme_raw: 1.0,
@@ -214,7 +244,7 @@ mod tests {
             max_centrality_raw: 1.0,
             max_examples_count: 1,
         };
-        
+
         let path_score = calculate_path_score(&raw_scores, &stats);
         // Path depth 3/5 = 0.6, so inverted score should be 1.0 - 0.6 = 0.4
         assert!((path_score - 0.4).abs() < 0.01);

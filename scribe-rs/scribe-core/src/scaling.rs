@@ -1,5 +1,5 @@
 //! # Scaling Optimizations Integration
-//! 
+//!
 //! This module provides integration between scribe-core and the comprehensive scaling
 //! optimizations implemented in scribe-scaling. When the "scaling" feature is enabled,
 //! this module exposes high-level APIs for leveraging advanced optimizations for
@@ -34,7 +34,7 @@
 //!
 //! // Process large repository efficiently
 //! let result = engine.process_repository(Path::new("/path/to/large/repo")).await?;
-//! 
+//!
 //! println!("Processed {} files in {:?}", result.total_files, result.processing_time);
 //! println!("Memory peak: {}MB", result.memory_peak / 1024 / 1024);
 //! # Ok(())
@@ -47,16 +47,13 @@ use std::time::Duration;
 
 // Re-export scaling types for convenience
 pub use scribe_scaling::{
-    ScalingEngine, ProcessingResult, ScalingConfig,
-    StreamingConfig, CacheConfig, ParallelConfig, AdaptiveConfig,
-    SignatureConfig, SignatureLevel,
-    RepositoryType, RepositoryProfile, RepositoryProfiler,
-    ScalingMetrics, BenchmarkResult,
-    MemoryConfig, MemoryStats,
+    AdaptiveConfig, BenchmarkResult, CacheConfig, MemoryConfig, MemoryStats, ParallelConfig,
+    ProcessingResult, RepositoryProfile, RepositoryProfiler, RepositoryType, ScalingConfig,
+    ScalingEngine, ScalingMetrics, SignatureConfig, SignatureLevel, StreamingConfig,
 };
 
 /// High-level scaling-optimized repository processor
-/// 
+///
 /// This provides a simplified interface to the scaling engine with sensible defaults
 /// and integration with scribe-core types.
 pub struct ScalingProcessor {
@@ -67,48 +64,63 @@ impl ScalingProcessor {
     /// Create a new scaling processor with default configuration
     pub async fn new() -> Result<Self> {
         let config = ScalingConfig::default();
-        let engine = ScalingEngine::new(config).await
-            .map_err(|e| crate::ScribeError::scaling(format!("Failed to create scaling engine: {}", e)))?;
-        
+        let engine = ScalingEngine::new(config).await.map_err(|e| {
+            crate::ScribeError::scaling(format!("Failed to create scaling engine: {}", e))
+        })?;
+
         Ok(Self { engine })
     }
-    
+
     /// Create a new scaling processor with custom configuration
     pub async fn with_config(config: ScalingConfig) -> Result<Self> {
-        let engine = ScalingEngine::new(config).await
-            .map_err(|e| crate::ScribeError::scaling(format!("Failed to create scaling engine: {}", e)))?;
-        
+        let engine = ScalingEngine::new(config).await.map_err(|e| {
+            crate::ScribeError::scaling(format!("Failed to create scaling engine: {}", e))
+        })?;
+
         Ok(Self { engine })
     }
-    
+
     /// Create a scaling processor optimized for small repositories
     pub async fn for_small_repository() -> Result<Self> {
         Self::with_config(ScalingConfig::small_repository()).await
     }
-    
+
     /// Create a scaling processor optimized for large repositories
     pub async fn for_large_repository() -> Result<Self> {
         Self::with_config(ScalingConfig::large_repository()).await
     }
-    
+
     /// Process a repository with scaling optimizations
-    pub async fn process_repository<P: AsRef<Path>>(&mut self, path: P) -> Result<ProcessingResult> {
-        self.engine.process_repository(path.as_ref()).await
-            .map_err(|e| crate::ScribeError::scaling(format!("Repository processing failed: {}", e)))
+    pub async fn process_repository<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<ProcessingResult> {
+        self.engine
+            .process_repository(path.as_ref())
+            .await
+            .map_err(|e| {
+                crate::ScribeError::scaling(format!("Repository processing failed: {}", e))
+            })
     }
-    
+
     /// Benchmark repository processing performance
-    pub async fn benchmark<P: AsRef<Path>>(&mut self, path: P, iterations: usize) -> Result<Vec<BenchmarkResult>> {
-        self.engine.benchmark(path.as_ref(), iterations).await
+    pub async fn benchmark<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        iterations: usize,
+    ) -> Result<Vec<BenchmarkResult>> {
+        self.engine
+            .benchmark(path.as_ref(), iterations)
+            .await
             .map_err(|e| crate::ScribeError::scaling(format!("Benchmarking failed: {}", e)))
     }
-    
+
     /// Get current scaling metrics
     pub fn get_metrics(&self) -> ScalingMetrics {
         // This would need to be exposed by the engine
         ScalingMetrics::default()
     }
-    
+
     /// Get memory statistics
     pub fn get_memory_stats(&self) -> MemoryStats {
         // This would need to be exposed by the engine
@@ -166,7 +178,7 @@ impl ConfigPresets {
             positioning_query: None,
         }
     }
-    
+
     /// Configuration optimized for open source libraries
     pub fn open_source_library() -> ScalingConfig {
         ScalingConfig {
@@ -194,7 +206,7 @@ impl ConfigPresets {
             ..ScalingConfig::default()
         }
     }
-    
+
     /// Configuration optimized for enterprise monorepos
     pub fn enterprise_monorepo() -> ScalingConfig {
         ScalingConfig {
@@ -246,49 +258,63 @@ impl ConfigPresets {
 /// Utility functions for scaling optimization analysis
 pub mod utils {
     use super::*;
-    
+
     /// Analyze a repository and recommend optimal scaling configuration
     pub async fn recommend_config<P: AsRef<Path>>(path: P) -> Result<ScalingConfig> {
         use scribe_scaling::profiling::RepositoryProfiler;
-        
+
         let profiler = RepositoryProfiler::new();
-        let profile = profiler.profile_repository(path.as_ref()).await
-            .map_err(|e| crate::ScribeError::scaling(format!("Repository profiling failed: {}", e)))?;
-        
+        let profile = profiler
+            .profile_repository(path.as_ref())
+            .await
+            .map_err(|e| {
+                crate::ScribeError::scaling(format!("Repository profiling failed: {}", e))
+            })?;
+
         let config = match (profile.repository_type, profile.file_count) {
             (RepositoryType::Personal, count) if count < 1000 => ConfigPresets::personal_project(),
             (RepositoryType::Library, _) => ConfigPresets::open_source_library(),
-            (RepositoryType::Enterprise | RepositoryType::Monorepo, _) => ConfigPresets::enterprise_monorepo(),
+            (RepositoryType::Enterprise | RepositoryType::Monorepo, _) => {
+                ConfigPresets::enterprise_monorepo()
+            }
             (_, count) if count > 10000 => ScalingConfig::large_repository(),
             _ => ScalingConfig::default(),
         };
-        
+
         Ok(config)
     }
-    
+
     /// Estimate processing time and memory usage for a repository
     pub async fn estimate_resources<P: AsRef<Path>>(path: P) -> Result<ResourceEstimate> {
         use scribe_scaling::profiling::RepositoryProfiler;
-        
+
         let profiler = RepositoryProfiler::new();
-        let profile = profiler.profile_repository(path.as_ref()).await
-            .map_err(|e| crate::ScribeError::scaling(format!("Repository profiling failed: {}", e)))?;
-        
+        let profile = profiler
+            .profile_repository(path.as_ref())
+            .await
+            .map_err(|e| {
+                crate::ScribeError::scaling(format!("Repository profiling failed: {}", e))
+            })?;
+
         let estimate = ResourceEstimate {
-            estimated_processing_time: estimate_processing_time(profile.file_count, profile.total_size),
+            estimated_processing_time: estimate_processing_time(
+                profile.file_count,
+                profile.total_size,
+            ),
             estimated_memory_usage: estimate_memory_usage(profile.file_count, profile.total_size),
             recommended_config_preset: match profile.repository_type {
                 RepositoryType::Personal => "personal_project",
-                RepositoryType::Library => "open_source_library", 
+                RepositoryType::Library => "open_source_library",
                 RepositoryType::Enterprise | RepositoryType::Monorepo => "enterprise_monorepo",
                 _ => "default",
-            }.to_string(),
+            }
+            .to_string(),
             confidence: calculate_confidence(&profile),
         };
-        
+
         Ok(estimate)
     }
-    
+
     fn estimate_processing_time(file_count: usize, total_size: u64) -> Duration {
         // Rough estimates based on performance targets
         let base_time = match file_count {
@@ -297,36 +323,38 @@ pub mod utils {
             10001..=100000 => Duration::from_secs(8),
             _ => Duration::from_secs(20),
         };
-        
+
         // Adjust for total size (rough heuristic)
         let size_factor = (total_size as f64 / (10 * 1024 * 1024) as f64).max(1.0);
         Duration::from_secs_f64(base_time.as_secs_f64() * size_factor.sqrt())
     }
-    
+
     fn estimate_memory_usage(file_count: usize, total_size: u64) -> usize {
         // Rough estimates based on performance targets
         let base_memory = match file_count {
-            0..=1000 => 25 * 1024 * 1024,      // 25MB
-            1001..=10000 => 100 * 1024 * 1024, // 100MB
+            0..=1000 => 25 * 1024 * 1024,        // 25MB
+            1001..=10000 => 100 * 1024 * 1024,   // 100MB
             10001..=100000 => 500 * 1024 * 1024, // 500MB
-            _ => 1024 * 1024 * 1024,           // 1GB
+            _ => 1024 * 1024 * 1024,             // 1GB
         };
-        
+
         // Adjust for total size
         let size_factor = (total_size as f64 / (50 * 1024 * 1024) as f64).max(0.5);
         (base_memory as f64 * size_factor) as usize
     }
-    
+
     fn calculate_confidence(profile: &RepositoryProfile) -> f64 {
         // Confidence based on how well we can classify the repository
         let type_confidence = match profile.repository_type {
-            RepositoryType::Personal | RepositoryType::Library | 
-            RepositoryType::Enterprise | RepositoryType::Monorepo => 0.9,
+            RepositoryType::Personal
+            | RepositoryType::Library
+            | RepositoryType::Enterprise
+            | RepositoryType::Monorepo => 0.9,
             _ => 0.6,
         };
-        
+
         let size_confidence = if profile.file_count > 10 { 0.9 } else { 0.7 };
-        
+
         (type_confidence + size_confidence) / 2.0
     }
 }
@@ -336,13 +364,13 @@ pub mod utils {
 pub struct ResourceEstimate {
     /// Estimated processing time
     pub estimated_processing_time: Duration,
-    
+
     /// Estimated peak memory usage in bytes
     pub estimated_memory_usage: usize,
-    
+
     /// Recommended configuration preset
     pub recommended_config_preset: String,
-    
+
     /// Confidence in the estimate (0.0 to 1.0)
     pub confidence: f64,
 }
@@ -363,98 +391,102 @@ impl ResourceEstimate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
-    
+    use tempfile::TempDir;
+
     async fn create_test_repo(temp_dir: &TempDir, file_count: usize) -> std::path::PathBuf {
         let repo_path = temp_dir.path().to_path_buf();
         let src_dir = repo_path.join("src");
         fs::create_dir_all(&src_dir).unwrap();
-        
+
         for i in 0..file_count {
             let content = format!("// File {}\npub fn test_{}() {{}}", i, i);
             fs::write(src_dir.join(format!("file_{}.rs", i)), content).unwrap();
         }
-        
-        fs::write(repo_path.join("Cargo.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"").unwrap();
+
+        fs::write(
+            repo_path.join("Cargo.toml"),
+            "[package]\nname = \"test\"\nversion = \"0.1.0\"",
+        )
+        .unwrap();
         repo_path
     }
-    
+
     #[tokio::test]
     async fn test_scaling_processor_creation() {
         let processor = ScalingProcessor::new().await;
         assert!(processor.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_small_repository_processor() {
         let processor = ScalingProcessor::for_small_repository().await;
         assert!(processor.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_large_repository_processor() {
         let processor = ScalingProcessor::for_large_repository().await;
         assert!(processor.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_repository_processing() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = create_test_repo(&temp_dir, 10).await;
-        
+
         let mut processor = ScalingProcessor::new().await.unwrap();
         let result = processor.process_repository(&repo_path).await;
-        
+
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.total_files > 0);
         // Processing time should be non-negative (could be 0 for very fast processing)
         assert!(result.processing_time.as_nanos() >= 0);
     }
-    
+
     #[tokio::test]
     async fn test_config_presets() {
         let personal = ConfigPresets::personal_project();
         assert!(!personal.streaming.enable_streaming);
-        
+
         let library = ConfigPresets::open_source_library();
         assert!(library.streaming.enable_streaming);
         assert!(library.adaptive.enable_adaptive_thresholds);
-        
+
         let enterprise = ConfigPresets::enterprise_monorepo();
         assert!(enterprise.streaming.enable_streaming);
         assert!(enterprise.caching.compression_enabled);
         assert!(enterprise.parallel.enable_work_stealing);
     }
-    
+
     #[tokio::test]
     async fn test_resource_estimation() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = create_test_repo(&temp_dir, 50).await;
-        
+
         let estimate = utils::estimate_resources(&repo_path).await;
         assert!(estimate.is_ok());
-        
+
         let estimate = estimate.unwrap();
         assert!(estimate.estimated_processing_time.as_millis() > 0);
         assert!(estimate.estimated_memory_usage > 0);
         assert!(estimate.confidence > 0.0 && estimate.confidence <= 1.0);
-        
+
         let formatted = estimate.format();
         assert!(formatted.contains("Processing Time"));
         assert!(formatted.contains("Memory"));
         assert!(formatted.contains("Config"));
     }
-    
+
     #[tokio::test]
     async fn test_config_recommendation() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = create_test_repo(&temp_dir, 20).await;
-        
+
         let config = utils::recommend_config(&repo_path).await;
         assert!(config.is_ok());
-        
+
         // Config should be valid
         let _config = config.unwrap();
     }

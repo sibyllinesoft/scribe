@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use anyhow::Result;
-use crate::glob::{GlobMatcher, GlobOptions};
 use crate::gitignore::GitignoreMatcher;
+use crate::glob::{GlobMatcher, GlobOptions};
+use anyhow::Result;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// Combined pattern matching result
 #[derive(Debug, Clone, PartialEq)]
@@ -145,11 +145,11 @@ impl PatternMatcher {
             } else {
                 GitignoreMatcher::case_insensitive()
             };
-            
+
             // Load standard gitignore files from the directory tree
             let gitignore_files = GitignoreMatcher::discover_gitignore_files(base_path.as_ref())?;
             matcher.add_gitignore_files(gitignore_files)?;
-            
+
             // Load custom gitignore files
             for path in &self.options.custom_gitignore_files {
                 if path.exists() {
@@ -183,7 +183,8 @@ impl PatternMatcher {
         let result = self.compute_match(path)?;
 
         // Cache the result
-        if self.cache.len() < 10000 { // Prevent unbounded cache growth
+        if self.cache.len() < 10000 {
+            // Prevent unbounded cache growth
             self.cache.insert(canonical_path, result.clone());
         }
 
@@ -266,16 +267,28 @@ impl PatternMatcher {
 
     /// Check if the matcher has any patterns
     pub fn is_empty(&self) -> bool {
-        self.include_matcher.as_ref().map_or(true, |m| m.is_empty()) &&
-        self.exclude_matcher.as_ref().map_or(true, |m| m.is_empty()) &&
-        self.gitignore_matcher.as_ref().map_or(true, |m| m.patterns().is_empty())
+        self.include_matcher.as_ref().map_or(true, |m| m.is_empty())
+            && self.exclude_matcher.as_ref().map_or(true, |m| m.is_empty())
+            && self
+                .gitignore_matcher
+                .as_ref()
+                .map_or(true, |m| m.patterns().is_empty())
     }
 
     /// Get the number of patterns
     pub fn pattern_count(&self) -> usize {
-        let include_count = self.include_matcher.as_ref().map_or(0, |m| m.pattern_count());
-        let exclude_count = self.exclude_matcher.as_ref().map_or(0, |m| m.pattern_count());
-        let gitignore_count = self.gitignore_matcher.as_ref().map_or(0, |m| m.patterns().len());
+        let include_count = self
+            .include_matcher
+            .as_ref()
+            .map_or(0, |m| m.pattern_count());
+        let exclude_count = self
+            .exclude_matcher
+            .as_ref()
+            .map_or(0, |m| m.pattern_count());
+        let gitignore_count = self
+            .gitignore_matcher
+            .as_ref()
+            .map_or(0, |m| m.patterns().len());
         include_count + exclude_count + gitignore_count
     }
 
@@ -313,7 +326,8 @@ impl PatternMatcherBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.include_patterns.extend(patterns.into_iter().map(|p| p.into()));
+        self.include_patterns
+            .extend(patterns.into_iter().map(|p| p.into()));
         self
     }
 
@@ -329,7 +343,8 @@ impl PatternMatcherBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.exclude_patterns.extend(patterns.into_iter().map(|p| p.into()));
+        self.exclude_patterns
+            .extend(patterns.into_iter().map(|p| p.into()));
         self
     }
 
@@ -344,7 +359,6 @@ impl PatternMatcherBuilder {
         self.options.respect_gitignore = respect;
         self
     }
-
 
     /// Set case sensitivity
     pub fn case_sensitive(mut self, sensitive: bool) -> Self {
@@ -364,7 +378,9 @@ impl PatternMatcherBuilder {
         I: IntoIterator<Item = P>,
         P: Into<PathBuf>,
     {
-        self.options.custom_gitignore_files.extend(files.into_iter().map(|p| p.into()));
+        self.options
+            .custom_gitignore_files
+            .extend(files.into_iter().map(|p| p.into()));
         self
     }
 
@@ -374,7 +390,9 @@ impl PatternMatcherBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.options.override_patterns.extend(patterns.into_iter().map(|p| p.into()));
+        self.options
+            .override_patterns
+            .extend(patterns.into_iter().map(|p| p.into()));
         self
     }
 
@@ -422,16 +440,16 @@ mod tests {
         fs::write(dir.join("test.py"), "# Python file")?;
         fs::write(dir.join("README.md"), "# Documentation")?;
         fs::write(dir.join(".hidden"), "hidden file")?;
-        
+
         // Create subdirectory
         let subdir = dir.join("src");
         fs::create_dir(&subdir)?;
         fs::write(subdir.join("main.rs"), "fn main() {}")?;
         fs::write(subdir.join("lib.rs"), "// Library")?;
-        
+
         // Create .gitignore
         fs::write(dir.join(".gitignore"), "*.tmp\ntarget/\n.DS_Store")?;
-        
+
         // Create ignored files
         fs::write(dir.join("test.tmp"), "temporary file")?;
         fs::write(dir.join(".DS_Store"), "system file")?;
@@ -453,7 +471,7 @@ mod tests {
         // Should match Rust files
         assert!(matcher.should_process("test.rs")?);
         assert!(matcher.should_process("src/main.rs")?);
-        
+
         // Should not match other files
         assert!(!matcher.should_process("test.py")?);
         assert!(!matcher.should_process("README.md")?);
@@ -474,7 +492,7 @@ mod tests {
         // Should ignore files matching gitignore
         assert!(matcher.should_skip("test.tmp")?);
         assert!(matcher.should_skip(".DS_Store")?);
-        
+
         // Should not ignore regular files
         assert!(matcher.should_process("test.rs")?);
         assert!(matcher.should_process("README.md")?);
@@ -488,17 +506,13 @@ mod tests {
         create_test_files(temp_dir.path())?;
 
         // Without include_hidden
-        let mut matcher = PatternMatcherBuilder::new()
-            .include_hidden(false)
-            .build()?;
-        
+        let mut matcher = PatternMatcherBuilder::new().include_hidden(false).build()?;
+
         assert!(matcher.should_skip(".hidden")?);
 
         // With include_hidden
-        let mut matcher = PatternMatcherBuilder::new()
-            .include_hidden(true)
-            .build()?;
-        
+        let mut matcher = PatternMatcherBuilder::new().include_hidden(true).build()?;
+
         assert!(matcher.should_process(".hidden")?);
 
         Ok(())
@@ -519,7 +533,7 @@ mod tests {
         // Gitignore should take priority over include patterns
         fs::write(temp_dir.path().join("ignored.rs"), "// Ignored Rust file")?;
         fs::write(temp_dir.path().join(".gitignore"), "ignored.rs")?;
-        
+
         // Rebuild matcher to pick up new gitignore
         let mut matcher = PatternMatcherBuilder::new()
             .include("*.rs")
@@ -534,9 +548,7 @@ mod tests {
 
     #[test]
     fn test_cache_functionality() -> Result<()> {
-        let mut matcher = PatternMatcherBuilder::new()
-            .include("*.rs")
-            .build()?;
+        let mut matcher = PatternMatcherBuilder::new().include("*.rs").build()?;
 
         // First call should be a cache miss
         let _ = matcher.is_match("test.rs")?;
@@ -563,7 +575,7 @@ mod tests {
     #[test]
     fn test_empty_matcher() -> Result<()> {
         let matcher = PatternMatcherBuilder::new().build()?;
-        
+
         assert!(matcher.is_empty());
         assert_eq!(matcher.pattern_count(), 0);
 
@@ -577,7 +589,7 @@ mod tests {
             .include("*.RS")
             .case_sensitive(true)
             .build()?;
-        
+
         assert!(!matcher.should_process("test.rs")?);
         assert!(matcher.should_process("test.RS")?);
 
@@ -586,7 +598,7 @@ mod tests {
             .include("*.RS")
             .case_sensitive(false)
             .build()?;
-        
+
         assert!(matcher.should_process("test.rs")?);
         assert!(matcher.should_process("test.RS")?);
 

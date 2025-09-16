@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 fn benchmark_language_detection(c: &mut Criterion) {
     let extensions = vec!["rs", "py", "js", "ts", "go", "java", "cpp"];
-    
+
     c.bench_function("language_detection", |b| {
         b.iter(|| {
             for ext in &extensions {
@@ -21,7 +21,7 @@ fn benchmark_path_normalization(c: &mut Criterion) {
         "deeply/nested/directory/structure/file.rs",
         "C:\\Windows\\System32\\file.exe",
     ];
-    
+
     c.bench_function("path_normalization", |b| {
         b.iter(|| {
             for path in &paths {
@@ -37,7 +37,7 @@ fn benchmark_string_truncation(c: &mut Criterion) {
         "this is a medium length string that might need truncation",
         "this is a very long string that definitely needs to be truncated because it exceeds the maximum allowed length for display purposes in most contexts",
     ];
-    
+
     c.bench_function("string_truncation", |b| {
         b.iter(|| {
             for s in &strings {
@@ -56,7 +56,7 @@ fn benchmark_score_computation(c: &mut Criterion) {
     scores.path_score = 0.9;
     scores.test_link_score = 0.2;
     scores.churn_score = 0.7;
-    
+
     c.bench_function("score_computation", |b| {
         b.iter(|| {
             let mut s = scores.clone();
@@ -68,7 +68,7 @@ fn benchmark_score_computation(c: &mut Criterion) {
 
 fn benchmark_config_validation(c: &mut Criterion) {
     let config = Config::default();
-    
+
     c.bench_function("config_validation", |b| {
         b.iter(|| {
             black_box(config.validate().unwrap());
@@ -83,7 +83,7 @@ fn benchmark_binary_detection(c: &mut Criterion) {
         "Some text with null\x00bytes in it",
         "Mostly\x01non\x02printable\x03characters\x04here\x05",
     ];
-    
+
     c.bench_function("binary_detection", |b| {
         b.iter(|| {
             for s in &test_strings {

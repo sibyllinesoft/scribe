@@ -214,47 +214,6 @@ jobs:
             tests/test-results/
           retention-days: 7
 
-  # ================================
-  # PYTHON LEGACY COMPONENTS
-  # ================================
-  python-legacy:
-    name: Python Legacy Components
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
-      - name: Install Python dependencies
-        run: |
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f ci/requirements.txt ]; then pip install -r ci/requirements.txt; fi
-
-      - name: Run Python tests (if any exist)
-        run: |
-          if [ -d "tests" ] && [ -f "pytest.ini" ]; then
-            python -m pytest tests/ -v
-          elif find . -name "*test*.py" -type f | grep -q .; then
-            python -m pytest . -v --ignore=scribe-rs
-          else
-            echo "No Python tests found, skipping"
-          fi
-
-      - name: Run Python scripts validation
-        run: |
-          # Test key Python scripts if they exist
-          if [ -f "scripts/run.py" ]; then
-            python scripts/run.py --help || echo "run.py not executable"
-          fi
-          if [ -d "benchmarks" ]; then
-            python -c "import benchmarks; print('Benchmarks module loads successfully')"
-          fi
 
   # ================================
   # INTEGRATION & SMOKE TESTS
@@ -443,7 +402,7 @@ jobs:
   status:
     name: CI Status Summary
     runs-on: ubuntu-latest
-    needs: [rust-core, e2e-tests, webui-e2e, python-legacy, integration, security]
+    needs: [rust-core, e2e-tests, webui-e2e, integration, security]
     if: always()
 
     steps:
@@ -455,7 +414,6 @@ jobs:
           echo "Rust Core: ${{ needs.rust-core.result }}"
           echo "E2E Tests: ${{ needs.e2e-tests.result }}"
           echo "Web UI Tests: ${{ needs.webui-e2e.result }}"
-          echo "Python Legacy: ${{ needs.python-legacy.result }}"
           echo "Integration: ${{ needs.integration.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "==================================="

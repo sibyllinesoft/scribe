@@ -1,13 +1,13 @@
 //! Two-Pass Selection System for V5 Variant
-//! 
+//!
 //! Implements a sophisticated selection system with speculative first pass
 //! and rule-based coverage gap analysis in the second pass.
 
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
 use scribe_core::{Result, ScribeError};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 /// Configuration for the two-pass selection system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +25,7 @@ pub struct TwoPassConfig {
 impl Default for TwoPassConfig {
     fn default() -> Self {
         Self {
-            speculation_ratio: 0.75, // 75% speculation, 25% rules
+            speculation_ratio: 0.75,    // 75% speculation, 25% rules
             speculation_threshold: 0.5, // Lower threshold for better test coverage
             max_iterations: 3,
             enable_gap_analysis: true,
@@ -163,25 +163,22 @@ impl TwoPassSelector {
         total_budget: usize,
     ) -> Result<TwoPassResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Phase 1: Speculative Selection (75% of budget)
         let speculation_budget = (total_budget as f64 * self.config.speculation_ratio) as usize;
         let speculation_start = std::time::Instant::now();
-        
-        let speculative_files = self.speculative_pass(
-            available_files,
-            dependencies,
-            speculation_budget,
-        )?;
-        
+
+        let speculative_files =
+            self.speculative_pass(available_files, dependencies, speculation_budget)?;
+
         let speculation_time = speculation_start.elapsed().as_millis() as u64;
-        
+
         // Phase 2: Rule-Based Gap Analysis (25% of budget)
         let rule_budget = total_budget - speculation_budget;
         let rule_start = std::time::Instant::now();
-        
+
         let mut selected_files: HashSet<String> = speculative_files.iter().cloned().collect();
-        
+
         let (rule_based_files, coverage_gaps) = self.rule_based_pass(
             &selected_files,
             available_files,
@@ -189,23 +186,24 @@ impl TwoPassSelector {
             interfaces,
             rule_budget,
         )?;
-        
+
         let rule_time = rule_start.elapsed().as_millis() as u64;
-        
+
         // Add rule-based files to selection
         selected_files.extend(rule_based_files.iter().cloned());
-        
+
         // Calculate final metrics
-        let total_tokens: usize = selected_files.iter()
+        let total_tokens: usize = selected_files
+            .iter()
             .filter_map(|f| available_files.get(f))
             .map(|info| info.token_count)
             .sum();
-        
+
         let budget_utilization = total_tokens as f64 / total_budget as f64;
         let selection_score = self.calculate_selection_score(&selected_files, available_files)?;
-        
+
         let gaps_count = coverage_gaps.len();
-        
+
         Ok(TwoPassResult {
             speculative_files,
             rule_based_files,
@@ -231,7 +229,7 @@ impl TwoPassSelector {
     ) -> Result<Vec<String>> {
         let mut selected = Vec::new();
         let mut remaining_budget = budget;
-        
+
         // Calculate confidence scores in parallel and sort by importance * confidence
         let mut candidates: Vec<(&String, &FileInfo, f64)> = available_files
             .par_iter()
@@ -240,22 +238,25 @@ impl TwoPassSelector {
                 (file_path, file_info, confidence)
             })
             .collect();
-        
+
         candidates.sort_by(|a, b| {
             let score_a = a.1.importance * a.2; // a.2 is pre-calculated confidence
             let score_b = b.1.importance * b.2; // b.2 is pre-calculated confidence
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         // Greedily select files while budget allows
         for (file_path, file_info, confidence) in candidates {
-            if confidence >= self.config.speculation_threshold 
-                && file_info.token_count <= remaining_budget {
+            if confidence >= self.config.speculation_threshold
+                && file_info.token_count <= remaining_budget
+            {
                 selected.push(file_path.clone());
                 remaining_budget -= file_info.token_count;
             }
         }
-        
+
         Ok(selected)
     }
 
@@ -271,7 +272,7 @@ impl TwoPassSelector {
         let mut additional_files = Vec::new();
         let mut coverage_gaps = Vec::new();
         let mut remaining_budget = budget;
-        
+
         // Identify coverage gaps
         if self.config.enable_gap_analysis {
             coverage_gaps = self.analyze_coverage_gaps(
@@ -281,20 +282,28 @@ impl TwoPassSelector {
                 interfaces,
             )?;
         }
-        
+
         // Pre-build reverse dependency lookup for O(1) access
         let mut dependents_map: HashMap<String, Vec<String>> = HashMap::new();
         for (file_path, file_info) in available_files {
             for dep in &file_info.dependencies {
-                dependents_map.entry(dep.clone()).or_default().push(file_path.clone());
+                dependents_map
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(file_path.clone());
             }
         }
-        
+
         // Pre-compute selected source count to avoid O(N) iteration in rules
-        let selected_source_count = selected_files.iter()
-            .filter(|f| available_files.get(*f).map_or(false, |info| info.file_type == "source"))
+        let selected_source_count = selected_files
+            .iter()
+            .filter(|f| {
+                available_files
+                    .get(*f)
+                    .map_or(false, |info| info.file_type == "source")
+            })
             .count();
-        
+
         // Apply rules to address gaps
         let context = SelectionContext {
             selected_files,
@@ -305,7 +314,7 @@ impl TwoPassSelector {
             dependents_map: &dependents_map,
             selected_source_count,
         };
-        
+
         // Score all unselected files using rules (parallel processing)
         let rule_scores: HashMap<String, f64> = available_files
             .par_iter()
@@ -313,17 +322,19 @@ impl TwoPassSelector {
                 !selected_files.contains(*file_path) && file_info.token_count <= remaining_budget
             })
             .map(|(file_path, _file_info)| {
-                let total_score = self.rules.iter()
+                let total_score = self
+                    .rules
+                    .iter()
                     .map(|rule| (rule.evaluator)(&context, file_path) * rule.weight)
                     .sum();
                 (file_path.clone(), total_score)
             })
             .collect();
-        
+
         // Select highest scoring files within budget
         let mut sorted_scores: Vec<(&String, &f64)> = rule_scores.iter().collect();
         sorted_scores.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         for (file_path, _score) in sorted_scores {
             if let Some(file_info) = available_files.get(file_path) {
                 if file_info.token_count <= remaining_budget {
@@ -332,22 +343,26 @@ impl TwoPassSelector {
                 }
             }
         }
-        
+
         Ok((additional_files, coverage_gaps))
     }
 
     /// Calculate confidence score for a file
-    fn calculate_confidence(&self, file_info: &FileInfo, dependencies: &HashMap<String, Vec<String>>) -> f64 {
+    fn calculate_confidence(
+        &self,
+        file_info: &FileInfo,
+        dependencies: &HashMap<String, Vec<String>>,
+    ) -> f64 {
         let mut confidence = 0.5; // Base confidence
-        
+
         // Boost confidence for files with many dependents
         confidence += (file_info.dependents.len() as f64 * 0.1).min(0.3);
-        
+
         // Boost confidence for interface files
         if !file_info.exposed_interfaces.is_empty() {
             confidence += 0.2;
         }
-        
+
         // Boost confidence for core file types
         match file_info.file_type.as_str() {
             "source" => confidence += 0.1,
@@ -355,7 +370,7 @@ impl TwoPassSelector {
             "config" => confidence += 0.05,
             _ => {}
         }
-        
+
         confidence.min(1.0)
     }
 
@@ -368,7 +383,7 @@ impl TwoPassSelector {
         interfaces: &HashMap<String, Vec<String>>,
     ) -> Result<Vec<CoverageGap>> {
         let mut gaps = Vec::new();
-        
+
         // Check for missing dependencies
         for selected_file in selected_files {
             if let Some(file_info) = available_files.get(selected_file) {
@@ -384,7 +399,7 @@ impl TwoPassSelector {
                 }
             }
         }
-        
+
         // Check for incomplete interface coverage
         for (interface, implementers) in interfaces {
             let has_implementation = implementers.iter().any(|imp| selected_files.contains(imp));
@@ -397,29 +412,40 @@ impl TwoPassSelector {
                 });
             }
         }
-        
+
         // Check for orphaned test files
-        let test_files: Vec<_> = selected_files.iter()
-            .filter(|f| available_files.get(*f).map_or(false, |info| info.file_type == "test"))
+        let test_files: Vec<_> = selected_files
+            .iter()
+            .filter(|f| {
+                available_files
+                    .get(*f)
+                    .map_or(false, |info| info.file_type == "test")
+            })
             .collect();
-        
+
         for test_file in test_files {
             if let Some(test_info) = available_files.get(test_file) {
-                let has_source = test_info.dependencies.iter()
-                    .any(|dep| selected_files.contains(dep) && 
-                         available_files.get(dep).map_or(false, |info| info.file_type == "source"));
-                
+                let has_source = test_info.dependencies.iter().any(|dep| {
+                    selected_files.contains(dep)
+                        && available_files
+                            .get(dep)
+                            .map_or(false, |info| info.file_type == "source")
+                });
+
                 if !has_source {
                     gaps.push(CoverageGap {
                         gap_type: "orphaned_test".to_string(),
                         severity: 0.4,
                         candidate_files: test_info.dependencies.clone(),
-                        reason: format!("Test file {} has no corresponding source files selected", test_file),
+                        reason: format!(
+                            "Test file {} has no corresponding source files selected",
+                            test_file
+                        ),
                     });
                 }
             }
         }
-        
+
         Ok(gaps)
     }
 
@@ -432,17 +458,17 @@ impl TwoPassSelector {
         if selected_files.is_empty() {
             return Ok(0.0);
         }
-        
+
         let mut total_importance = 0.0;
         let mut total_files = 0.0;
-        
+
         for file_path in selected_files {
             if let Some(file_info) = available_files.get(file_path) {
                 total_importance += file_info.importance;
                 total_files += 1.0;
             }
         }
-        
+
         Ok(total_importance / total_files)
     }
 
@@ -455,31 +481,36 @@ impl TwoPassSelector {
                 evaluator: |context, file_path| {
                     if let Some(file_info) = context.available_files.get(file_path) {
                         // Score based on how many selected files depend on this file (O(1) lookup)
-                        let satisfies_dependencies = context.dependents_map.get(file_path)
+                        let satisfies_dependencies = context
+                            .dependents_map
+                            .get(file_path)
                             .map(|dependents| {
-                                dependents.iter()
+                                dependents
+                                    .iter()
                                     .filter(|dependent| context.selected_files.contains(*dependent))
                                     .count()
                             })
                             .unwrap_or(0);
-                        
+
                         // Also consider if this file's own dependencies are satisfied
-                        let missing_deps = file_info.dependencies.iter()
+                        let missing_deps = file_info
+                            .dependencies
+                            .iter()
                             .filter(|dep| !context.selected_files.contains(*dep))
                             .count();
-                        
+
                         let dependency_satisfaction_score = if satisfies_dependencies > 0 {
                             0.8 + (satisfies_dependencies as f64 * 0.1).min(0.2)
                         } else {
                             0.3
                         };
-                        
+
                         let completeness_score = if file_info.dependencies.is_empty() {
                             1.0 // No dependencies to worry about
                         } else {
                             1.0 - (missing_deps as f64 / file_info.dependencies.len() as f64)
                         };
-                        
+
                         (dependency_satisfaction_score + completeness_score) / 2.0
                     } else {
                         0.0
@@ -499,7 +530,8 @@ impl TwoPassSelector {
                         0.0
                     }
                 },
-                description: "Prefer files that expose or implement important interfaces".to_string(),
+                description: "Prefer files that expose or implement important interfaces"
+                    .to_string(),
             },
             SelectionRule {
                 name: "test_source_pairing".to_string(),
@@ -508,15 +540,31 @@ impl TwoPassSelector {
                     if let Some(file_info) = context.available_files.get(file_path) {
                         if file_info.file_type == "test" {
                             // For test files, check if corresponding source is selected
-                            let has_source = file_info.dependencies.iter()
-                                .any(|dep| context.selected_files.contains(dep) &&
-                                     context.available_files.get(dep).map_or(false, |info| info.file_type == "source"));
-                            if has_source { 1.0 } else { 0.2 }
+                            let has_source = file_info.dependencies.iter().any(|dep| {
+                                context.selected_files.contains(dep)
+                                    && context
+                                        .available_files
+                                        .get(dep)
+                                        .map_or(false, |info| info.file_type == "source")
+                            });
+                            if has_source {
+                                1.0
+                            } else {
+                                0.2
+                            }
                         } else if file_info.file_type == "source" {
                             // For source files, check if we have related tests
-                            let has_tests = file_info.dependents.iter()
-                                .any(|dep| context.available_files.get(dep).map_or(false, |info| info.file_type == "test"));
-                            if has_tests { 0.8 } else { 0.5 }
+                            let has_tests = file_info.dependents.iter().any(|dep| {
+                                context
+                                    .available_files
+                                    .get(dep)
+                                    .map_or(false, |info| info.file_type == "test")
+                            });
+                            if has_tests {
+                                0.8
+                            } else {
+                                0.5
+                            }
                         } else {
                             0.5
                         }
@@ -558,7 +606,8 @@ impl TwoPassSelector {
                 weight: 0.08,
                 evaluator: |context, file_path| {
                     if let Some(file_info) = context.available_files.get(file_path) {
-                        let efficiency = file_info.importance / (file_info.token_count as f64 / 1000.0).max(0.1);
+                        let efficiency =
+                            file_info.importance / (file_info.token_count as f64 / 1000.0).max(0.1);
                         efficiency.min(1.0)
                     } else {
                         0.0
@@ -572,15 +621,18 @@ impl TwoPassSelector {
                 evaluator: |context, file_path| {
                     if let Some(file_info) = context.available_files.get(file_path) {
                         // Check if this file fills an important gap
-                        let fills_dependency_gap = file_info.dependents.iter()
+                        let fills_dependency_gap = file_info
+                            .dependents
+                            .iter()
                             .any(|dep| context.selected_files.contains(dep));
-                        
-                        let fills_interface_gap = !file_info.exposed_interfaces.is_empty() &&
-                            file_info.exposed_interfaces.iter().any(|iface| {
-                                context.interfaces.get(iface)
-                                    .map_or(false, |impls| impls.iter().any(|imp| context.selected_files.contains(imp)))
+
+                        let fills_interface_gap = !file_info.exposed_interfaces.is_empty()
+                            && file_info.exposed_interfaces.iter().any(|iface| {
+                                context.interfaces.get(iface).map_or(false, |impls| {
+                                    impls.iter().any(|imp| context.selected_files.contains(imp))
+                                })
                             });
-                        
+
                         if fills_dependency_gap || fills_interface_gap {
                             0.8
                         } else {
@@ -611,7 +663,8 @@ impl TwoPassSelector {
                         0.0
                     }
                 },
-                description: "Include configuration files when relevant source code is selected".to_string(),
+                description: "Include configuration files when relevant source code is selected"
+                    .to_string(),
             },
         ]
     }
@@ -626,159 +679,194 @@ impl Default for TwoPassSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn create_test_files() -> HashMap<String, FileInfo> {
         let mut files = HashMap::new();
-        
-        files.insert("src/main.rs".to_string(), FileInfo {
-            path: "src/main.rs".to_string(),
-            token_count: 500,
-            file_type: "source".to_string(),
-            importance: 0.9,
-            dependencies: vec!["src/lib.rs".to_string()],
-            dependents: vec![],
-            exposed_interfaces: vec!["Main".to_string()],
-            consumed_interfaces: vec!["Library".to_string()],
-        });
-        
-        files.insert("src/lib.rs".to_string(), FileInfo {
-            path: "src/lib.rs".to_string(),
-            token_count: 800,
-            file_type: "source".to_string(),
-            importance: 0.8,
-            dependencies: vec![],
-            dependents: vec!["src/main.rs".to_string()],
-            exposed_interfaces: vec!["Library".to_string()],
-            consumed_interfaces: vec![],
-        });
-        
-        files.insert("tests/integration_test.rs".to_string(), FileInfo {
-            path: "tests/integration_test.rs".to_string(),
-            token_count: 300,
-            file_type: "test".to_string(),
-            importance: 0.6,
-            dependencies: vec!["src/lib.rs".to_string()],
-            dependents: vec![],
-            exposed_interfaces: vec![],
-            consumed_interfaces: vec!["Library".to_string()],
-        });
-        
-        files.insert("config/settings.toml".to_string(), FileInfo {
-            path: "config/settings.toml".to_string(),
-            token_count: 100,
-            file_type: "config".to_string(),
-            importance: 0.3,
-            dependencies: vec![],
-            dependents: vec![],
-            exposed_interfaces: vec![],
-            consumed_interfaces: vec![],
-        });
-        
+
+        files.insert(
+            "src/main.rs".to_string(),
+            FileInfo {
+                path: "src/main.rs".to_string(),
+                token_count: 500,
+                file_type: "source".to_string(),
+                importance: 0.9,
+                dependencies: vec!["src/lib.rs".to_string()],
+                dependents: vec![],
+                exposed_interfaces: vec!["Main".to_string()],
+                consumed_interfaces: vec!["Library".to_string()],
+            },
+        );
+
+        files.insert(
+            "src/lib.rs".to_string(),
+            FileInfo {
+                path: "src/lib.rs".to_string(),
+                token_count: 800,
+                file_type: "source".to_string(),
+                importance: 0.8,
+                dependencies: vec![],
+                dependents: vec!["src/main.rs".to_string()],
+                exposed_interfaces: vec!["Library".to_string()],
+                consumed_interfaces: vec![],
+            },
+        );
+
+        files.insert(
+            "tests/integration_test.rs".to_string(),
+            FileInfo {
+                path: "tests/integration_test.rs".to_string(),
+                token_count: 300,
+                file_type: "test".to_string(),
+                importance: 0.6,
+                dependencies: vec!["src/lib.rs".to_string()],
+                dependents: vec![],
+                exposed_interfaces: vec![],
+                consumed_interfaces: vec!["Library".to_string()],
+            },
+        );
+
+        files.insert(
+            "config/settings.toml".to_string(),
+            FileInfo {
+                path: "config/settings.toml".to_string(),
+                token_count: 100,
+                file_type: "config".to_string(),
+                importance: 0.3,
+                dependencies: vec![],
+                dependents: vec![],
+                exposed_interfaces: vec![],
+                consumed_interfaces: vec![],
+            },
+        );
+
         files
     }
-    
+
     fn create_test_dependencies() -> HashMap<String, Vec<String>> {
         let mut deps = HashMap::new();
         deps.insert("src/main.rs".to_string(), vec!["src/lib.rs".to_string()]);
-        deps.insert("tests/integration_test.rs".to_string(), vec!["src/lib.rs".to_string()]);
+        deps.insert(
+            "tests/integration_test.rs".to_string(),
+            vec!["src/lib.rs".to_string()],
+        );
         deps
     }
-    
+
     fn create_test_interfaces() -> HashMap<String, Vec<String>> {
         let mut interfaces = HashMap::new();
         interfaces.insert("Library".to_string(), vec!["src/lib.rs".to_string()]);
         interfaces.insert("Main".to_string(), vec!["src/main.rs".to_string()]);
         interfaces
     }
-    
+
     #[test]
     fn test_two_pass_selector_creation() {
         let selector = TwoPassSelector::new();
         assert_eq!(selector.config.speculation_ratio, 0.75);
         assert_eq!(selector.rules.len(), 8);
     }
-    
+
     #[test]
     fn test_speculative_pass() {
         let selector = TwoPassSelector::new();
         let files = create_test_files();
         let dependencies = create_test_dependencies();
-        
-        let result = selector.speculative_pass(&files, &dependencies, 1000).unwrap();
-        
+
+        let result = selector
+            .speculative_pass(&files, &dependencies, 1000)
+            .unwrap();
+
         assert!(!result.is_empty());
-        
+
         // Debug: Print what was selected and confidence scores
         for file_path in &result {
             if let Some(file_info) = files.get(file_path) {
                 let confidence = selector.calculate_confidence(file_info, &dependencies);
-                println!("Selected: {} (importance: {}, confidence: {})", file_path, file_info.importance, confidence);
+                println!(
+                    "Selected: {} (importance: {}, confidence: {})",
+                    file_path, file_info.importance, confidence
+                );
             }
         }
-        
+
         // Check if high-importance files are selected (with more lenient assertions)
-        let has_high_importance_file = result.iter().any(|f| {
-            files.get(f).map_or(false, |info| info.importance >= 0.8)
-        });
-        assert!(has_high_importance_file, "Should select at least one high-importance file");
+        let has_high_importance_file = result
+            .iter()
+            .any(|f| files.get(f).map_or(false, |info| info.importance >= 0.8));
+        assert!(
+            has_high_importance_file,
+            "Should select at least one high-importance file"
+        );
     }
-    
+
     #[test]
     fn test_full_two_pass_selection() {
         let selector = TwoPassSelector::new();
         let files = create_test_files();
         let dependencies = create_test_dependencies();
         let interfaces = create_test_interfaces();
-        
-        let result = selector.select_files(&files, &dependencies, &interfaces, 1500).unwrap();
-        
+
+        let result = selector
+            .select_files(&files, &dependencies, &interfaces, 1500)
+            .unwrap();
+
         assert!(!result.speculative_files.is_empty());
         assert!(result.budget_utilization <= 1.0);
         assert!(result.selection_score > 0.0);
         assert!(result.metrics.files_considered > 0);
     }
-    
+
     #[test]
     fn test_coverage_gap_analysis() {
         let selector = TwoPassSelector::new();
         let files = create_test_files();
         let dependencies = create_test_dependencies();
         let interfaces = create_test_interfaces();
-        
+
         let mut selected = HashSet::new();
         selected.insert("src/main.rs".to_string());
         // Missing src/lib.rs dependency
-        
-        let gaps = selector.analyze_coverage_gaps(&selected, &files, &dependencies, &interfaces).unwrap();
-        
+
+        let gaps = selector
+            .analyze_coverage_gaps(&selected, &files, &dependencies, &interfaces)
+            .unwrap();
+
         assert!(!gaps.is_empty());
         // Should detect missing dependency
         assert!(gaps.iter().any(|gap| gap.gap_type == "missing_dependency"));
     }
-    
+
     #[test]
     fn test_rule_evaluation() {
         let selector = TwoPassSelector::new();
         let files = create_test_files();
         let dependencies = create_test_dependencies();
         let interfaces = create_test_interfaces();
-        
+
         let mut selected = HashSet::new();
         selected.insert("src/main.rs".to_string());
-        
+
         // Pre-build reverse dependency lookup for testing
         let mut dependents_map: HashMap<String, Vec<String>> = HashMap::new();
         for (file_path, file_info) in &files {
             for dep in &file_info.dependencies {
-                dependents_map.entry(dep.clone()).or_default().push(file_path.clone());
+                dependents_map
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(file_path.clone());
             }
         }
-        
+
         // Pre-compute selected source count for testing
-        let selected_source_count = selected.iter()
-            .filter(|f| files.get(*f).map_or(false, |info| info.file_type == "source"))
+        let selected_source_count = selected
+            .iter()
+            .filter(|f| {
+                files
+                    .get(*f)
+                    .map_or(false, |info| info.file_type == "source")
+            })
             .count();
-        
+
         let context = SelectionContext {
             selected_files: &selected,
             available_files: &files,
@@ -788,19 +876,26 @@ mod tests {
             dependents_map: &dependents_map,
             selected_source_count,
         };
-        
+
         // Test dependency completeness rule
         let dep_rule = &selector.rules[0];
         let score = (dep_rule.evaluator)(&context, "src/lib.rs");
         println!("Dependency rule score for src/lib.rs: {}", score);
-        
+
         // Test that lib.rs scores well (it's needed by main.rs which is selected)
-        assert!(score >= 0.5, "src/lib.rs should score well as it fills a dependency gap (score: {})", score);
-        
+        assert!(
+            score >= 0.5,
+            "src/lib.rs should score well as it fills a dependency gap (score: {})",
+            score
+        );
+
         // Test interface coverage rule
         let interface_rule = &selector.rules[1];
         let interface_score = (interface_rule.evaluator)(&context, "src/lib.rs");
         println!("Interface rule score for src/lib.rs: {}", interface_score);
-        assert!(interface_score > 0.0, "src/lib.rs should have some interface score");
+        assert!(
+            interface_score > 0.0,
+            "src/lib.rs should have some interface score"
+        );
     }
 }

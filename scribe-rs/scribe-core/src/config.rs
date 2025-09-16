@@ -3,41 +3,41 @@
 //! Provides comprehensive configuration structures with validation,
 //! serialization, and environment-based overrides.
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::time::Duration;
-use std::hash::{Hash, Hasher};
-use serde::{Deserialize, Serialize};
-use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::error::{Result, ScribeError};
-use crate::types::HeuristicWeights;
 use crate::file::Language;
+use crate::types::HeuristicWeights;
 
 /// Main configuration structure for Scribe
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct Config {
     /// General settings
     pub general: GeneralConfig,
-    
+
     /// File filtering configuration
     pub filtering: FilteringConfig,
-    
+
     /// Analysis configuration
     pub analysis: AnalysisConfig,
-    
+
     /// Scoring configuration
     pub scoring: ScoringConfig,
-    
+
     /// Performance and resource limits
     pub performance: PerformanceConfig,
-    
+
     /// Git integration settings
     pub git: GitConfig,
-    
+
     /// Feature flags
     pub features: FeatureFlags,
-    
+
     /// Output format configuration
     pub output: OutputConfig,
 }
@@ -60,12 +60,9 @@ impl Default for Config {
 impl Config {
     /// Load configuration from a file
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| ScribeError::path_with_source(
-                "Failed to read config file", 
-                path.as_ref(), 
-                e
-            ))?;
+        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
+            ScribeError::path_with_source("Failed to read config file", path.as_ref(), e)
+        })?;
 
         let config: Config = match path.as_ref().extension().and_then(|s| s.to_str()) {
             Some("json") => serde_json::from_str(&content)?,
@@ -77,7 +74,7 @@ impl Config {
             }
             _ => {
                 return Err(ScribeError::config(
-                    "Unsupported config file format. Use .json, .yaml, or .toml"
+                    "Unsupported config file format. Use .json, .yaml, or .toml",
                 ));
             }
         };
@@ -98,17 +95,14 @@ impl Config {
             }
             _ => {
                 return Err(ScribeError::config(
-                    "Unsupported config file format. Use .json, .yaml, or .toml"
+                    "Unsupported config file format. Use .json, .yaml, or .toml",
                 ));
             }
         };
 
-        std::fs::write(path.as_ref(), content)
-            .map_err(|e| ScribeError::path_with_source(
-                "Failed to write config file", 
-                path.as_ref(), 
-                e
-            ))?;
+        std::fs::write(path.as_ref(), content).map_err(|e| {
+            ScribeError::path_with_source("Failed to write config file", path.as_ref(), e)
+        })?;
 
         Ok(())
     }
@@ -145,7 +139,7 @@ impl Config {
     /// This is now highly optimized using direct hashing instead of JSON serialization
     pub fn compute_hash(&self) -> String {
         use std::collections::hash_map::DefaultHasher;
-        
+
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
         format!("{:x}", hasher.finish())
@@ -157,16 +151,16 @@ impl Config {
 pub struct GeneralConfig {
     /// Verbosity level (0-4)
     pub verbosity: u8,
-    
+
     /// Enable progress reporting
     pub show_progress: bool,
-    
+
     /// Enable colored output
     pub use_colors: bool,
-    
+
     /// Maximum number of worker threads (0 = auto-detect)
     pub max_threads: usize,
-    
+
     /// Working directory override
     pub working_dir: Option<PathBuf>,
 }
@@ -203,8 +197,8 @@ impl GeneralConfig {
     fn validate(&self) -> Result<()> {
         if self.verbosity > 4 {
             return Err(ScribeError::config_field(
-                "Verbosity must be between 0 and 4", 
-                "verbosity"
+                "Verbosity must be between 0 and 4",
+                "verbosity",
             ));
         }
         Ok(())
@@ -216,31 +210,31 @@ impl GeneralConfig {
 pub struct FilteringConfig {
     /// Include patterns (glob format)
     pub include_patterns: Vec<String>,
-    
+
     /// Exclude patterns (glob format)
     pub exclude_patterns: Vec<String>,
-    
+
     /// Maximum file size in bytes
     pub max_file_size: u64,
-    
+
     /// Minimum file size in bytes
     pub min_file_size: u64,
-    
+
     /// Languages to include (empty = all)
     pub include_languages: HashSet<Language>,
-    
+
     /// Languages to exclude
     pub exclude_languages: HashSet<Language>,
-    
+
     /// Whether to follow symbolic links
     pub follow_symlinks: bool,
-    
+
     /// Whether to include hidden files (starting with .)
     pub include_hidden: bool,
-    
+
     /// Whether to respect .gitignore files
     pub respect_gitignore: bool,
-    
+
     /// Additional ignore files to respect
     pub ignore_files: Vec<PathBuf>,
 }
@@ -256,7 +250,7 @@ impl Hash for FilteringConfig {
         let mut include_langs: Vec<_> = self.include_languages.iter().collect();
         include_langs.sort();
         include_langs.hash(state);
-        
+
         let mut exclude_langs: Vec<_> = self.exclude_languages.iter().collect();
         exclude_langs.sort();
         exclude_langs.hash(state);
@@ -300,23 +294,21 @@ impl FilteringConfig {
     fn validate(&self) -> Result<()> {
         if self.max_file_size < self.min_file_size {
             return Err(ScribeError::config(
-                "max_file_size must be >= min_file_size"
+                "max_file_size must be >= min_file_size",
             ));
         }
 
         // Validate glob patterns
         for pattern in &self.include_patterns {
-            Glob::new(pattern).map_err(|e| ScribeError::pattern(
-                format!("Invalid include pattern: {}", e), 
-                pattern
-            ))?;
+            Glob::new(pattern).map_err(|e| {
+                ScribeError::pattern(format!("Invalid include pattern: {}", e), pattern)
+            })?;
         }
 
         for pattern in &self.exclude_patterns {
-            Glob::new(pattern).map_err(|e| ScribeError::pattern(
-                format!("Invalid exclude pattern: {}", e), 
-                pattern
-            ))?;
+            Glob::new(pattern).map_err(|e| {
+                ScribeError::pattern(format!("Invalid exclude pattern: {}", e), pattern)
+            })?;
         }
 
         Ok(())
@@ -350,31 +342,31 @@ impl FilteringConfig {
 pub struct AnalysisConfig {
     /// Whether to analyze file content (not just metadata)
     pub analyze_content: bool,
-    
+
     /// Whether to compute token estimates
     pub compute_tokens: bool,
-    
+
     /// Whether to count lines
     pub count_lines: bool,
-    
+
     /// Whether to detect binary files by content (in addition to extension)
     pub detect_binary_content: bool,
-    
+
     /// Languages that require special handling
     pub language_overrides: HashMap<String, Language>,
-    
+
     /// Custom file type mappings (extension -> language)
     pub custom_extensions: HashMap<String, Language>,
-    
+
     /// Whether to cache analysis results
     pub enable_caching: bool,
-    
+
     /// Cache directory (relative to project root or absolute)
     pub cache_dir: PathBuf,
-    
+
     /// Cache TTL in seconds
     pub cache_ttl: u64,
-    
+
     /// Token budget for intelligent file selection
     pub token_budget: Option<usize>,
 }
@@ -390,7 +382,7 @@ impl Hash for AnalysisConfig {
         let mut lang_overrides: Vec<_> = self.language_overrides.iter().collect();
         lang_overrides.sort_by_key(|(k, _)| *k);
         lang_overrides.hash(state);
-        
+
         let mut custom_exts: Vec<_> = self.custom_extensions.iter().collect();
         custom_exts.sort_by_key(|(k, _)| *k);
         custom_exts.hash(state);
@@ -423,8 +415,8 @@ impl AnalysisConfig {
     fn validate(&self) -> Result<()> {
         if self.cache_ttl == 0 {
             return Err(ScribeError::config_field(
-                "cache_ttl must be > 0", 
-                "cache_ttl"
+                "cache_ttl must be > 0",
+                "cache_ttl",
             ));
         }
         Ok(())
@@ -436,19 +428,19 @@ impl AnalysisConfig {
 pub struct ScoringConfig {
     /// Heuristic weights
     pub weights: HeuristicWeights,
-    
+
     /// Whether to enable advanced scoring features
     pub enable_advanced: bool,
-    
+
     /// Custom scoring rules
     pub custom_rules: Vec<CustomScoringRule>,
-    
+
     /// Minimum score threshold for inclusion
     pub min_score_threshold: f64,
-    
+
     /// Maximum number of files to return (0 = unlimited)
     pub max_results: usize,
-    
+
     /// Whether to normalize scores to 0-1 range
     pub normalize_scores: bool,
 }
@@ -483,8 +475,8 @@ impl ScoringConfig {
     fn validate(&self) -> Result<()> {
         if self.min_score_threshold < 0.0 || self.min_score_threshold > 1.0 {
             return Err(ScribeError::config_field(
-                "min_score_threshold must be between 0.0 and 1.0", 
-                "min_score_threshold"
+                "min_score_threshold must be between 0.0 and 1.0",
+                "min_score_threshold",
             ));
         }
         Ok(())
@@ -496,10 +488,10 @@ impl ScoringConfig {
 pub struct CustomScoringRule {
     /// Rule name/description
     pub name: String,
-    
+
     /// File pattern to match
     pub pattern: String,
-    
+
     /// Score modifier type
     pub modifier: ScoreModifier,
 }
@@ -547,19 +539,19 @@ impl Hash for ScoreModifier {
 pub struct PerformanceConfig {
     /// Maximum memory usage in MB (0 = unlimited)
     pub max_memory_mb: usize,
-    
+
     /// Analysis timeout per file in seconds
     pub analysis_timeout: u64,
-    
+
     /// Global timeout in seconds
     pub global_timeout: u64,
-    
+
     /// Batch size for parallel processing
     pub batch_size: usize,
-    
+
     /// Whether to use memory mapping for large files
     pub use_mmap: bool,
-    
+
     /// Buffer size for I/O operations
     pub io_buffer_size: usize,
 }
@@ -581,20 +573,20 @@ impl PerformanceConfig {
     fn validate(&self) -> Result<()> {
         if self.analysis_timeout == 0 {
             return Err(ScribeError::config_field(
-                "analysis_timeout must be > 0", 
-                "analysis_timeout"
+                "analysis_timeout must be > 0",
+                "analysis_timeout",
             ));
         }
         if self.global_timeout == 0 {
             return Err(ScribeError::config_field(
-                "global_timeout must be > 0", 
-                "global_timeout"
+                "global_timeout must be > 0",
+                "global_timeout",
             ));
         }
         if self.batch_size == 0 {
             return Err(ScribeError::config_field(
-                "batch_size must be > 0", 
-                "batch_size"
+                "batch_size must be > 0",
+                "batch_size",
             ));
         }
         Ok(())
@@ -616,22 +608,22 @@ impl PerformanceConfig {
 pub struct GitConfig {
     /// Whether to use git information
     pub enabled: bool,
-    
+
     /// Whether to respect .gitignore
     pub respect_gitignore: bool,
-    
+
     /// Whether to include git status in analysis
     pub include_status: bool,
-    
+
     /// Whether to analyze git history for churn
     pub analyze_history: bool,
-    
+
     /// Number of commits to analyze for churn (0 = all)
     pub history_depth: usize,
-    
+
     /// Whether to include untracked files
     pub include_untracked: bool,
-    
+
     /// Git command timeout in seconds
     pub git_timeout: u64,
 }
@@ -654,8 +646,8 @@ impl GitConfig {
     fn validate(&self) -> Result<()> {
         if self.git_timeout == 0 {
             return Err(ScribeError::config_field(
-                "git_timeout must be > 0", 
-                "git_timeout"
+                "git_timeout must be > 0",
+                "git_timeout",
             ));
         }
         Ok(())
@@ -667,22 +659,22 @@ impl GitConfig {
 pub struct FeatureFlags {
     /// Enable PageRank centrality computation
     pub centrality_enabled: bool,
-    
+
     /// Enable entrypoint detection
     pub entrypoint_detection: bool,
-    
+
     /// Enable examples/usage analysis
     pub examples_analysis: bool,
-    
+
     /// Enable semantic analysis (if available)
     pub semantic_analysis: bool,
-    
+
     /// Enable machine learning features
     pub ml_features: bool,
-    
+
     /// Enable experimental scoring algorithms
     pub experimental_scoring: bool,
-    
+
     /// Enable scaling optimizations for large repositories
     pub scaling_enabled: bool,
 }
@@ -715,7 +707,7 @@ impl FeatureFlags {
     /// Get list of enabled feature names
     pub fn enabled_features(&self) -> Vec<&'static str> {
         let mut features = Vec::new();
-        
+
         if self.centrality_enabled {
             features.push("centrality");
         }
@@ -737,7 +729,7 @@ impl FeatureFlags {
         if self.scaling_enabled {
             features.push("scaling");
         }
-        
+
         features
     }
 }
@@ -747,22 +739,22 @@ impl FeatureFlags {
 pub struct OutputConfig {
     /// Output format
     pub format: OutputFormat,
-    
+
     /// Whether to include file content in output
     pub include_content: bool,
-    
+
     /// Whether to include detailed scores breakdown
     pub include_score_breakdown: bool,
-    
+
     /// Whether to include repository statistics
     pub include_repo_stats: bool,
-    
+
     /// Whether to sort results by score
     pub sort_by_score: bool,
-    
+
     /// Pretty print JSON output
     pub pretty_json: bool,
-    
+
     /// Custom output fields to include
     pub custom_fields: Vec<String>,
 }
@@ -832,12 +824,12 @@ mod tests {
     fn test_config_file_io() {
         let config = Config::default();
         let temp_file = NamedTempFile::new().unwrap();
-        
+
         // Test JSON serialization
         let json_path = temp_file.path().with_extension("json");
         config.save_to_file(&json_path).unwrap();
         let loaded_config = Config::load_from_file(&json_path).unwrap();
-        
+
         assert_eq!(config.general.verbosity, loaded_config.general.verbosity);
     }
 
@@ -846,12 +838,12 @@ mod tests {
         let mut config = FilteringConfig::default();
         config.include_patterns.push("*.rs".to_string());
         config.exclude_patterns.push("target/**".to_string());
-        
+
         assert!(config.validate().is_ok());
-        
+
         let include_set = config.build_include_set().unwrap();
         assert!(include_set.is_some());
-        
+
         let exclude_set = config.build_exclude_set().unwrap();
         assert!(exclude_set.is_match("target/debug/file.o"));
     }
@@ -861,10 +853,10 @@ mod tests {
         let mut flags = FeatureFlags::default();
         assert!(!flags.has_v2_features());
         assert!(flags.enabled_features().is_empty());
-        
+
         flags.centrality_enabled = true;
         flags.entrypoint_detection = true;
-        
+
         assert!(flags.has_v2_features());
         let enabled = flags.enabled_features();
         assert!(enabled.contains(&"centrality"));
@@ -882,16 +874,16 @@ mod tests {
     fn test_config_hash() {
         let config1 = Config::default();
         let config2 = Config::default();
-        
+
         let hash1 = config1.compute_hash();
         let hash2 = config2.compute_hash();
-        
+
         assert_eq!(hash1, hash2);
-        
+
         let mut config3 = Config::default();
         config3.general.verbosity = 2;
         let hash3 = config3.compute_hash();
-        
+
         assert_ne!(hash1, hash3);
     }
 }

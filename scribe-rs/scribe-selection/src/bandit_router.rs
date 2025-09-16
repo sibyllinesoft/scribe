@@ -1,13 +1,13 @@
 //! Bandit Router System for V5 Variant
-//! 
+//!
 //! Implements multi-armed bandit algorithms for intelligent selection strategy routing.
 //! Uses Thompson Sampling and Upper Confidence Bound (UCB) algorithms to optimize
 //! selection performance across different contexts and file types.
 
+use scribe_core::{Result, ScribeError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::f64::consts::E;
-use serde::{Deserialize, Serialize};
-use scribe_core::{Result, ScribeError};
 
 /// Configuration for the bandit router system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +64,7 @@ impl SelectionStrategy {
             Self::QuotaManaged,
         ]
     }
-    
+
     pub fn name(&self) -> &'static str {
         match self {
             Self::ImportanceGreedy => "importance_greedy",
@@ -98,16 +98,16 @@ pub struct SelectionContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProjectSize {
-    Small,   // < 50 files
-    Medium,  // 50-500 files
-    Large,   // > 500 files
+    Small,  // < 50 files
+    Medium, // 50-500 files
+    Large,  // > 500 files
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TimeConstraint {
-    Tight,    // Need results quickly
-    Normal,   // Standard time expectations
-    Relaxed,  // Can afford thorough analysis
+    Tight,   // Need results quickly
+    Normal,  // Standard time expectations
+    Relaxed, // Can afford thorough analysis
 }
 
 /// Bandit arm statistics for tracking performance
@@ -123,7 +123,7 @@ pub struct ArmStats {
     pub avg_reward: f64,
     /// For Thompson Sampling: Beta distribution parameters
     pub alpha: f64, // Successes + 1
-    pub beta: f64,  // Failures + 1
+    pub beta: f64, // Failures + 1
     /// Recent reward history for decay calculation
     pub recent_rewards: Vec<f64>,
 }
@@ -140,26 +140,27 @@ impl ArmStats {
             recent_rewards: Vec::new(),
         }
     }
-    
+
     /// Update statistics with a new reward
     pub fn update(&mut self, reward: f64, decay_factor: f64, max_history: usize) {
         self.trials += 1;
         self.total_reward += reward;
         self.avg_reward = self.total_reward / self.trials as f64;
-        
+
         // Update Beta distribution parameters for Thompson Sampling
-        if reward > 0.5 { // Consider > 0.5 as success
+        if reward > 0.5 {
+            // Consider > 0.5 as success
             self.alpha += reward;
         } else {
             self.beta += 1.0 - reward;
         }
-        
+
         // Maintain recent rewards with decay
         self.recent_rewards.push(reward);
         if self.recent_rewards.len() > max_history {
             self.recent_rewards.remove(0);
         }
-        
+
         // Apply decay to older rewards
         if decay_factor < 1.0 {
             for i in 0..self.recent_rewards.len() {
@@ -168,18 +169,18 @@ impl ArmStats {
             }
         }
     }
-    
+
     /// Calculate Upper Confidence Bound
     pub fn ucb_score(&self, total_trials: usize, exploration_factor: f64) -> f64 {
         if self.trials == 0 {
             f64::INFINITY // Explore unvisited arms first
         } else {
-            let confidence_interval = exploration_factor * 
-                ((total_trials as f64).ln() / self.trials as f64).sqrt();
+            let confidence_interval =
+                exploration_factor * ((total_trials as f64).ln() / self.trials as f64).sqrt();
             self.avg_reward + confidence_interval
         }
     }
-    
+
     /// Sample from Beta distribution for Thompson Sampling
     pub fn thompson_sample(&self) -> f64 {
         if self.trials == 0 {
@@ -191,7 +192,7 @@ impl ArmStats {
             x / (x + y)
         }
     }
-    
+
     /// Simple gamma distribution sampling (approximation)
     fn sample_gamma(&self, shape: f64) -> f64 {
         if shape < 1.0 {
@@ -210,7 +211,7 @@ impl ArmStats {
             let d = shape - 1.0 / 3.0;
             let c = 1.0 / (9.0 * d).sqrt();
             let mut rng = fastrand::Rng::new();
-            
+
             loop {
                 let x = rng.f64();
                 let v = 1.0 + c * x;
@@ -266,25 +267,25 @@ impl PerformanceFeedback {
     pub fn calculate_reward(&self) -> f64 {
         let mut reward = 0.0;
         let mut weight_sum = 0.0;
-        
+
         // Quality is most important (40% weight)
         reward += self.quality_score * 0.4;
         weight_sum += 0.4;
-        
+
         // Budget efficiency is important (30% weight)
         reward += self.budget_efficiency * 0.3;
         weight_sum += 0.3;
-        
+
         // Time efficiency matters (20% weight)
         reward += self.time_efficiency * 0.2;
         weight_sum += 0.2;
-        
+
         // User satisfaction if available (10% weight)
         if let Some(satisfaction) = self.user_satisfaction {
             reward += satisfaction * 0.1;
             weight_sum += 0.1;
         }
-        
+
         reward / weight_sum
     }
 }
@@ -302,14 +303,14 @@ impl BanditRouter {
     pub fn new() -> Self {
         Self::with_config(BanditConfig::default())
     }
-    
+
     /// Create with custom configuration
     pub fn with_config(config: BanditConfig) -> Self {
         let mut arms = HashMap::new();
         for strategy in SelectionStrategy::all_strategies() {
             arms.insert(strategy.clone(), ArmStats::new(strategy));
         }
-        
+
         Self {
             config,
             arms,
@@ -317,21 +318,21 @@ impl BanditRouter {
             context_history: Vec::new(),
         }
     }
-    
+
     /// Route a selection request to the best strategy
     pub fn route_selection(&mut self, context: SelectionContext) -> Result<RoutingDecision> {
         let mut strategy_scores = HashMap::new();
         let mut best_strategy = SelectionStrategy::ImportanceGreedy;
         let mut best_score = f64::NEG_INFINITY;
         let mut is_exploration = false;
-        
+
         // If we don't have enough trials, explore uniformly
         if self.total_trials < self.config.min_trials {
             let strategies = SelectionStrategy::all_strategies();
             let idx = fastrand::usize(0..strategies.len());
             best_strategy = strategies[idx].clone();
             is_exploration = true;
-            
+
             for strategy in &strategies {
                 strategy_scores.insert(strategy.clone(), 0.5);
             }
@@ -340,7 +341,7 @@ impl BanditRouter {
             for (strategy, arm) in &self.arms {
                 let score = arm.thompson_sample();
                 strategy_scores.insert(strategy.clone(), score);
-                
+
                 if score > best_score {
                     best_score = score;
                     best_strategy = strategy.clone();
@@ -351,7 +352,7 @@ impl BanditRouter {
             for (strategy, arm) in &self.arms {
                 let score = arm.ucb_score(self.total_trials, self.config.exploration_factor);
                 strategy_scores.insert(strategy.clone(), score);
-                
+
                 if score > best_score {
                     best_score = score;
                     best_strategy = strategy.clone();
@@ -359,10 +360,10 @@ impl BanditRouter {
                 }
             }
         }
-        
+
         // Apply contextual adjustments
         best_strategy = self.apply_contextual_adjustments(&context, best_strategy);
-        
+
         // Calculate confidence based on arm statistics
         let confidence = if let Some(arm) = self.arms.get(&best_strategy) {
             if arm.trials > 0 {
@@ -376,7 +377,7 @@ impl BanditRouter {
         } else {
             0.0
         };
-        
+
         Ok(RoutingDecision {
             strategy: best_strategy,
             confidence,
@@ -385,7 +386,7 @@ impl BanditRouter {
             context_features: context,
         })
     }
-    
+
     /// Apply contextual heuristics to adjust strategy selection
     fn apply_contextual_adjustments(
         &self,
@@ -396,12 +397,12 @@ impl BanditRouter {
         if matches!(context.project_size, ProjectSize::Small) && context.file_count < 20 {
             return SelectionStrategy::ImportanceGreedy;
         }
-        
+
         // For high dependency density, dependency-aware strategy is better
         if context.dependency_density > 0.7 {
             return SelectionStrategy::DependencyAware;
         }
-        
+
         // For tight time constraints, avoid complex strategies
         if matches!(context.time_constraint, TimeConstraint::Tight) {
             return match base_strategy {
@@ -410,47 +411,47 @@ impl BanditRouter {
                 _ => base_strategy,
             };
         }
-        
+
         // For low budget ratios, quota management is essential
         if context.budget_ratio < 0.3 {
             return SelectionStrategy::QuotaManaged;
         }
-        
+
         base_strategy
     }
-    
+
     /// Provide feedback on strategy performance
     pub fn provide_feedback(&mut self, feedback: PerformanceFeedback) -> Result<()> {
         let reward = feedback.calculate_reward();
-        
+
         if let Some(arm) = self.arms.get_mut(&feedback.strategy) {
             arm.update(reward, self.config.decay_factor, self.config.context_window);
             self.total_trials += 1;
-            
+
             // Store context history for learning
             self.context_history.push((
                 feedback.context.clone(),
                 feedback.strategy.clone(),
                 reward,
             ));
-            
+
             // Maintain context window
             if self.context_history.len() > self.config.context_window {
                 self.context_history.remove(0);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get current performance statistics
     pub fn get_statistics(&self) -> BanditStatistics {
         let mut strategy_stats = HashMap::new();
-        
+
         for (strategy, arm) in &self.arms {
             strategy_stats.insert(strategy.clone(), arm.clone());
         }
-        
+
         BanditStatistics {
             total_trials: self.total_trials,
             strategy_performance: strategy_stats,
@@ -458,7 +459,7 @@ impl BanditRouter {
             exploration_rate: self.calculate_exploration_rate(),
         }
     }
-    
+
     /// Get the currently best performing strategy
     fn get_best_strategy(&self) -> Option<SelectionStrategy> {
         self.arms
@@ -467,14 +468,14 @@ impl BanditRouter {
             .max_by(|(_, a), (_, b)| a.avg_reward.partial_cmp(&b.avg_reward).unwrap())
             .map(|(strategy, _)| strategy.clone())
     }
-    
+
     /// Calculate current exploration rate
     fn calculate_exploration_rate(&self) -> f64 {
         let recent_trials = self.context_history.len().min(50);
         if recent_trials == 0 {
             return 1.0;
         }
-        
+
         let mut exploration_count = 0;
         for (_, strategy, _) in &self.context_history {
             if let Some(arm) = self.arms.get(strategy) {
@@ -483,10 +484,10 @@ impl BanditRouter {
                 }
             }
         }
-        
+
         exploration_count as f64 / recent_trials as f64
     }
-    
+
     /// Reset all statistics (for testing or retraining)
     pub fn reset(&mut self) {
         for (_, arm) in &mut self.arms {
@@ -495,7 +496,7 @@ impl BanditRouter {
         self.total_trials = 0;
         self.context_history.clear();
     }
-    
+
     /// Export model state for persistence
     pub fn export_state(&self) -> BanditState {
         BanditState {
@@ -505,7 +506,7 @@ impl BanditRouter {
             context_history: self.context_history.clone(),
         }
     }
-    
+
     /// Import model state from persistence
     pub fn import_state(&mut self, state: BanditState) -> Result<()> {
         self.config = state.config;
@@ -582,7 +583,7 @@ mod tests {
     fn test_initial_routing_exploration() {
         let mut router = BanditRouter::new();
         let context = create_test_context();
-        
+
         let decision = router.route_selection(context).unwrap();
         assert!(decision.is_exploration); // Should explore initially
         assert!(decision.confidence < 0.5); // Low confidence initially
@@ -591,14 +592,17 @@ mod tests {
     #[test]
     fn test_feedback_learning() {
         let mut router = BanditRouter::new();
-        
+
         // Provide positive feedback for ImportanceGreedy
         let feedback = create_test_feedback(SelectionStrategy::ImportanceGreedy, 0.9);
         router.provide_feedback(feedback).unwrap();
-        
+
         // Check that statistics updated
         let stats = router.get_statistics();
-        let greedy_stats = stats.strategy_performance.get(&SelectionStrategy::ImportanceGreedy).unwrap();
+        let greedy_stats = stats
+            .strategy_performance
+            .get(&SelectionStrategy::ImportanceGreedy)
+            .unwrap();
         assert_eq!(greedy_stats.trials, 1);
         assert!(greedy_stats.avg_reward > 0.0);
     }
@@ -607,67 +611,65 @@ mod tests {
     fn test_strategy_selection_improvement() {
         let mut router = BanditRouter::new();
         let context = create_test_context();
-        
+
         // Train the router with consistent feedback
         for _ in 0..20 {
             // ImportanceGreedy performs well
             let feedback = create_test_feedback(SelectionStrategy::ImportanceGreedy, 0.9);
             router.provide_feedback(feedback).unwrap();
-            
+
             // Random performs poorly
             let feedback = create_test_feedback(SelectionStrategy::Random, 0.3);
             router.provide_feedback(feedback).unwrap();
         }
-        
+
         // After training, should prefer ImportanceGreedy
         let decision = router.route_selection(context).unwrap();
         assert!(!decision.is_exploration); // Should exploit now
-        
+
         let stats = router.get_statistics();
-        assert_eq!(stats.best_strategy, Some(SelectionStrategy::ImportanceGreedy));
+        assert_eq!(
+            stats.best_strategy,
+            Some(SelectionStrategy::ImportanceGreedy)
+        );
     }
 
     #[test]
     fn test_contextual_adjustments() {
         let router = BanditRouter::new();
-        
+
         // Small project should prefer simple strategy
         let mut small_context = create_test_context();
         small_context.project_size = ProjectSize::Small;
         small_context.file_count = 15;
-        
-        let adjusted = router.apply_contextual_adjustments(
-            &small_context,
-            SelectionStrategy::TwoPassSpeculative,
-        );
+
+        let adjusted = router
+            .apply_contextual_adjustments(&small_context, SelectionStrategy::TwoPassSpeculative);
         assert_eq!(adjusted, SelectionStrategy::ImportanceGreedy);
-        
+
         // High dependency density should prefer dependency-aware
         let mut dep_context = create_test_context();
         dep_context.dependency_density = 0.8;
-        
-        let adjusted = router.apply_contextual_adjustments(
-            &dep_context,
-            SelectionStrategy::Random,
-        );
+
+        let adjusted = router.apply_contextual_adjustments(&dep_context, SelectionStrategy::Random);
         assert_eq!(adjusted, SelectionStrategy::DependencyAware);
     }
 
     #[test]
     fn test_arm_statistics() {
         let mut arm = ArmStats::new(SelectionStrategy::ImportanceGreedy);
-        
+
         // Initial state
         assert_eq!(arm.trials, 0);
         assert_eq!(arm.avg_reward, 0.0);
-        
+
         // Update with rewards
         arm.update(0.8, 0.95, 100);
         arm.update(0.9, 0.95, 100);
-        
+
         assert_eq!(arm.trials, 2);
         assert!((arm.avg_reward - 0.85).abs() < 0.01);
-        
+
         // UCB score should be high for good performance
         let ucb = arm.ucb_score(10, 1.414);
         assert!(ucb > arm.avg_reward);
@@ -676,20 +678,24 @@ mod tests {
     #[test]
     fn test_thompson_sampling() {
         let mut arm = ArmStats::new(SelectionStrategy::ImportanceGreedy);
-        
+
         // Add some positive rewards
         for _ in 0..10 {
             arm.update(0.8, 0.95, 100);
         }
-        
+
         // Thompson samples should be reasonable
         let sample = arm.thompson_sample();
         assert!(sample > 0.0);
         assert!(sample < 1.0);
-        
+
         // Multiple samples should vary
         let samples: Vec<f64> = (0..10).map(|_| arm.thompson_sample()).collect();
-        let variance = samples.iter().map(|s| (s - arm.avg_reward).powi(2)).sum::<f64>() / 10.0;
+        let variance = samples
+            .iter()
+            .map(|s| (s - arm.avg_reward).powi(2))
+            .sum::<f64>()
+            / 10.0;
         assert!(variance > 0.0); // Should have some variance
     }
 
@@ -703,17 +709,17 @@ mod tests {
             time_efficiency: 0.85,
             context: create_test_context(),
         };
-        
+
         let reward = feedback.calculate_reward();
         assert!(reward > 0.7); // Should be high with good metrics
         assert!(reward < 1.0);
-        
+
         // Test without user satisfaction
         let feedback_no_user = PerformanceFeedback {
             user_satisfaction: None,
             ..feedback
         };
-        
+
         let reward_no_user = feedback_no_user.calculate_reward();
         assert!(reward_no_user > 0.7);
     }
@@ -721,16 +727,16 @@ mod tests {
     #[test]
     fn test_state_persistence() {
         let mut router = BanditRouter::new();
-        
+
         // Train the router
         let feedback = create_test_feedback(SelectionStrategy::ImportanceGreedy, 0.9);
         router.provide_feedback(feedback).unwrap();
-        
+
         // Export and import state
         let state = router.export_state();
         let mut new_router = BanditRouter::new();
         new_router.import_state(state).unwrap();
-        
+
         // Should have same statistics
         assert_eq!(router.total_trials, new_router.total_trials);
         assert_eq!(router.arms.len(), new_router.arms.len());

@@ -1,9 +1,9 @@
 //! Memory management and pooling for efficient resource utilization.
 
-use std::sync::Arc;
-use std::collections::VecDeque;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// Memory management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,38 +47,41 @@ impl MemoryPool {
             stats: Arc::new(Mutex::new(MemoryStats::default())),
         }
     }
-    
+
     pub fn allocate(&self, size: usize) -> Vec<u8> {
-        let mut buffer = self.available.lock().pop_front()
+        let mut buffer = self
+            .available
+            .lock()
+            .pop_front()
             .unwrap_or_else(|| Vec::with_capacity(size));
-        
+
         buffer.resize(size, 0);
-        
+
         if self.config.enable_monitoring {
             let mut stats = self.stats.lock();
             stats.allocations += 1;
             stats.current_usage += size;
             stats.peak_usage = stats.peak_usage.max(stats.current_usage);
         }
-        
+
         buffer
     }
-    
+
     pub fn deallocate(&self, mut buffer: Vec<u8>) {
         let buffer_len = buffer.len();
-        
+
         if buffer.capacity() <= self.config.max_allocation {
             buffer.clear();
             self.available.lock().push_back(buffer);
         }
-        
+
         if self.config.enable_monitoring {
             let mut stats = self.stats.lock();
             stats.deallocations += 1;
             stats.current_usage = stats.current_usage.saturating_sub(buffer_len);
         }
     }
-    
+
     pub fn get_stats(&self) -> MemoryStats {
         self.stats.lock().clone()
     }
@@ -95,15 +98,15 @@ impl MemoryManager {
             pool: MemoryPool::new(config),
         }
     }
-    
+
     pub fn allocate(&self, size: usize) -> Vec<u8> {
         self.pool.allocate(size)
     }
-    
+
     pub fn deallocate(&self, buffer: Vec<u8>) {
         self.pool.deallocate(buffer);
     }
-    
+
     pub fn get_stats(&self) -> MemoryStats {
         self.pool.get_stats()
     }

@@ -1,5 +1,5 @@
 //! Error handling for Python bindings
-//! 
+//!
 //! Provides comprehensive error mapping between Rust errors and Python exceptions,
 //! ensuring proper error context is preserved across the language boundary.
 
@@ -10,79 +10,73 @@ use scribe_core::ScribeError;
 pub fn rust_error_to_py_err(err: ScribeError) -> PyErr {
     match err {
         // I/O related errors
-        ScribeError::Io(ref io_err) => {
-            PyIOError::new_err(format!("I/O error: {}", io_err))
-        }
-        
+        ScribeError::Io(ref io_err) => PyIOError::new_err(format!("I/O error: {}", io_err)),
+
         // File system errors
         ScribeError::FileNotFound(ref path) => {
             PyFileNotFoundError::new_err(format!("File not found: {}", path))
         }
-        
-        // Permission errors  
+
+        // Permission errors
         ScribeError::PermissionDenied(ref path) => {
             PyPermissionError::new_err(format!("Permission denied: {}", path))
         }
-        
+
         // Parse and validation errors
-        ScribeError::Parse(ref msg) => {
-            PyValueError::new_err(format!("Parse error: {}", msg))
-        }
-        
+        ScribeError::Parse(ref msg) => PyValueError::new_err(format!("Parse error: {}", msg)),
+
         ScribeError::InvalidInput(ref msg) => {
             PyValueError::new_err(format!("Invalid input: {}", msg))
         }
-        
+
         ScribeError::Validation(ref msg) => {
             PyValueError::new_err(format!("Validation error: {}", msg))
         }
-        
+
         // Configuration errors
         ScribeError::Config(ref msg) => {
             PyValueError::new_err(format!("Configuration error: {}", msg))
         }
-        
+
         // Pattern matching errors
         ScribeError::PatternMatcherNotFound(ref msg) => {
             PyKeyError::new_err(format!("Pattern matcher not found: {}", msg))
         }
-        
+
         ScribeError::PatternCompilation(ref msg) => {
             PyValueError::new_err(format!("Pattern compilation error: {}", msg))
         }
-        
+
         // Analysis errors
         ScribeError::Analysis(ref msg) => {
             PyRuntimeError::new_err(format!("Analysis error: {}", msg))
         }
-        
+
         // Async/threading errors
         ScribeError::TaskJoin(ref msg) => {
             PyRuntimeError::new_err(format!("Task join error: {}", msg))
         }
-        
+
         ScribeError::Timeout(ref msg) => {
             PyTimeoutError::new_err(format!("Operation timeout: {}", msg))
         }
-        
+
         // Resource errors
         ScribeError::OutOfMemory(ref msg) => {
             PyMemoryError::new_err(format!("Out of memory: {}", msg))
         }
-        
+
         ScribeError::TooManyFiles(ref msg) => {
             PyRuntimeError::new_err(format!("Too many files: {}", msg))
         }
-        
+
         // Encoding errors
         ScribeError::Utf8(ref err) => {
             PyUnicodeDecodeError::new_err(format!("UTF-8 encoding error: {}", err))
         }
-        
+
         // Generic catch-all
-        ScribeError::Other(ref msg) => {
-            PyRuntimeError::new_err(format!("Error: {}", msg))
-        }
+        ScribeError::Other(ref msg) => PyRuntimeError::new_err(format!("Error: {}", msg)),
     }
 }
 
@@ -104,7 +98,7 @@ impl ScribeException {
 }
 
 /// Custom Python exception for analysis errors
-#[pyclass(extends = PyException)]  
+#[pyclass(extends = PyException)]
 pub struct AnalysisException {}
 
 #[pymethods]
@@ -121,7 +115,7 @@ pub struct PatternException {}
 
 #[pymethods]
 impl PatternException {
-    #[new] 
+    #[new]
     pub fn new(message: &str) -> Self {
         Self {}
     }
@@ -152,7 +146,11 @@ macro_rules! create_error_converter {
 create_error_converter!(io_error_to_py, std::io::Error, PyIOError);
 create_error_converter!(utf8_error_to_py, std::str::Utf8Error, PyUnicodeDecodeError);
 create_error_converter!(parse_int_error_to_py, std::num::ParseIntError, PyValueError);
-create_error_converter!(parse_float_error_to_py, std::num::ParseFloatError, PyValueError);
+create_error_converter!(
+    parse_float_error_to_py,
+    std::num::ParseFloatError,
+    PyValueError
+);
 
 /// Helper trait for easier error conversion
 pub trait ToPyResult<T> {
@@ -179,7 +177,7 @@ mod tests {
             // Test I/O error conversion
             let io_err = ScribeError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "Test error"
+                "Test error",
             ));
             let py_err = rust_error_to_py_err(io_err);
             assert!(py_err.is_instance_of::<PyIOError>(py));
@@ -202,7 +200,7 @@ mod tests {
             let scribe_exc = ScribeException::new("test message");
             assert!(PyCell::new(py, scribe_exc).is_ok());
 
-            let analysis_exc = AnalysisException::new("analysis failed");  
+            let analysis_exc = AnalysisException::new("analysis failed");
             assert!(PyCell::new(py, analysis_exc).is_ok());
 
             let pattern_exc = PatternException::new("pattern error");

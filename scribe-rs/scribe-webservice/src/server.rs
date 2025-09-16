@@ -1,21 +1,13 @@
 //! Web server implementation for Scribe web service
 
-use crate::{handlers, AppState, WebServiceConfig, WebServiceError, Result};
+use crate::{handlers, AppState, Result, WebServiceConfig, WebServiceError};
 use axum::{
     routing::{get, post},
     Router,
 };
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tower_http::{
-    cors::CorsLayer,
-    services::ServeDir,
-    trace::TraceLayer,
-};
+use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing::{info, warn};
 
 /// Main web service struct
@@ -50,18 +42,18 @@ impl WebService {
         let auto_open_browser = self.config.auto_open_browser;
         let auto_shutdown = self.config.auto_shutdown;
         let shutdown_timeout = self.config.auto_shutdown_timeout;
-        
+
         info!("🚀 Starting Scribe web service on http://{}", addr);
         info!("📁 Repository: {}", self.config.repo_path.display());
         info!("🎯 Token budget: {}", self.config.token_budget);
-        
+
         if auto_shutdown {
             info!("⏰ Auto-shutdown enabled: {}s timeout", shutdown_timeout);
         }
 
         // Create shutdown channel
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        
+
         // Store shutdown sender in app state
         {
             let mut sender_lock = self.app_state.shutdown_sender.write().await;
@@ -73,30 +65,36 @@ impl WebService {
 
         let app = self.create_router();
 
-        // Open browser if requested  
+        // Open browser if requested
         if auto_open_browser {
             let url = format!("http://{}/editor", addr); // Go directly to editor
             info!("🌐 Opening browser to {}", url);
-            
+
             if let Err(e) = open::that(&url) {
-                warn!("Failed to open browser: {}. Please navigate to {} manually", e, url);
+                warn!(
+                    "Failed to open browser: {}. Please navigate to {} manually",
+                    e, url
+                );
             }
         }
 
         // Start auto-shutdown monitoring if enabled
         if auto_shutdown {
             let timeout_duration = tokio::time::Duration::from_secs(shutdown_timeout);
-            
+
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
                 loop {
                     interval.tick().await;
-                    
+
                     let last_ping_time = *last_ping.read().await;
                     let elapsed = last_ping_time.elapsed();
-                    
+
                     if elapsed > timeout_duration {
-                        info!("⏰ Auto-shutdown triggered after {}s of inactivity", elapsed.as_secs());
+                        info!(
+                            "⏰ Auto-shutdown triggered after {}s of inactivity",
+                            elapsed.as_secs()
+                        );
                         std::process::exit(0);
                     }
                 }
@@ -106,7 +104,7 @@ impl WebService {
         // Start the server
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         info!("✅ Web service ready at http://{}", addr);
-        
+
         // Run server until shutdown signal
         tokio::select! {
             result = axum::serve(listener, app) => {
@@ -133,24 +131,23 @@ impl WebService {
             .route("/api/scan", post(handlers::scan_repository))
             .route("/api/files", get(handlers::list_files))
             .route("/api/files/toggle", post(handlers::toggle_file))
-            .route("/api/files/toggle-directory", post(handlers::toggle_directory))
+            .route(
+                "/api/files/toggle-directory",
+                post(handlers::toggle_directory),
+            )
             .route("/api/bundle/generate", post(handlers::generate_bundle))
             .route("/api/bundle/save", post(handlers::save_bundle))
             .route("/api/bundle/export", post(handlers::export_bundle))
             .route("/api/config", get(handlers::get_config))
             .route("/api/config", post(handlers::update_config))
-            
             // Main web interface
             .route("/", get(handlers::index))
             .route("/editor", get(handlers::bundle_editor))
-            
             // Static files (CSS, JS, images)
             .nest_service("/static", static_service)
-            
             // Add middleware
             .layer(CorsLayer::permissive())
             .layer(TraceLayer::new_for_http())
-            
             // Share state across all handlers
             .with_state(self.app_state)
     }
@@ -160,7 +157,7 @@ impl WebService {
         // In development, look for static files relative to cargo project
         let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
         let static_dir = PathBuf::from(cargo_manifest_dir).join("static");
-        
+
         if static_dir.exists() {
             static_dir
         } else {
@@ -180,9 +177,9 @@ impl WebService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use axum_test::TestServer;
     use std::time::Duration;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_webservice_creation() {
@@ -206,7 +203,7 @@ mod tests {
 
         let service = WebService::new(config);
         assert!(service.is_err());
-        
+
         if let Err(WebServiceError::RepositoryNotFound { path }) = service {
             assert_eq!(path, PathBuf::from("/nonexistent/path"));
         } else {
@@ -217,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn test_webservice_config_validation() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Test valid configuration
         let valid_config = WebServiceConfig {
             repo_path: temp_dir.path().to_path_buf(),
@@ -228,10 +225,10 @@ mod tests {
             max_file_size: 1024 * 1024,
             auto_exclude_tests: true,
         };
-        
+
         let service = WebService::new(valid_config);
         assert!(service.is_ok());
-        
+
         let service = service.unwrap();
         assert_eq!(service.config.port, 8080);
         assert_eq!(service.config.host, "127.0.0.1");
@@ -250,7 +247,7 @@ mod tests {
 
         let service = WebService::new(config).unwrap();
         let router = service.create_router();
-        
+
         // Test that the router was created (it's hard to test routes directly without starting the server)
         // But we can at least verify it doesn't panic
         let _router = router;
@@ -268,7 +265,7 @@ mod tests {
 
         let service = WebService::new(config).unwrap();
         let static_dir = service.get_static_dir();
-        
+
         // Should return some path
         assert!(static_dir.is_absolute());
     }
@@ -285,9 +282,11 @@ mod tests {
 
         let service = WebService::new(config).unwrap();
         let embedded_dir = service.create_embedded_static_dir();
-        
+
         // Should return a path in temp directory
-        assert!(embedded_dir.to_string_lossy().contains("scribe-webservice-static"));
+        assert!(embedded_dir
+            .to_string_lossy()
+            .contains("scribe-webservice-static"));
     }
 
     #[tokio::test]
@@ -304,15 +303,21 @@ mod tests {
         };
 
         let service = WebService::new(config.clone()).unwrap();
-        
+
         // Test that app_state has the correct config
         assert_eq!(service.app_state.config.port, config.port);
         assert_eq!(service.app_state.config.host, config.host);
         assert_eq!(service.app_state.config.token_budget, config.token_budget);
-        assert_eq!(service.app_state.config.auto_open_browser, config.auto_open_browser);
+        assert_eq!(
+            service.app_state.config.auto_open_browser,
+            config.auto_open_browser
+        );
         assert_eq!(service.app_state.config.max_file_size, config.max_file_size);
-        assert_eq!(service.app_state.config.auto_exclude_tests, config.auto_exclude_tests);
-        
+        assert_eq!(
+            service.app_state.config.auto_exclude_tests,
+            config.auto_exclude_tests
+        );
+
         // Test that bundle_state is initialized
         let bundle_state = service.app_state.bundle_state.try_read().unwrap();
         assert_eq!(bundle_state.included_files.len(), 0);
@@ -324,9 +329,9 @@ mod tests {
     #[tokio::test]
     async fn test_webservice_with_different_hosts() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         let hosts = vec!["127.0.0.1", "localhost", "0.0.0.0"];
-        
+
         for host in hosts {
             let config = WebServiceConfig {
                 repo_path: temp_dir.path().to_path_buf(),
@@ -335,10 +340,14 @@ mod tests {
                 auto_open_browser: false,
                 ..Default::default()
             };
-            
+
             let service = WebService::new(config);
-            assert!(service.is_ok(), "Failed to create service with host: {}", host);
-            
+            assert!(
+                service.is_ok(),
+                "Failed to create service with host: {}",
+                host
+            );
+
             let service = service.unwrap();
             assert_eq!(service.config.host, host);
         }
@@ -347,10 +356,10 @@ mod tests {
     #[tokio::test]
     async fn test_webservice_port_configuration() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Test various port configurations
         let ports = vec![0, 8080, 8081, 3000, 9000];
-        
+
         for port in ports {
             let config = WebServiceConfig {
                 repo_path: temp_dir.path().to_path_buf(),
@@ -358,10 +367,14 @@ mod tests {
                 auto_open_browser: false,
                 ..Default::default()
             };
-            
+
             let service = WebService::new(config);
-            assert!(service.is_ok(), "Failed to create service with port: {}", port);
-            
+            assert!(
+                service.is_ok(),
+                "Failed to create service with port: {}",
+                port
+            );
+
             let service = service.unwrap();
             assert_eq!(service.config.port, port);
         }
@@ -370,9 +383,9 @@ mod tests {
     #[tokio::test]
     async fn test_webservice_token_budget_configuration() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         let budgets = vec![1000, 10000, 50000, 100000, 500000];
-        
+
         for budget in budgets {
             let config = WebServiceConfig {
                 repo_path: temp_dir.path().to_path_buf(),
@@ -381,10 +394,14 @@ mod tests {
                 auto_open_browser: false,
                 ..Default::default()
             };
-            
+
             let service = WebService::new(config);
-            assert!(service.is_ok(), "Failed to create service with budget: {}", budget);
-            
+            assert!(
+                service.is_ok(),
+                "Failed to create service with budget: {}",
+                budget
+            );
+
             let service = service.unwrap();
             assert_eq!(service.config.token_budget, budget);
         }
@@ -393,9 +410,9 @@ mod tests {
     #[tokio::test]
     async fn test_webservice_file_size_limits() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         let file_sizes = vec![1024, 1024 * 1024, 5 * 1024 * 1024, 10 * 1024 * 1024];
-        
+
         for max_file_size in file_sizes {
             let config = WebServiceConfig {
                 repo_path: temp_dir.path().to_path_buf(),
@@ -404,10 +421,14 @@ mod tests {
                 auto_open_browser: false,
                 ..Default::default()
             };
-            
+
             let service = WebService::new(config);
-            assert!(service.is_ok(), "Failed to create service with max_file_size: {}", max_file_size);
-            
+            assert!(
+                service.is_ok(),
+                "Failed to create service with max_file_size: {}",
+                max_file_size
+            );
+
             let service = service.unwrap();
             assert_eq!(service.config.max_file_size, max_file_size);
         }
@@ -416,13 +437,17 @@ mod tests {
     #[tokio::test]
     async fn test_bundle_state_default() {
         let bundle_state = crate::BundleState::default();
-        
+
         assert_eq!(bundle_state.included_files.len(), 0);
         assert_eq!(bundle_state.excluded_files.len(), 0);
         assert_eq!(bundle_state.token_estimate, 0);
         assert_eq!(bundle_state.total_size, 0);
         // last_updated should be recent
         let now = chrono::Utc::now();
-        assert!(now.signed_duration_since(bundle_state.last_updated).num_seconds() < 5);
+        assert!(
+            now.signed_duration_since(bundle_state.last_updated)
+                .num_seconds()
+                < 5
+        );
     }
 }

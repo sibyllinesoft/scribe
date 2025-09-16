@@ -1,23 +1,23 @@
 //! Parallel processing configuration for scaling operations.
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Configuration for parallel processing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParallelConfig {
     /// Maximum number of concurrent tasks
     pub max_concurrent_tasks: usize,
-    
+
     /// Number of async workers
     pub async_worker_count: usize,
-    
+
     /// Number of CPU-bound workers
     pub cpu_worker_count: usize,
-    
+
     /// Timeout for individual tasks
     pub task_timeout: Duration,
-    
+
     /// Enable work-stealing between workers
     pub enable_work_stealing: bool,
 }

@@ -94,14 +94,9 @@ pub struct ConfigUpdateRequest {
 #[serde(tag = "type", content = "data")]
 pub enum WebSocketMessage {
     /// File selection changed
-    FileSelectionChanged {
-        file_path: String,
-        included: bool,
-    },
+    FileSelectionChanged { file_path: String, included: bool },
     /// Bundle generation started
-    BundleGenerationStarted {
-        format: BundleFormat,
-    },
+    BundleGenerationStarted { format: BundleFormat },
     /// Bundle generation completed
     BundleGenerationCompleted {
         bundle_path: String,
@@ -109,9 +104,7 @@ pub enum WebSocketMessage {
         token_count: usize,
     },
     /// Bundle generation failed
-    BundleGenerationFailed {
-        error: String,
-    },
+    BundleGenerationFailed { error: String },
     /// Repository scan progress
     ScanProgress {
         processed: usize,
@@ -144,10 +137,10 @@ mod tests {
             file_path: "src/lib.rs".to_string(),
             include: true,
         };
-        
+
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: ToggleFileRequest = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.file_path, "src/lib.rs");
         assert!(deserialized.include);
     }
@@ -170,7 +163,7 @@ mod tests {
             BundleFormat::Cxml,
             BundleFormat::Repomix,
         ];
-        
+
         for format in formats {
             let json = serde_json::to_string(&format).unwrap();
             let deserialized: BundleFormat = serde_json::from_str(&json).unwrap();
@@ -187,10 +180,10 @@ mod tests {
             include_files: Some(vec!["src/lib.rs".to_string(), "src/main.rs".to_string()]),
             exclude_files: Some(vec!["tests/".to_string()]),
         };
-        
+
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: BundleGenerationRequest = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.format.to_string(), "markdown");
         assert_eq!(deserialized.output_path, Some("/tmp/bundle.md".to_string()));
         assert_eq!(deserialized.token_budget, Some(50000));
@@ -208,17 +201,17 @@ mod tests {
             token_count: 2500,
             error: None,
         };
-        
+
         let json = serde_json::to_string(&response).unwrap();
         let deserialized: BundleResponse = serde_json::from_str(&json).unwrap();
-        
+
         assert!(deserialized.success);
         assert_eq!(deserialized.bundle_path, Some("/tmp/bundle.md".to_string()));
         assert_eq!(deserialized.bundle_size, 1024);
         assert_eq!(deserialized.file_count, 10);
         assert_eq!(deserialized.token_count, 2500);
         assert!(deserialized.error.is_none());
-        
+
         // Test error case
         let error_response = BundleResponse {
             success: false,
@@ -228,13 +221,16 @@ mod tests {
             token_count: 0,
             error: Some("Failed to generate bundle".to_string()),
         };
-        
+
         let json = serde_json::to_string(&error_response).unwrap();
         let deserialized: BundleResponse = serde_json::from_str(&json).unwrap();
-        
+
         assert!(!deserialized.success);
         assert!(deserialized.bundle_path.is_none());
-        assert_eq!(deserialized.error, Some("Failed to generate bundle".to_string()));
+        assert_eq!(
+            deserialized.error,
+            Some("Failed to generate bundle".to_string())
+        );
     }
 
     #[test]
@@ -250,10 +246,10 @@ mod tests {
             is_test: false,
             is_binary: false,
         };
-        
+
         let json = serde_json::to_string(&file_info).unwrap();
         let deserialized: WebFileInfo = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.path, "/src/lib.rs");
         assert_eq!(deserialized.relative_path, "src/lib.rs");
         assert_eq!(deserialized.size, 2048);
@@ -263,7 +259,7 @@ mod tests {
         assert!(deserialized.excluded_reason.is_none());
         assert!(!deserialized.is_test);
         assert!(!deserialized.is_binary);
-        
+
         // Test excluded file
         let excluded_file = WebFileInfo {
             path: "/tests/test.rs".to_string(),
@@ -276,10 +272,10 @@ mod tests {
             is_test: true,
             is_binary: false,
         };
-        
+
         let json = serde_json::to_string(&excluded_file).unwrap();
         let deserialized: WebFileInfo = serde_json::from_str(&json).unwrap();
-        
+
         assert!(!deserialized.included);
         assert_eq!(deserialized.excluded_reason, Some("Test file".to_string()));
         assert!(deserialized.is_test);
@@ -290,7 +286,7 @@ mod tests {
         let mut excluded_files = HashMap::new();
         excluded_files.insert("tests".to_string(), vec![]);
         excluded_files.insert("target".to_string(), vec![]);
-        
+
         let scan_result = RepositoryScanResult {
             total_files: 25,
             included_files: vec![],
@@ -299,10 +295,10 @@ mod tests {
             total_size: 51200,
             scan_duration_ms: 150,
         };
-        
+
         let json = serde_json::to_string(&scan_result).unwrap();
         let deserialized: RepositoryScanResult = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.total_files, 25);
         assert_eq!(deserialized.total_tokens, 12500);
         assert_eq!(deserialized.total_size, 51200);
@@ -320,16 +316,16 @@ mod tests {
             include_patterns: Some(vec!["*.rs".to_string(), "*.md".to_string()]),
             exclude_patterns: Some(vec!["target/".to_string()]),
         };
-        
+
         let json = serde_json::to_string(&update_request).unwrap();
         let deserialized: ConfigUpdateRequest = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.token_budget, Some(75000));
         assert_eq!(deserialized.auto_exclude_tests, Some(false));
         assert_eq!(deserialized.max_file_size, Some(2048 * 1024));
         assert_eq!(deserialized.include_patterns.unwrap().len(), 2);
         assert_eq!(deserialized.exclude_patterns.unwrap().len(), 1);
-        
+
         // Test partial update
         let partial_update = ConfigUpdateRequest {
             token_budget: Some(100000),
@@ -338,10 +334,10 @@ mod tests {
             include_patterns: None,
             exclude_patterns: None,
         };
-        
+
         let json = serde_json::to_string(&partial_update).unwrap();
         let deserialized: ConfigUpdateRequest = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.token_budget, Some(100000));
         assert!(deserialized.auto_exclude_tests.is_none());
         assert!(deserialized.max_file_size.is_none());
@@ -358,29 +354,32 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
-            WebSocketMessage::FileSelectionChanged { file_path, included } => {
+            WebSocketMessage::FileSelectionChanged {
+                file_path,
+                included,
+            } => {
                 assert_eq!(file_path, "src/lib.rs");
                 assert!(included);
             }
             _ => panic!("Expected FileSelectionChanged"),
         }
-        
+
         // Test bundle generation started
         let msg = WebSocketMessage::BundleGenerationStarted {
             format: BundleFormat::Html,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
             WebSocketMessage::BundleGenerationStarted { format } => {
                 assert_eq!(format.to_string(), "html");
             }
             _ => panic!("Expected BundleGenerationStarted"),
         }
-        
+
         // Test bundle generation completed
         let msg = WebSocketMessage::BundleGenerationCompleted {
             bundle_path: "/tmp/bundle.html".to_string(),
@@ -389,30 +388,34 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
-            WebSocketMessage::BundleGenerationCompleted { bundle_path, file_count, token_count } => {
+            WebSocketMessage::BundleGenerationCompleted {
+                bundle_path,
+                file_count,
+                token_count,
+            } => {
                 assert_eq!(bundle_path, "/tmp/bundle.html");
                 assert_eq!(file_count, 15);
                 assert_eq!(token_count, 7500);
             }
             _ => panic!("Expected BundleGenerationCompleted"),
         }
-        
+
         // Test bundle generation failed
         let msg = WebSocketMessage::BundleGenerationFailed {
             error: "Out of memory".to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
             WebSocketMessage::BundleGenerationFailed { error } => {
                 assert_eq!(error, "Out of memory");
             }
             _ => panic!("Expected BundleGenerationFailed"),
         }
-        
+
         // Test scan progress
         let msg = WebSocketMessage::ScanProgress {
             processed: 10,
@@ -421,16 +424,20 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
-            WebSocketMessage::ScanProgress { processed, total, current_file } => {
+            WebSocketMessage::ScanProgress {
+                processed,
+                total,
+                current_file,
+            } => {
                 assert_eq!(processed, 10);
                 assert_eq!(total, 25);
                 assert_eq!(current_file, "src/main.rs");
             }
             _ => panic!("Expected ScanProgress"),
         }
-        
+
         // Test configuration updated
         let msg = WebSocketMessage::ConfigurationUpdated {
             token_budget: 60000,
@@ -438,9 +445,12 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
-            WebSocketMessage::ConfigurationUpdated { token_budget, auto_exclude_tests } => {
+            WebSocketMessage::ConfigurationUpdated {
+                token_budget,
+                auto_exclude_tests,
+            } => {
                 assert_eq!(token_budget, 60000);
                 assert!(!auto_exclude_tests);
             }
@@ -455,24 +465,24 @@ mod tests {
             code: "INVALID_REQUEST".to_string(),
             details: Some(serde_json::json!({"field": "token_budget", "reason": "too_large"})),
         };
-        
+
         let json = serde_json::to_string(&error_response).unwrap();
         let deserialized: ErrorResponse = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.error, "Invalid request");
         assert_eq!(deserialized.code, "INVALID_REQUEST");
         assert!(deserialized.details.is_some());
-        
+
         // Test simple error
         let simple_error = ErrorResponse {
             error: "Not found".to_string(),
             code: "NOT_FOUND".to_string(),
             details: None,
         };
-        
+
         let json = serde_json::to_string(&simple_error).unwrap();
         let deserialized: ErrorResponse = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.error, "Not found");
         assert_eq!(deserialized.code, "NOT_FOUND");
         assert!(deserialized.details.is_none());

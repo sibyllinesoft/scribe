@@ -3,9 +3,9 @@
 //! Provides common functionality used across the Scribe ecosystem,
 //! including path manipulation, string processing, and validation.
 
+use crate::error::{Result, ScribeError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::error::{Result, ScribeError};
 
 /// Path utility functions
 pub mod path {
@@ -13,9 +13,7 @@ pub mod path {
 
     /// Normalize a path to use forward slashes (for cross-platform consistency)
     pub fn normalize_path<P: AsRef<Path>>(path: P) -> String {
-        path.as_ref()
-            .to_string_lossy()
-            .replace('\\', "/")
+        path.as_ref().to_string_lossy().replace('\\', "/")
     }
 
     /// Get relative path from base to target
@@ -25,24 +23,21 @@ pub mod path {
     ) -> Result<PathBuf> {
         let base_ref = base.as_ref();
         let target_ref = target.as_ref();
-        let base = base_ref.canonicalize()
-            .map_err(|e| ScribeError::path_with_source("Failed to canonicalize base path", base_ref, e))?;
-        let target = target_ref.canonicalize()
-            .map_err(|e| ScribeError::path_with_source("Failed to canonicalize target path", target_ref, e))?;
+        let base = base_ref.canonicalize().map_err(|e| {
+            ScribeError::path_with_source("Failed to canonicalize base path", base_ref, e)
+        })?;
+        let target = target_ref.canonicalize().map_err(|e| {
+            ScribeError::path_with_source("Failed to canonicalize target path", target_ref, e)
+        })?;
 
-        target.strip_prefix(&base)
+        target
+            .strip_prefix(&base)
             .map(|p| p.to_path_buf())
-            .map_err(|_| ScribeError::path(
-                "Target path is not under base path", 
-                &target
-            ))
+            .map_err(|_| ScribeError::path("Target path is not under base path", &target))
     }
 
     /// Check if path is under a given directory
-    pub fn is_under_directory<P1: AsRef<Path>, P2: AsRef<Path>>(
-        path: P1,
-        directory: P2,
-    ) -> bool {
+    pub fn is_under_directory<P1: AsRef<Path>, P2: AsRef<Path>>(path: P1, directory: P2) -> bool {
         match relative_path(directory, path) {
             Ok(rel_path) => !rel_path.to_string_lossy().starts_with(".."),
             Err(_) => false,
@@ -67,14 +62,14 @@ pub mod path {
     pub fn ensure_dir_exists<P: AsRef<Path>>(path: P) -> Result<()> {
         let path = path.as_ref();
         if !path.exists() {
-            std::fs::create_dir_all(path)
-                .map_err(|e| ScribeError::path_with_source(
-                    "Failed to create directory", 
-                    path, 
-                    e
-                ))?;
+            std::fs::create_dir_all(path).map_err(|e| {
+                ScribeError::path_with_source("Failed to create directory", path, e)
+            })?;
         } else if !path.is_dir() {
-            return Err(ScribeError::path("Path exists but is not a directory", path));
+            return Err(ScribeError::path(
+                "Path exists but is not a directory",
+                path,
+            ));
         }
         Ok(())
     }
@@ -94,14 +89,14 @@ pub mod path {
         ];
 
         let mut current = start_path.as_ref();
-        
+
         loop {
             for marker in REPO_MARKERS {
                 if current.join(marker).exists() {
                     return Some(current.to_path_buf());
                 }
             }
-            
+
             match current.parent() {
                 Some(parent) => current = parent,
                 None => return None,
@@ -175,13 +170,14 @@ pub mod string {
             return false;
         }
 
-        let non_printable = s.chars()
+        let non_printable = s
+            .chars()
             .filter(|&c| {
-                !c.is_ascii_graphic() && 
-                !c.is_ascii_whitespace() && 
-                c != '\n' && 
-                c != '\r' && 
-                c != '\t'
+                !c.is_ascii_graphic()
+                    && !c.is_ascii_whitespace()
+                    && c != '\n'
+                    && c != '\r'
+                    && c != '\t'
             })
             .count();
 
@@ -220,14 +216,14 @@ pub mod string {
     /// Convert camelCase to snake_case
     pub fn camel_to_snake(s: &str) -> String {
         let mut result = String::new();
-        
+
         for (i, c) in s.char_indices() {
             if c.is_uppercase() && i > 0 {
                 result.push('_');
             }
             result.push(c.to_lowercase().next().unwrap_or(c));
         }
-        
+
         result
     }
 }
@@ -364,7 +360,8 @@ pub mod math {
                 let diff = x - mean_val;
                 diff * diff
             })
-            .sum::<f64>() / values.len() as f64;
+            .sum::<f64>()
+            / values.len() as f64;
 
         variance.sqrt()
     }
@@ -415,7 +412,7 @@ pub mod validation {
     pub fn validate_directory<P: AsRef<Path>>(path: P) -> Result<()> {
         let path = path.as_ref();
         validate_readable_path(path)?;
-        
+
         if !path.is_dir() {
             return Err(ScribeError::path("Path is not a directory", path));
         }
@@ -427,7 +424,7 @@ pub mod validation {
     pub fn validate_file<P: AsRef<Path>>(path: P) -> Result<()> {
         let path = path.as_ref();
         validate_readable_path(path)?;
-        
+
         if !path.is_file() {
             return Err(ScribeError::path("Path is not a file", path));
         }
@@ -436,12 +433,7 @@ pub mod validation {
     }
 
     /// Validate configuration values
-    pub fn validate_config_value<T>(
-        value: T,
-        min: T,
-        max: T,
-        field_name: &str,
-    ) -> Result<T>
+    pub fn validate_config_value<T>(value: T, min: T, max: T, field_name: &str) -> Result<T>
     where
         T: PartialOrd + std::fmt::Display + Copy,
     {
@@ -537,7 +529,7 @@ mod tests {
     fn test_case_conversion() {
         assert_eq!(string::snake_to_camel("hello_world"), "helloWorld");
         assert_eq!(string::snake_to_camel("test_case_name"), "testCaseName");
-        
+
         assert_eq!(string::camel_to_snake("helloWorld"), "hello_world");
         assert_eq!(string::camel_to_snake("TestCaseName"), "test_case_name");
     }
@@ -547,7 +539,7 @@ mod tests {
         assert!(!string::is_likely_binary("Hello world"));
         assert!(!string::is_likely_binary("let x = 42;\nfn main() {}"));
         assert!(string::is_likely_binary("Hello\x00world"));
-        
+
         // Test high proportion of non-printable characters
         let mostly_non_printable = (0..100)
             .map(|i| if i % 3 == 0 { 'a' } else { '\x01' })
@@ -557,18 +549,9 @@ mod tests {
 
     #[test]
     fn test_duration_formatting() {
-        assert_eq!(
-            time::duration_to_human(Duration::from_millis(500)),
-            "500ms"
-        );
-        assert_eq!(
-            time::duration_to_human(Duration::from_secs(5)),
-            "5.000s"
-        );
-        assert_eq!(
-            time::duration_to_human(Duration::from_secs(65)),
-            "1m 5s"
-        );
+        assert_eq!(time::duration_to_human(Duration::from_millis(500)), "500ms");
+        assert_eq!(time::duration_to_human(Duration::from_secs(5)), "5.000s");
+        assert_eq!(time::duration_to_human(Duration::from_secs(65)), "1m 5s");
         assert_eq!(
             time::duration_to_human(Duration::from_secs(3661)),
             "1h 1m 1s"
@@ -579,14 +562,14 @@ mod tests {
     fn test_math_functions() {
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         assert_eq!(math::mean(&values), 3.0);
-        
+
         let mut values_for_median = values.clone();
         assert_eq!(math::median(&mut values_for_median), 3.0);
-        
+
         let std_dev = math::std_deviation(&values);
         // Standard deviation of [1,2,3,4,5] is sqrt(2) ≈ 1.4142
         assert!((std_dev - 1.4142135623730951).abs() < 1e-10);
-        
+
         assert_eq!(math::clamp(5.0, 2.0, 4.0), 4.0);
         assert_eq!(math::clamp(1.0, 2.0, 4.0), 2.0);
         assert_eq!(math::clamp(3.0, 2.0, 4.0), 3.0);
@@ -599,7 +582,7 @@ mod tests {
         assert_eq!(counts[&'a'], 3);
         assert_eq!(counts[&'b'], 1);
         assert_eq!(counts[&'c'], 1);
-        
+
         let most_common = collections::most_common(items.iter().cloned());
         assert_eq!(most_common, Some('a'));
     }
@@ -609,7 +592,7 @@ mod tests {
         let hash1 = hash::generate_hash(&"test string");
         let hash2 = hash::generate_hash(&"test string");
         let hash3 = hash::generate_hash(&"different string");
-        
+
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
     }

@@ -1,21 +1,23 @@
 //! Core scanning functionality for efficient file system traversal.
-//! 
+//!
 //! This module provides the main Scanner implementation with support for
 //! parallel processing, git integration, and advanced filtering.
 
-use scribe_core::{Result, ScribeError, FileInfo, Language, GitStatus, GitFileStatus, RenderDecision};
-use crate::{MetadataExtractor, ContentAnalyzer, GitIntegrator, LanguageDetector};
+use crate::{ContentAnalyzer, GitIntegrator, LanguageDetector, MetadataExtractor};
+use scribe_core::{
+    FileInfo, GitFileStatus, GitStatus, Language, RenderDecision, Result, ScribeError,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use walkdir::{WalkDir, DirEntry};
-use ignore::{WalkBuilder, WalkState, DirEntry as IgnoreDirEntry};
-use rayon::prelude::*;
-use tokio::sync::{Semaphore, RwLock};
 use futures::stream::{self, StreamExt};
+use ignore::{DirEntry as IgnoreDirEntry, WalkBuilder, WalkState};
+use rayon::prelude::*;
+use tokio::sync::{RwLock, Semaphore};
+use walkdir::{DirEntry, WalkDir};
 
 /// High-performance file system scanner with parallel processing
 #[derive(Debug)]
@@ -166,17 +168,27 @@ impl Scanner {
     }
 
     /// Scan a directory with the given options
-    pub async fn scan<P: AsRef<Path>>(&self, path: P, options: ScanOptions) -> Result<Vec<FileInfo>> {
+    pub async fn scan<P: AsRef<Path>>(
+        &self,
+        path: P,
+        options: ScanOptions,
+    ) -> Result<Vec<FileInfo>> {
         let start_time = Instant::now();
         let path = path.as_ref();
 
         // Validate input path
         if !path.exists() {
-            return Err(ScribeError::path(format!("Path does not exist: {}", path.display()), path));
+            return Err(ScribeError::path(
+                format!("Path does not exist: {}", path.display()),
+                path,
+            ));
         }
 
         if !path.is_dir() {
-            return Err(ScribeError::path(format!("Path is not a directory: {}", path.display()), path));
+            return Err(ScribeError::path(
+                format!("Path is not a directory: {}", path.display()),
+                path,
+            ));
         }
 
         // Initialize components
@@ -204,7 +216,10 @@ impl Scanner {
         let file_paths = if let Some(ref git) = git_integrator {
             match git.list_tracked_files().await {
                 Ok(paths) => {
-                    log::debug!("Using git ls-files for file discovery: {} files", paths.len());
+                    log::debug!(
+                        "Using git ls-files for file discovery: {} files",
+                        paths.len()
+                    );
                     paths
                 }
                 Err(_) => {
@@ -227,7 +242,10 @@ impl Scanner {
 
         // Process files with appropriate strategy
         let files = if options.parallel_processing {
-            log::debug!("Processing files in parallel with concurrency={}", options.max_concurrency);
+            log::debug!(
+                "Processing files in parallel with concurrency={}",
+                options.max_concurrency
+            );
             self.process_files_parallel(
                 file_paths,
                 &options,
@@ -235,7 +253,8 @@ impl Scanner {
                 content_analyzer.as_ref(),
                 git_integrator.as_ref(),
                 &language_detector,
-            ).await?
+            )
+            .await?
         } else {
             log::debug!("Processing files sequentially");
             self.process_files_sequential(
@@ -245,7 +264,8 @@ impl Scanner {
                 content_analyzer.as_ref(),
                 git_integrator.as_ref(),
                 &language_detector,
-            ).await?
+            )
+            .await?
         };
 
         log::info!(
@@ -258,9 +278,13 @@ impl Scanner {
     }
 
     /// Discover files using filesystem traversal with ignore patterns
-    async fn discover_files_filesystem(&self, root: &Path, options: &ScanOptions) -> Result<Vec<PathBuf>> {
+    async fn discover_files_filesystem(
+        &self,
+        root: &Path,
+        options: &ScanOptions,
+    ) -> Result<Vec<PathBuf>> {
         let mut builder = WalkBuilder::new(root);
-        
+
         builder
             .follow_links(options.follow_symlinks)
             .hidden(!options.include_hidden)
@@ -276,20 +300,24 @@ impl Scanner {
                 Ok(entry) => {
                     if entry.file_type().map_or(false, |ft| ft.is_file()) {
                         let path = entry.path().to_path_buf();
-                        
+
                         // Apply extension filters
                         if self.should_include_file(&path, options) {
                             files.push(path);
                         }
                     }
-                    
+
                     if entry.file_type().map_or(false, |ft| ft.is_dir()) {
-                        self.stats.directories_traversed.fetch_add(1, Ordering::Relaxed);
+                        self.stats
+                            .directories_traversed
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                 }
                 Err(err) => {
                     log::warn!("Error during filesystem traversal: {}", err);
-                    self.stats.errors_encountered.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .errors_encountered
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
             // Continue walking
@@ -310,39 +338,47 @@ impl Scanner {
     ) -> Result<Vec<FileInfo>> {
         let semaphore = Arc::new(Semaphore::new(options.max_concurrency));
         let results = Arc::new(RwLock::new(Vec::new()));
-        
+
         // Process files in chunks to manage memory usage
         let chunk_size = 1000;
         for chunk in file_paths.chunks(chunk_size) {
-            let futures: Vec<_> = chunk.iter().map(|path| {
-                let semaphore = Arc::clone(&semaphore);
-                let results = Arc::clone(&results);
-                let path = path.clone();
-                
-                async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-                    
-                    match self.process_single_file(
-                        &path,
-                        options,
-                        metadata_extractor,
-                        content_analyzer,
-                        git_integrator,
-                        language_detector,
-                    ).await {
-                        Ok(Some(file_info)) => {
-                            results.write().await.push(file_info);
-                        }
-                        Ok(None) => {
-                            // File was filtered out or is binary
-                        }
-                        Err(err) => {
-                            log::debug!("Error processing file {}: {}", path.display(), err);
-                            self.stats.errors_encountered.fetch_add(1, Ordering::Relaxed);
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|path| {
+                    let semaphore = Arc::clone(&semaphore);
+                    let results = Arc::clone(&results);
+                    let path = path.clone();
+
+                    async move {
+                        let _permit = semaphore.acquire().await.unwrap();
+
+                        match self
+                            .process_single_file(
+                                &path,
+                                options,
+                                metadata_extractor,
+                                content_analyzer,
+                                git_integrator,
+                                language_detector,
+                            )
+                            .await
+                        {
+                            Ok(Some(file_info)) => {
+                                results.write().await.push(file_info);
+                            }
+                            Ok(None) => {
+                                // File was filtered out or is binary
+                            }
+                            Err(err) => {
+                                log::debug!("Error processing file {}: {}", path.display(), err);
+                                self.stats
+                                    .errors_encountered
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
-                }
-            }).collect();
+                })
+                .collect();
 
             // Process chunk concurrently
             stream::iter(futures)
@@ -368,14 +404,17 @@ impl Scanner {
         let mut results = Vec::new();
 
         for path in file_paths {
-            match self.process_single_file(
-                &path,
-                options,
-                metadata_extractor,
-                content_analyzer,
-                git_integrator,
-                language_detector,
-            ).await {
+            match self
+                .process_single_file(
+                    &path,
+                    options,
+                    metadata_extractor,
+                    content_analyzer,
+                    git_integrator,
+                    language_detector,
+                )
+                .await
+            {
                 Ok(Some(file_info)) => {
                     results.push(file_info);
                 }
@@ -384,7 +423,9 @@ impl Scanner {
                 }
                 Err(err) => {
                     log::debug!("Error processing file {}: {}", path.display(), err);
-                    self.stats.errors_encountered.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .errors_encountered
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -408,30 +449,39 @@ impl Scanner {
         }
 
         let metadata = tokio::fs::metadata(path).await?;
-        
+
         // Skip if file is too large
         if let Some(max_size) = options.max_file_size {
             if metadata.len() > max_size {
-                log::debug!("Skipping large file: {} ({} bytes)", path.display(), metadata.len());
+                log::debug!(
+                    "Skipping large file: {} ({} bytes)",
+                    path.display(),
+                    metadata.len()
+                );
                 return Ok(None);
             }
         }
 
         // Basic language detection
         let language = language_detector.detect_language(path);
-        
+
         // Skip binary files unless specifically included
         if self.is_likely_binary(path, &language) {
-            self.stats.binary_files_skipped.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .binary_files_skipped
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(None);
         }
 
-        // Create base FileInfo  
+        // Create base FileInfo
         let relative_path = path.to_string_lossy().to_string();
-            
-        let file_type = FileInfo::classify_file_type(&relative_path, &language, 
-            path.extension().and_then(|e| e.to_str()).unwrap_or(""));
-            
+
+        let file_type = FileInfo::classify_file_type(
+            &relative_path,
+            &language,
+            path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+        );
+
         let mut file_info = FileInfo {
             path: path.to_path_buf(),
             relative_path,
@@ -482,7 +532,8 @@ impl Scanner {
 
     /// Check if a file should be included based on extension filters
     fn should_include_file(&self, path: &Path, options: &ScanOptions) -> bool {
-        let extension = path.extension()
+        let extension = path
+            .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("")
             .to_lowercase();
@@ -507,15 +558,12 @@ impl Scanner {
         // Check extension-based detection first
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
             let binary_extensions = [
-                "bin", "exe", "dll", "so", "dylib", "a", "lib",
-                "obj", "o", "class", "jar", "war", "ear",
-                "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg",
-                "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-                "zip", "tar", "gz", "bz2", "rar", "7z",
-                "mp3", "mp4", "avi", "mkv", "mov", "wmv",
-                "ttf", "otf", "woff", "woff2",
+                "bin", "exe", "dll", "so", "dylib", "a", "lib", "obj", "o", "class", "jar", "war",
+                "ear", "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg", "pdf", "doc", "docx",
+                "xls", "xlsx", "ppt", "pptx", "zip", "tar", "gz", "bz2", "rar", "7z", "mp3", "mp4",
+                "avi", "mkv", "mov", "wmv", "ttf", "otf", "woff", "woff2",
             ];
-            
+
             if binary_extensions.contains(&extension.to_lowercase().as_str()) {
                 return true;
             }
@@ -556,8 +604,8 @@ impl Default for Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
     use tokio::fs as async_fs;
 
     #[tokio::test]
@@ -571,10 +619,10 @@ mod tests {
     async fn test_scan_empty_directory() {
         let scanner = Scanner::new();
         let temp_dir = TempDir::new().unwrap();
-        
+
         let options = ScanOptions::default();
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
-        
+
         assert!(results.is_empty());
     }
 
@@ -582,29 +630,39 @@ mod tests {
     async fn test_scan_with_files() {
         let scanner = Scanner::new();
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create test files
         let rust_file = temp_dir.path().join("test.rs");
         let python_file = temp_dir.path().join("test.py");
         let binary_file = temp_dir.path().join("test.bin");
-        
+
         fs::write(&rust_file, "fn main() { println!(\"Hello, world!\"); }").unwrap();
         fs::write(&python_file, "print('Hello, world!')").unwrap();
         fs::write(&binary_file, &[0u8; 256]).unwrap(); // Binary content
-        
+
         let options = ScanOptions::default();
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
-        
+
         // Should find the text files but skip the binary
         assert_eq!(results.len(), 2);
-        assert!(results.iter().any(|f| f.path.file_name().unwrap() == "test.rs"));
-        assert!(results.iter().any(|f| f.path.file_name().unwrap() == "test.py"));
-        
+        assert!(results
+            .iter()
+            .any(|f| f.path.file_name().unwrap() == "test.rs"));
+        assert!(results
+            .iter()
+            .any(|f| f.path.file_name().unwrap() == "test.py"));
+
         // Check language detection
-        let rust_file_info = results.iter().find(|f| f.path.file_name().unwrap() == "test.rs").unwrap();
+        let rust_file_info = results
+            .iter()
+            .find(|f| f.path.file_name().unwrap() == "test.rs")
+            .unwrap();
         assert_eq!(rust_file_info.language, Language::Rust);
-        
-        let python_file_info = results.iter().find(|f| f.path.file_name().unwrap() == "test.py").unwrap();
+
+        let python_file_info = results
+            .iter()
+            .find(|f| f.path.file_name().unwrap() == "test.py")
+            .unwrap();
         assert_eq!(python_file_info.language, Language::Python);
     }
 
@@ -612,17 +670,17 @@ mod tests {
     async fn test_scan_options_extension_filtering() {
         let scanner = Scanner::new();
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create test files with different extensions
         fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
         fs::write(temp_dir.path().join("test.py"), "print('hello')").unwrap();
         fs::write(temp_dir.path().join("test.js"), "console.log('hello')").unwrap();
-        
+
         // Test include filter
         let options = ScanOptions::default()
             .with_include_extensions(vec!["rs".to_string(), "py".to_string()]);
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
-        
+
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|f| f.path.extension().unwrap() == "rs"));
         assert!(results.iter().any(|f| f.path.extension().unwrap() == "py"));
@@ -633,29 +691,29 @@ mod tests {
     async fn test_parallel_processing() {
         let scanner = Scanner::new();
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create multiple test files to trigger parallel processing
         for i in 0..150 {
             let file_path = temp_dir.path().join(format!("test_{}.rs", i));
             fs::write(&file_path, format!("fn main_{i}() {{}}")).unwrap();
         }
-        
+
         let options = ScanOptions::default()
             .with_parallel_processing(true)
             .with_max_concurrency(4);
-        
+
         let start = Instant::now();
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
         let duration = start.elapsed();
-        
+
         assert_eq!(results.len(), 150);
         log::info!("Parallel scan of 150 files took: {:?}", duration);
-        
+
         // Verify all files were processed correctly
         for i in 0..150 {
-            assert!(results.iter().any(|f| {
-                f.path.file_name().unwrap() == format!("test_{}.rs", i).as_str()
-            }));
+            assert!(results
+                .iter()
+                .any(|f| { f.path.file_name().unwrap() == format!("test_{}.rs", i).as_str() }));
         }
     }
 
@@ -670,7 +728,7 @@ mod tests {
             .with_follow_symlinks(false)
             .with_include_hidden(true)
             .with_max_file_size(Some(1024 * 1024));
-        
+
         assert_eq!(options.parallel_processing, true);
         assert_eq!(options.max_concurrency, 8);
         assert_eq!(options.metadata_extraction, true);
@@ -684,12 +742,12 @@ mod tests {
     #[test]
     fn test_binary_file_detection() {
         let scanner = Scanner::new();
-        
+
         // Test extension-based detection
         assert!(scanner.is_likely_binary(Path::new("test.exe"), &Language::Unknown));
         assert!(scanner.is_likely_binary(Path::new("test.png"), &Language::Unknown));
         assert!(scanner.is_likely_binary(Path::new("test.pdf"), &Language::Unknown));
-        
+
         // Test text file detection
         assert!(!scanner.is_likely_binary(Path::new("test.rs"), &Language::Rust));
         assert!(!scanner.is_likely_binary(Path::new("test.py"), &Language::Python));

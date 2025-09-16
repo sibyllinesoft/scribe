@@ -3,15 +3,15 @@
 //! Provides type conversions, helper functions, and common utilities for efficient
 //! data exchange between Rust and Python, with support for NumPy integration.
 
+use crate::error::rust_result_to_py;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple, PyString};
+use pyo3::types::{PyDict, PyList, PyString, PyTuple};
+use scribe_core::{
+    AnalysisResult, FileInfo, FileType, GitStatus, HeuristicWeights, Language, Position, Range,
+    RepositoryInfo, ScoreComponents,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use scribe_core::{
-    FileInfo, Language, FileType, ScoreComponents, HeuristicWeights,
-    Position, Range, RepositoryInfo, AnalysisResult, GitStatus
-};
-use crate::error::rust_result_to_py;
 
 /// Convert Rust PathBuf to Python string
 pub fn pathbuf_to_py(py: Python, path: &PathBuf) -> PyResult<PyObject> {
@@ -65,8 +65,8 @@ pub fn py_to_vec_pathbuf(obj: &PyAny) -> PyResult<Vec<PathBuf>> {
 }
 
 /// Convert Rust HashMap<String, T> to Python dict
-pub fn hashmap_to_py_dict<T>(py: Python, map: &HashMap<String, T>) -> PyResult<PyObject> 
-where 
+pub fn hashmap_to_py_dict<T>(py: Python, map: &HashMap<String, T>) -> PyResult<PyObject>
+where
     T: ToPyObject,
 {
     let py_dict = PyDict::new(py);
@@ -95,7 +95,7 @@ where
 pub fn language_to_py(py: Python, lang: &Language) -> PyResult<PyObject> {
     let lang_str = match lang {
         Language::Rust => "rust",
-        Language::Python => "python", 
+        Language::Python => "python",
         Language::JavaScript => "javascript",
         Language::TypeScript => "typescript",
         Language::Go => "go",
@@ -167,7 +167,7 @@ pub fn py_to_position(obj: &PyAny) -> PyResult<Position> {
     let tuple: &PyTuple = obj.extract()?;
     if tuple.len() != 2 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Position must be a tuple of (line, column)"
+            "Position must be a tuple of (line, column)",
         ));
     }
     let line: usize = tuple.get_item(0)?.extract()?;
@@ -213,9 +213,9 @@ pub fn score_components_to_py_dict(py: Python, scores: &ScoreComponents) -> PyRe
 /// Convert Python dict to Rust ScoreComponents
 pub fn py_dict_to_score_components(obj: &PyAny) -> PyResult<ScoreComponents> {
     let dict: &PyDict = obj.extract()?;
-    
+
     let mut scores = ScoreComponents::zero();
-    
+
     if let Some(val) = dict.get_item("doc_score")? {
         scores.doc_score = val.extract()?;
     }
@@ -255,7 +255,7 @@ pub fn py_dict_to_score_components(obj: &PyAny) -> PyResult<ScoreComponents> {
     if let Some(val) = dict.get_item("final_score")? {
         scores.final_score = val.extract()?;
     }
-    
+
     Ok(scores)
 }
 
@@ -280,9 +280,9 @@ pub fn heuristic_weights_to_py_dict(py: Python, weights: &HeuristicWeights) -> P
 /// Convert Python dict to Rust HeuristicWeights
 pub fn py_dict_to_heuristic_weights(obj: &PyAny) -> PyResult<HeuristicWeights> {
     let dict: &PyDict = obj.extract()?;
-    
+
     let mut weights = HeuristicWeights::default();
-    
+
     if let Some(val) = dict.get_item("documentation")? {
         weights.documentation = val.extract()?;
     }
@@ -319,7 +319,7 @@ pub fn py_dict_to_heuristic_weights(obj: &PyAny) -> PyResult<HeuristicWeights> {
     if let Some(val) = dict.get_item("centrality")? {
         weights.centrality = val.extract()?;
     }
-    
+
     Ok(weights)
 }
 
@@ -363,24 +363,24 @@ pub fn is_path_under_directory(path: &str, directory: &str) -> bool {
 /// Extract numeric statistics from a collection
 pub fn extract_numeric_stats(values: &[f64]) -> HashMap<String, f64> {
     let mut stats = HashMap::new();
-    
+
     if values.is_empty() {
         return stats;
     }
-    
+
     let mean = scribe_core::mean(values);
     let median = scribe_core::median(values);
     let std_dev = scribe_core::std_deviation(values);
     let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-    
+
     stats.insert("mean".to_string(), mean);
     stats.insert("median".to_string(), median);
     stats.insert("std_dev".to_string(), std_dev);
     stats.insert("min".to_string(), min);
     stats.insert("max".to_string(), max);
     stats.insert("count".to_string(), values.len() as f64);
-    
+
     stats
 }
 
@@ -399,14 +399,14 @@ mod tests {
         });
     }
 
-    #[test] 
+    #[test]
     fn test_language_conversions() {
         Python::with_gil(|py| {
             let lang = Language::Rust;
             let py_lang = language_to_py(py, &lang).unwrap();
             let py_str: &PyString = py_lang.downcast(py).unwrap();
             assert_eq!(py_str.to_string_lossy(), "rust");
-            
+
             let converted_back = py_to_language(py_str).unwrap();
             assert_eq!(converted_back, Language::Rust);
         });
@@ -415,14 +415,20 @@ mod tests {
     #[test]
     fn test_position_conversions() {
         Python::with_gil(|py| {
-            let pos = Position { line: 10, column: 5 };
+            let pos = Position {
+                line: 10,
+                column: 5,
+            };
             let py_pos = position_to_py(py, &pos).unwrap();
             let py_tuple: &PyTuple = py_pos.downcast(py).unwrap();
-            
+
             assert_eq!(py_tuple.len(), 2);
-            assert_eq!(py_tuple.get_item(0).unwrap().extract::<usize>().unwrap(), 10);
+            assert_eq!(
+                py_tuple.get_item(0).unwrap().extract::<usize>().unwrap(),
+                10
+            );
             assert_eq!(py_tuple.get_item(1).unwrap().extract::<usize>().unwrap(), 5);
-            
+
             let converted_back = py_to_position(py_tuple).unwrap();
             assert_eq!(converted_back.line, 10);
             assert_eq!(converted_back.column, 5);
@@ -436,13 +442,18 @@ mod tests {
             scores.doc_score = 0.8;
             scores.import_score = 0.6;
             scores.final_score = 0.7;
-            
+
             let py_scores = score_components_to_py_dict(py, &scores).unwrap();
             let py_dict: &PyDict = py_scores.downcast(py).unwrap();
-            
-            let doc_score: f64 = py_dict.get_item("doc_score").unwrap().unwrap().extract().unwrap();
+
+            let doc_score: f64 = py_dict
+                .get_item("doc_score")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
             assert_eq!(doc_score, 0.8);
-            
+
             let converted_back = py_dict_to_score_components(py_dict).unwrap();
             assert_eq!(converted_back.doc_score, 0.8);
             assert_eq!(converted_back.import_score, 0.6);
@@ -456,11 +467,25 @@ mod tests {
             let vec = vec!["hello".to_string(), "world".to_string()];
             let py_list = vec_string_to_py(py, &vec).unwrap();
             let py_list_ref: &PyList = py_list.downcast(py).unwrap();
-            
+
             assert_eq!(py_list_ref.len(), 2);
-            assert_eq!(py_list_ref.get_item(0).unwrap().extract::<String>().unwrap(), "hello");
-            assert_eq!(py_list_ref.get_item(1).unwrap().extract::<String>().unwrap(), "world");
-            
+            assert_eq!(
+                py_list_ref
+                    .get_item(0)
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "hello"
+            );
+            assert_eq!(
+                py_list_ref
+                    .get_item(1)
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "world"
+            );
+
             let converted_back = py_to_vec_string(py_list_ref).unwrap();
             assert_eq!(converted_back, vec!["hello", "world"]);
         });

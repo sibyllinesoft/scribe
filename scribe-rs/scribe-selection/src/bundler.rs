@@ -1,7 +1,7 @@
 //! Code bundler module - stub implementation
 
-use scribe_core::Result;
 use crate::context::CodeContext;
+use scribe_core::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ impl CodeBundler {
     pub async fn bundle(
         &self,
         _context: &CodeContext,
-        _options: &BundleOptions
+        _options: &BundleOptions,
     ) -> Result<CodeBundle> {
         // Stub implementation
         Ok(CodeBundle {

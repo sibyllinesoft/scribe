@@ -1,5 +1,5 @@
 //! # Scribe Scanner
-//! 
+//!
 //! High-performance file system scanning and indexing capabilities for the Scribe library.
 //! This crate provides efficient tools for discovering, filtering, and analyzing files
 //! in large codebases with git integration and parallel processing.
@@ -32,11 +32,11 @@
 //! ```
 
 // Core modules
-pub mod scanner;
-pub mod metadata;
 pub mod content;
 pub mod git_integration;
 pub mod language_detection;
+pub mod metadata;
+pub mod scanner;
 
 // Performance optimization modules
 pub mod filtering;
@@ -44,26 +44,28 @@ pub mod filtering;
 pub mod parallel;
 // pub mod compact_data; // Temporarily disabled due to compilation issues
 // pub mod incremental; // Temporarily disabled due to compilation issues
-pub mod performance;
 pub mod aho_corasick_reference_index;
+pub mod performance;
 
 // Re-export main types for convenience
-pub use scanner::{Scanner, ScanOptions, ScanResult, ScanProgress};
+pub use content::{ContentAnalyzer, ContentStats, DocumentationInfo, ImportInfo};
+pub use git_integration::{GitCommitInfo, GitFileInfo, GitIntegrator};
+pub use language_detection::{DetectionStrategy, LanguageDetector, LanguageHints};
 pub use metadata::{FileMetadata, MetadataExtractor, SizeStats};
-pub use content::{ContentAnalyzer, ImportInfo, DocumentationInfo, ContentStats};
-pub use git_integration::{GitIntegrator, GitFileInfo, GitCommitInfo};
-pub use language_detection::{LanguageDetector, LanguageHints, DetectionStrategy};
+pub use scanner::{ScanOptions, ScanProgress, ScanResult, Scanner};
 
 // Re-export performance optimization types
-pub use filtering::{FileFilter, DirectoryFilter, FilterResult, FilterReason};
+pub use filtering::{DirectoryFilter, FileFilter, FilterReason, FilterResult};
 // pub use git_batch::{GitBatchProcessor, BulkStatusResult, CompactGitFileInfo}; // Temporarily disabled
-pub use parallel::{ParallelController, ParallelConfig, WorkItem, ParallelMetrics};
+pub use parallel::{ParallelConfig, ParallelController, ParallelMetrics, WorkItem};
 // pub use compact_data::{CompactFileCollection, CompactFileInfo, CompactMetrics}; // Temporarily disabled
 // pub use incremental::{IncrementalScanner, IncrementalConfig, FileManifest}; // Temporarily disabled
-pub use performance::{PerformanceMonitor, PerformanceReport, PerfTimer, ErrorType, PERF_MONITOR, PerformanceSnapshot};
 pub use aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};
+pub use performance::{
+    ErrorType, PerfTimer, PerformanceMonitor, PerformanceReport, PerformanceSnapshot, PERF_MONITOR,
+};
 
-use scribe_core::{Result, FileInfo};
+use scribe_core::{FileInfo, Result};
 use std::path::Path;
 
 /// Current version of the scanner crate
@@ -103,7 +105,7 @@ impl FileScanner {
             .with_content_analysis(true)
             .with_git_integration(self.git_integrator.is_some())
             .with_parallel_processing(true);
-        
+
         self.scanner.scan(path, options).await
     }
 
@@ -112,7 +114,7 @@ impl FileScanner {
         let options = ScanOptions::default()
             .with_metadata_extraction(true)
             .with_parallel_processing(true);
-        
+
         self.scanner.scan(path, options).await
     }
 
@@ -122,7 +124,11 @@ impl FileScanner {
             files_processed: self.scanner.files_processed(),
             directories_traversed: self.scanner.directories_traversed(),
             binary_files_skipped: self.scanner.binary_files_skipped(),
-            git_files_discovered: self.git_integrator.as_ref().map(|g| g.files_discovered()).unwrap_or(0),
+            git_files_discovered: self
+                .git_integrator
+                .as_ref()
+                .map(|g| g.files_discovered())
+                .unwrap_or(0),
         }
     }
 }
@@ -145,8 +151,8 @@ pub struct ScannerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_scanner_creation() {
@@ -163,16 +169,18 @@ mod tests {
 
         let scanner = FileScanner::new();
         let results = scanner.scan_fast(temp_dir.path()).await.unwrap();
-        
+
         assert!(!results.is_empty());
-        assert!(results.iter().any(|f| f.path.file_name().unwrap() == "test.rs"));
+        assert!(results
+            .iter()
+            .any(|f| f.path.file_name().unwrap() == "test.rs"));
     }
 
     #[test]
     fn test_scanner_stats() {
         let scanner = FileScanner::new();
         let stats = scanner.get_stats();
-        
+
         assert_eq!(stats.files_processed, 0);
         assert_eq!(stats.directories_traversed, 0);
         assert_eq!(stats.binary_files_skipped, 0);
