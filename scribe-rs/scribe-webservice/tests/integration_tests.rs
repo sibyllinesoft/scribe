@@ -24,6 +24,8 @@ async fn create_test_server() -> TestServer {
         auto_open_browser: false,
         max_file_size: 1024 * 1024,
         auto_exclude_tests: true,
+        auto_shutdown: false,
+        auto_shutdown_timeout: 60,
     };
 
     let service = WebService::new(config).unwrap();

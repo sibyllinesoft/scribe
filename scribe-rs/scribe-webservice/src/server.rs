@@ -224,6 +224,8 @@ mod tests {
             auto_open_browser: false,
             max_file_size: 1024 * 1024,
             auto_exclude_tests: true,
+            auto_shutdown: false,
+            auto_shutdown_timeout: 60,
         };
 
         let service = WebService::new(valid_config);
@@ -300,6 +302,8 @@ mod tests {
             auto_open_browser: true,
             max_file_size: 512 * 1024,
             auto_exclude_tests: false,
+            auto_shutdown: false,
+            auto_shutdown_timeout: 60,
         };
 
         let service = WebService::new(config.clone()).unwrap();

@@ -627,11 +627,15 @@ mod tests {
             auto_open_browser: false,
             max_file_size: 1024,
             auto_exclude_tests: true,
+            auto_shutdown: false,
+            auto_shutdown_timeout: 60,
         };
 
         AppState {
             config,
             bundle_state: Arc::new(RwLock::new(BundleState::default())),
+            last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
+            shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -841,6 +845,8 @@ mod tests {
             auto_open_browser: true,
             max_file_size: 2048,
             auto_exclude_tests: false,
+            auto_shutdown: true,
+            auto_shutdown_timeout: 120,
         };
 
         let response = update_config(

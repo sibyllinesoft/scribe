@@ -181,6 +181,8 @@ mod tests {
             auto_open_browser: false,
             max_file_size: 512 * 1024,
             auto_exclude_tests: false,
+            auto_shutdown: true,
+            auto_shutdown_timeout: 30,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -252,6 +254,8 @@ mod tests {
         let state = AppState {
             config: config.clone(),
             bundle_state: Arc::new(RwLock::new(BundleState::default())),
+            last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
+            shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
         };
 
         assert_eq!(state.config.port, config.port);
@@ -391,6 +395,8 @@ mod tests {
             auto_open_browser: false,
             max_file_size: 1,
             auto_exclude_tests: false,
+            auto_shutdown: true,
+            auto_shutdown_timeout: 30,
         };
 
         assert_eq!(config.port, 1);
@@ -407,6 +413,8 @@ mod tests {
             auto_open_browser: true,
             max_file_size: 100 * 1024 * 1024, // 100MB
             auto_exclude_tests: true,
+            auto_shutdown: false,
+            auto_shutdown_timeout: 300,
         };
 
         assert_eq!(config.port, 65535);
