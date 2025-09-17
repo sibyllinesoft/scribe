@@ -53,8 +53,8 @@ ifeq ($(HEADLESS),0)
 endif
 endif
 
-# Default port
-PORT ?= 8080
+# Default port - use 9876 for CI, 8080 for local
+PORT ?= $(if $(CI),9876,8080)
 
 # Dependency checks
 check-deps: check-rust check-bun
@@ -204,7 +204,7 @@ clean-cache:
 # Development server
 dev-server: build
 	@echo "Starting Scribe development server on port $(PORT)..."
-	cd $(SCRIBE_DIR) && cargo run -p scribe-webservice --bin scribe-web -- . --port $(PORT) --no-browser
+	cd $(SCRIBE_DIR) && cargo run -p scribe-webservice --bin scribe-web -- . --port $(PORT) --no-browser --no-auto-shutdown
 
 # CI/CD targets
 ci: check-deps install build test

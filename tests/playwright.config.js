@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Use different ports for CI vs local development to avoid conflicts
+const TEST_PORT = process.env.CI ? 9876 : (process.env.PORT || 8080);
+const BASE_URL = `http://localhost:${TEST_PORT}`;
+
 /**
  * @see https://playwright.dev/docs/test-configuration
  */
@@ -24,7 +28,7 @@ export default defineConfig({
   /* Shared settings for all the projects below */
   use: {
     /* Base URL to use in actions like `await page.goto('/')` */
-    baseURL: 'http://localhost:8080',
+    baseURL: BASE_URL,
     
     /* Collect trace when retrying the failed test */
     trace: 'on-first-retry',
@@ -70,9 +74,11 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'cd ../scribe-rs && cargo run -p scribe-webservice --bin scribe-web -- . --port 8080 --no-browser',
-    url: 'http://localhost:8080',
+    command: `../scribe-rs/target/debug/scribe-web ../scribe-rs --port ${TEST_PORT} --no-browser --no-auto-shutdown`,
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 });
