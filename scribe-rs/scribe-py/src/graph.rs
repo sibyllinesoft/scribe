@@ -555,4 +555,3 @@ pub fn create_pagerank_analyzer_with_config(
         None,
     )
 }
-

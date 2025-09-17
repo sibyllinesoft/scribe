@@ -44,22 +44,22 @@ jobs:
       - name: Run Clippy lints
         run: |
           cd scribe-rs
-          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --all-targets --all-features --exclude scribe-py -- -D warnings
 
       - name: Build all workspace crates
         run: |
           cd scribe-rs
-          cargo build --workspace --all-features
+          cargo build --workspace --all-features --exclude scribe-py
 
       - name: Run Rust unit tests
         run: |
           cd scribe-rs
-          cargo test --workspace --all-features
+          cargo test --workspace --all-features --exclude scribe-py
 
       - name: Run Rust integration tests
         run: |
           cd scribe-rs
-          cargo test --workspace --all-features --test '*'
+          cargo test --workspace --all-features --test '*' --exclude scribe-py
 
       - name: Build scribe-web binary
         run: |

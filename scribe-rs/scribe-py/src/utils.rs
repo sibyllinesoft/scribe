@@ -383,4 +383,3 @@ pub fn extract_numeric_stats(values: &[f64]) -> HashMap<String, f64> {
 
     stats
 }
-

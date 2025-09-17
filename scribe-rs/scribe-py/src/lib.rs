@@ -278,4 +278,3 @@ fn scribe_py_extended(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_repository_comprehensive, m)?)?;
     Ok(())
 }
-

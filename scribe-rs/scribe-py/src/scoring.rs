@@ -413,4 +413,3 @@ pub fn get_default_weights() -> PyResult<PyObject> {
     let weights = HeuristicWeights::default();
     Python::with_gil(|py| heuristic_weights_to_py_dict(py, &weights))
 }
-

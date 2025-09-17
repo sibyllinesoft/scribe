@@ -555,4 +555,3 @@ pub fn find_repository_root(path: &str) -> PyResult<Option<String>> {
     let root = scribe_core::find_repo_root(&path_buf);
     Ok(root.map(|p| p.to_string_lossy().to_string()))
 }
-

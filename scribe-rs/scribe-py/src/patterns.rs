@@ -674,4 +674,3 @@ pub fn validate_pattern(pattern: &str) -> PyResult<bool> {
         Err(_) => Ok(false),
     }
 }
-
