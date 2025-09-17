@@ -1,0 +1,73 @@
+name: Local Security Test
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  security-local:
+    name: Security & Quality - Local Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain manually
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source ~/.cargo/env
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Install cargo-audit
+        run: |
+          source ~/.cargo/env
+          cargo install cargo-audit
+
+      - name: Run cargo audit
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo audit
+
+      - name: Install cargo-deny
+        run: |
+          source ~/.cargo/env
+          cargo install cargo-deny
+
+      - name: Run cargo deny
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo deny check
+
+      - name: Check for common security issues
+        run: |
+          cd scribe-rs
+          echo "Checking for potential hardcoded secrets..."
+          # Look for more specific patterns that indicate actual secrets
+          if grep -r "password\s*=\s*\"\|secret\s*=\s*\"\|api_key\s*=\s*\"\|token\s*=\s*\"" --include="*.rs" . | grep -v "// " | grep -v "test"; then
+            echo "Warning: Potential hardcoded secrets found"
+            exit 1
+          else
+            echo "✅ No hardcoded secrets detected"
+          fi
+
+      - name: Validate dependencies
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          echo "Checking for duplicate dependencies..."
+          cargo tree --duplicates
+
+      - name: Check dependency licenses
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          echo "Checking dependency licenses..."
+          cargo tree --format "{p} {l}" | grep -v "^[[:space:]]*$" | head -20

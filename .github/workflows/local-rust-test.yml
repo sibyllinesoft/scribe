@@ -1,0 +1,77 @@
+name: Local Rust Test
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust-core-local:
+    name: Rust Core - Local Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain manually
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source ~/.cargo/env
+          rustup component add rustfmt clippy
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Verify Rust installation
+        run: |
+          source ~/.cargo/env
+          rustc --version
+          cargo --version
+          rustfmt --version
+          cargo clippy --version
+
+      - name: Check Rust formatting
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo fmt --all -- --check
+
+      - name: Run Clippy lints
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo clippy --workspace --all-features --lib --bins --tests -- -D warnings
+
+      - name: Build all workspace crates
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo build --workspace --all-features
+
+      - name: Run Rust tests
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo test --workspace --all-features --lib --bins
+
+      - name: Build scribe binary
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo build -p scribe-analyzer --bin scribe --release
+
+      - name: Test CLI functionality
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          ./target/release/scribe --version
+          ./target/release/scribe --help
+
+      - name: Create artifacts manually
+        run: |
+          mkdir -p artifacts
+          cp scribe-rs/target/release/scribe artifacts/
+          ls -la artifacts/

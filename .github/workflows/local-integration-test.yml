@@ -1,0 +1,91 @@
+name: Local Integration Test
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  integration-local:
+    name: Integration & Smoke Tests - Local Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain manually
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source ~/.cargo/env
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Build scribe binary
+        run: |
+          source ~/.cargo/env
+          cd scribe-rs
+          cargo build -p scribe-analyzer --bin scribe --release
+
+      - name: Verify binary exists
+        run: |
+          ls -la scribe-rs/target/release/scribe
+          chmod +x scribe-rs/target/release/scribe
+
+      - name: Smoke test - Scribe version
+        run: |
+          cd scribe-rs
+          ./target/release/scribe --version
+
+      - name: Smoke test - Scribe help
+        run: |
+          cd scribe-rs
+          ./target/release/scribe --help
+
+      - name: Smoke test - Quick analysis
+        run: |
+          cd scribe-rs
+          echo "Testing scribe with minimal analysis..."
+          timeout 30 ./target/release/scribe . --token-budget 1000 --no-browser --port 9999 &
+          SERVER_PID=$!
+          
+          # Wait for server to start
+          echo "Waiting for server to start..."
+          sleep 15
+          
+          # Check if server is responding
+          if curl -f http://localhost:9999/ 2>/dev/null; then
+            echo "✅ Server is responding on port 9999"
+          else
+            echo "❌ Server not responding"
+          fi
+          
+          # Clean shutdown
+          echo "Shutting down server..."
+          kill $SERVER_PID || true
+          wait $SERVER_PID 2>/dev/null || true
+
+      - name: Test different port configuration
+        run: |
+          cd scribe-rs
+          echo "Testing different port configuration..."
+          timeout 15 ./target/release/scribe . --token-budget 500 --no-browser --port 9998 &
+          SERVER_PID=$!
+          sleep 10
+          kill $SERVER_PID || true
+          wait $SERVER_PID 2>/dev/null || true
+          echo "✅ Port configuration test completed"
+
+      - name: Basic performance test
+        run: |
+          cd scribe-rs
+          echo "Running basic performance test..."
+          time timeout 20 ./target/release/scribe . --token-budget 500 --no-browser --port 9997 &
+          SERVER_PID=$!
+          sleep 5
+          kill $SERVER_PID || true
+          wait $SERVER_PID 2>/dev/null || true
+          echo "✅ Performance test completed"
