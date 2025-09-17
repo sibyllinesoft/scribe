@@ -305,7 +305,9 @@ async fn test_update_config_endpoint() {
         "token_budget": 25000,
         "auto_open_browser": true,
         "max_file_size": 2048000,
-        "auto_exclude_tests": false
+        "auto_exclude_tests": false,
+        "auto_shutdown": false,
+        "auto_shutdown_timeout": 120
     });
 
     let response = server.post("/api/config").json(&request_body).await;
@@ -320,6 +322,8 @@ async fn test_update_config_endpoint() {
     assert_eq!(json["data"]["auto_open_browser"], true);
     assert_eq!(json["data"]["max_file_size"], 2048000);
     assert_eq!(json["data"]["auto_exclude_tests"], false);
+    assert_eq!(json["data"]["auto_shutdown"], false);
+    assert_eq!(json["data"]["auto_shutdown_timeout"], 120);
 }
 
 #[tokio::test]

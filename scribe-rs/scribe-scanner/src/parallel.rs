@@ -136,12 +136,15 @@ impl ParallelController {
         let concurrency_limit = Arc::new(AtomicUsize::new(config.initial_concurrency));
         let semaphore = Arc::new(Semaphore::new(config.initial_concurrency));
 
+        let mut initial_metrics = ParallelMetrics::default();
+        initial_metrics.current_concurrency = config.initial_concurrency;
+
         Self {
             concurrency_limit,
             semaphore,
             io_latency_tracker: Arc::new(IoLatencyTracker::new(50)),
             memory_tracker: Arc::new(MemoryTracker::new()),
-            metrics: Arc::new(Mutex::new(ParallelMetrics::default())),
+            metrics: Arc::new(Mutex::new(initial_metrics)),
             config,
         }
     }

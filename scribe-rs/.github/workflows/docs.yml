@@ -1,0 +1,338 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: "-D warnings"
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Cache Cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ubuntu-docs-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ubuntu-docs-cargo-
+          
+    - name: Build documentation
+      run: |
+        cargo doc \
+          --workspace \
+          --all-features \
+          --no-deps \
+          --document-private-items
+          
+    - name: Add documentation index
+      run: |
+        cat > target/doc/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Scribe Documentation</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    max-width: 800px;
+                    margin: 0 auto;
+                    padding: 2rem;
+                    line-height: 1.6;
+                    background: #fafafa;
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 3rem;
+                }
+                .header h1 {
+                    color: #2c3e50;
+                    margin-bottom: 0.5rem;
+                }
+                .header p {
+                    color: #7f8c8d;
+                    font-size: 1.1rem;
+                }
+                .crates {
+                    display: grid;
+                    gap: 1.5rem;
+                    margin-bottom: 3rem;
+                }
+                .crate {
+                    background: white;
+                    padding: 1.5rem;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    transition: transform 0.2s;
+                }
+                .crate:hover {
+                    transform: translateY(-2px);
+                }
+                .crate h3 {
+                    margin: 0 0 0.5rem 0;
+                    color: #2c3e50;
+                }
+                .crate p {
+                    margin: 0 0 1rem 0;
+                    color: #7f8c8d;
+                }
+                .crate a {
+                    display: inline-block;
+                    padding: 0.5rem 1rem;
+                    background: #3498db;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 4px;
+                    transition: background 0.2s;
+                }
+                .crate a:hover {
+                    background: #2980b9;
+                }
+                .footer {
+                    text-align: center;
+                    padding-top: 2rem;
+                    border-top: 1px solid #ecf0f1;
+                    color: #7f8c8d;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>🔍 Scribe Documentation</h1>
+                <p>Advanced code analysis and repository exploration library with AI-powered insights</p>
+            </div>
+            
+            <div class="crates">
+                <div class="crate">
+                    <h3>scribe-core</h3>
+                    <p>Core functionality and data structures for the Scribe analysis engine</p>
+                    <a href="scribe_core/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-analysis</h3>
+                    <p>Advanced code analysis capabilities and AI-powered insights</p>
+                    <a href="scribe_analysis/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-graph</h3>
+                    <p>Graph-based code analysis and dependency visualization</p>
+                    <a href="scribe_graph/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-scanner</h3>
+                    <p>High-performance file system scanning and indexing</p>
+                    <a href="scribe_scanner/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-patterns</h3>
+                    <p>Pattern matching and code search functionality</p>
+                    <a href="scribe_patterns/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-selection</h3>
+                    <p>Intelligent code selection and contextual analysis</p>
+                    <a href="scribe_selection/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-scaling</h3>
+                    <p>Scaling utilities and performance optimization</p>
+                    <a href="scribe_scaling/index.html">View Documentation →</a>
+                </div>
+                
+                <div class="crate">
+                    <h3>scribe-analyzer (Main CLI)</h3>
+                    <p>Command-line interface and main application entry point</p>
+                    <a href="scribe_analyzer/index.html">View Documentation →</a>
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p>Generated with ❤️ by rustdoc</p>
+            </div>
+        </body>
+        </html>
+        EOF
+        
+    - name: Upload documentation artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: documentation
+        path: target/doc/
+        retention-days: 30
+
+  check-docs:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Cache Cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ubuntu-check-docs-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ubuntu-check-docs-cargo-
+          
+    - name: Check documentation links
+      run: |
+        cargo doc \
+          --workspace \
+          --all-features \
+          --no-deps \
+          --document-private-items
+          
+    - name: Test documentation examples
+      run: cargo test --doc --workspace --all-features
+
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [build-docs, check-docs]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write   # to verify the deployment originates from an appropriate source
+      contents: read    # to checkout the repository
+    
+    # Deploy to the github-pages environment
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+      
+    steps:
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+      
+    - name: Download documentation artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: documentation
+        path: docs/
+        
+    - name: Upload to GitHub Pages
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: docs/
+        
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+
+  readme-sync:
+    name: Sync README with docs.rs
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Check README examples
+      run: |
+        # Extract and test code examples from README
+        if [ -f "README.md" ]; then
+          echo "Testing README code examples..."
+          # You can add specific README example testing here
+          echo "README examples would be tested here"
+        fi
+
+  doc-coverage:
+    name: Documentation Coverage
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@nightly
+      
+    - name: Cache Cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ubuntu-doc-coverage-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ubuntu-doc-coverage-cargo-
+          
+    - name: Check documentation coverage
+      run: |
+        RUSTDOCFLAGS="-Z unstable-options --show-coverage" \
+        cargo +nightly doc \
+          --workspace \
+          --all-features \
+          --no-deps \
+          --document-private-items
+
+  # Documentation success check
+  docs-success:
+    name: Documentation Success
+    runs-on: ubuntu-latest
+    needs: [build-docs, check-docs, doc-coverage]
+    if: always()
+    steps:
+    - name: Check documentation jobs
+      run: |
+        echo "## Documentation Build Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|---------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Build Docs | ${{ needs.build-docs.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Check Docs | ${{ needs.check-docs.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Doc Coverage | ${{ needs.doc-coverage.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ needs.build-docs.result }}" == "success" && \
+              "${{ needs.check-docs.result }}" == "success" && \
+              "${{ needs.doc-coverage.result }}" == "success" ]]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📚 All documentation checks passed!" >> $GITHUB_STEP_SUMMARY
+          exit 0
+        else
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ Some documentation checks failed." >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi

@@ -1138,7 +1138,6 @@ impl GitIntegrator {
         let output = AsyncCommand::new("git")
             .arg("log")
             .arg("--numstat")
-            .arg("--name-status")
             .arg("--pretty=format:%H|%an|%at|%s")
             .arg(format!("--max-count={}", config.max_commits))
             .arg(range)
@@ -1878,7 +1877,7 @@ mod tests {
             let config = DiffAnalysisConfig {
                 include_staged: false,
                 include_unstaged: false,
-                include_commits: Some(vec!["HEAD".to_string()]),
+                commit_range: Some("HEAD~1..HEAD".to_string()),
                 ..Default::default()
             };
 

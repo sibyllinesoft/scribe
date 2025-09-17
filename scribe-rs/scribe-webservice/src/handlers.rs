@@ -198,8 +198,9 @@ pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
     <html>
     <head><title>Test - {}</title></head>
     <body>
-        <h1>Scribe Analysis - {}</h1>
+        <h1>Scribe Bundle Editor - {}</h1>
         <p>Repository: {}</p>
+        <p>Token Budget: {}</p>
         <p>Files: {}</p>
         <p>Total tokens: {}</p>
         <p>Template rendering test successful!</p>
@@ -209,6 +210,7 @@ pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
         template_data.repository_name,
         template_data.repository_name,
         state.config.repo_path.display(),
+        state.config.token_budget,
         template_data.total_files,
         template_data.total_tokens
     );

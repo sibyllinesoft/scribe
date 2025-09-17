@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+.github/
+
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+
+# Testing
+tests/
+benchmarks/
+
+# Misc
+.env
+.env.local
+*.log
