@@ -4,9 +4,9 @@
 //! import statements from source code using TreeCursor for efficient traversal
 //! and parser reuse for better performance.
 
-use scribe_core::Result;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
+use scribe_core::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tree_sitter::{Language, Node, Parser, Tree, TreeCursor};
@@ -62,7 +62,7 @@ static PARSER_POOL: Lazy<Arc<Mutex<HashMap<ImportLanguage, Vec<Parser>>>>> =
 /// Node types that can contain imports - for fast filtering
 const IMPORT_NODE_TYPES: &[&str] = &[
     "import_statement",
-    "import_from_statement", 
+    "import_from_statement",
     "use_declaration",
     "import_declaration",
     "import_spec",
@@ -94,7 +94,7 @@ impl SimpleAstParser {
     /// Ensure the parser pool is initialized with all supported languages
     fn ensure_parser_pool_initialized() -> Result<()> {
         let mut pool = PARSER_POOL.lock().unwrap();
-        
+
         for language in [
             ImportLanguage::Python,
             ImportLanguage::JavaScript,
@@ -115,20 +115,20 @@ impl SimpleAstParser {
                 pool.insert(language, vec![parser]);
             }
         }
-        
+
         Ok(())
     }
 
     /// Get a parser from the pool or create a new one
     fn get_parser(&self, language: ImportLanguage) -> Result<Parser> {
         let mut pool = PARSER_POOL.lock().unwrap();
-        
+
         if let Some(parsers) = pool.get_mut(&language) {
             if let Some(parser) = parsers.pop() {
                 return Ok(parser);
             }
         }
-        
+
         // Create a new parser if pool is empty
         let mut parser = Parser::new();
         parser
@@ -156,13 +156,13 @@ impl SimpleAstParser {
     ) -> Result<Vec<SimpleImport>> {
         // Get parser from pool
         let mut parser = self.get_parser(language)?;
-        
+
         let tree = parser
             .parse(content, None)
             .ok_or_else(|| scribe_core::ScribeError::parse("Failed to parse content"))?;
 
         let mut imports = Vec::new();
-        
+
         // Use TreeCursor for efficient traversal
         let mut cursor = tree.walk();
         self.extract_imports_with_cursor(&mut cursor, content, language, &mut imports)?;
@@ -182,7 +182,7 @@ impl SimpleAstParser {
         imports: &mut Vec<SimpleImport>,
     ) -> Result<()> {
         let node = cursor.node();
-        
+
         // Fast filter: skip nodes that can't contain imports
         if !self.node_can_contain_imports(node.kind()) {
             return Ok(());
@@ -209,23 +209,24 @@ impl SimpleAstParser {
 
     /// Check if a node type can contain imports (fast filter)
     fn node_can_contain_imports(&self, kind: &str) -> bool {
-        IMPORT_NODE_TYPES.contains(&kind) || 
-        kind.contains("import") || 
-        kind.contains("use") ||
-        kind == "program" ||
-        kind == "translation_unit" ||
-        kind == "block" ||
-        kind == "statement_block"
+        IMPORT_NODE_TYPES.contains(&kind)
+            || kind.contains("import")
+            || kind.contains("use")
+            || kind == "program"
+            || kind == "translation_unit"
+            || kind == "block"
+            || kind == "statement_block"
     }
 
     /// Check if a node is an import statement
     fn is_import_node(&self, kind: &str) -> bool {
-        matches!(kind, 
-            "import_statement" | 
-            "import_from_statement" | 
-            "use_declaration" | 
-            "import_declaration" | 
-            "import_spec"
+        matches!(
+            kind,
+            "import_statement"
+                | "import_from_statement"
+                | "use_declaration"
+                | "import_declaration"
+                | "import_spec"
         )
     }
 

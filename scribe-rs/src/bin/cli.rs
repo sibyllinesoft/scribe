@@ -2575,8 +2575,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Enable scaling optimizations if requested
     config.features.scaling_enabled = use_scaling;
-    
-    // Enable auto-exclude tests if requested  
+
+    // Enable auto-exclude tests if requested
     config.features.auto_exclude_tests = exclude_tests;
 
     if verbose_level > 0 {

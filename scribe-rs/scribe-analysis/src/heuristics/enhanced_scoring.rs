@@ -14,9 +14,9 @@
 use super::scoring::RawScoreComponents;
 use super::{HeuristicWeights, ScanResult, ScoreComponents};
 use crate::complexity::{ComplexityAnalyzer, ComplexityConfig, ComplexityMetrics};
+use rayon::prelude::*;
 use scribe_core::{Result, ScribeError};
 use std::collections::HashMap;
-use rayon::prelude::*;
 
 /// Enhanced score components that include complexity metrics
 #[derive(Debug, Clone)]
@@ -300,40 +300,41 @@ impl EnhancedHeuristicScorer {
         T: ScanResult + Clone + Sync + Send,
     {
         let files: Vec<_> = files_with_content.iter().map(|(f, _)| f.clone()).collect();
-        
+
         // PERFORMANCE OPTIMIZATION: Parallelize complexity analysis first
-        let complexity_results: Result<HashMap<usize, Option<ComplexityMetrics>>> = if self.enable_complexity_analysis {
-            // Create a snapshot of cache for parallel access
-            let cache_snapshot: HashMap<String, ComplexityMetrics> = self.content_cache.clone();
-            
-            // Compute complexity metrics in parallel for all files
-            let results: Result<Vec<(usize, Option<ComplexityMetrics>)>> = files_with_content
-                .par_iter()
-                .enumerate()
-                .map(|(idx, (file, content))| {
-                    // Check cache first
-                    if let Some(cached) = cache_snapshot.get(file.path()) {
-                        return Ok((idx, Some(cached.clone())));
-                    }
-                    
-                    // Detect language and analyze complexity
-                    let language = Self::detect_language_static(file.path());
-                    let analyzer = ComplexityAnalyzer::new();
-                    
-                    match analyzer.analyze_content(content, &language) {
-                        Ok(metrics) => Ok((idx, Some(metrics))),
-                        Err(_) => Ok((idx, None)), // Skip files that can't be analyzed
-                    }
-                })
-                .collect();
-            
-            results.map(|vec| vec.into_iter().collect())
-        } else {
-            Ok(HashMap::new())
-        };
+        let complexity_results: Result<HashMap<usize, Option<ComplexityMetrics>>> =
+            if self.enable_complexity_analysis {
+                // Create a snapshot of cache for parallel access
+                let cache_snapshot: HashMap<String, ComplexityMetrics> = self.content_cache.clone();
+
+                // Compute complexity metrics in parallel for all files
+                let results: Result<Vec<(usize, Option<ComplexityMetrics>)>> = files_with_content
+                    .par_iter()
+                    .enumerate()
+                    .map(|(idx, (file, content))| {
+                        // Check cache first
+                        if let Some(cached) = cache_snapshot.get(file.path()) {
+                            return Ok((idx, Some(cached.clone())));
+                        }
+
+                        // Detect language and analyze complexity
+                        let language = Self::detect_language_static(file.path());
+                        let analyzer = ComplexityAnalyzer::new();
+
+                        match analyzer.analyze_content(content, &language) {
+                            Ok(metrics) => Ok((idx, Some(metrics))),
+                            Err(_) => Ok((idx, None)), // Skip files that can't be analyzed
+                        }
+                    })
+                    .collect();
+
+                results.map(|vec| vec.into_iter().collect())
+            } else {
+                Ok(HashMap::new())
+            };
 
         let complexity_results = complexity_results?;
-        
+
         // Update cache with new results (sequential for cache safety)
         for (idx, metrics_opt) in &complexity_results {
             if let Some(metrics) = metrics_opt {
@@ -346,10 +347,10 @@ impl EnhancedHeuristicScorer {
         let mut scored_files = Vec::new();
         for (idx, (file, content)) in files_with_content.iter().enumerate() {
             let score = self.score_file_enhanced_with_precomputed_complexity(
-                file, 
-                content, 
-                &files, 
-                complexity_results.get(&idx).and_then(|opt| opt.as_ref())
+                file,
+                content,
+                &files,
+                complexity_results.get(&idx).and_then(|opt| opt.as_ref()),
             )?;
             scored_files.push((idx, score));
         }

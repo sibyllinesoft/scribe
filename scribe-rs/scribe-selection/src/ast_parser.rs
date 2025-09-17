@@ -172,7 +172,7 @@ impl AstParser {
             .ok_or_else(|| ScribeError::parse("Failed to parse content"))?;
 
         let mut imports = Vec::new();
-        
+
         // Use TreeCursor for efficient traversal
         let mut cursor = tree.walk();
         self.extract_imports_with_cursor(&mut cursor, content, language, &mut imports)?;
@@ -189,7 +189,7 @@ impl AstParser {
         imports: &mut Vec<AstImport>,
     ) -> Result<()> {
         let node = cursor.node();
-        
+
         // Fast filter: skip nodes that can't contain imports
         if !self.node_can_contain_imports(node.kind()) {
             return Ok(());
@@ -216,18 +216,32 @@ impl AstParser {
 
     /// Check if a node type can contain imports (fast filter)
     fn node_can_contain_imports(&self, kind: &str) -> bool {
-        matches!(kind,
-            "import_statement" | "import_from_statement" | "use_declaration" | 
-            "import_declaration" | "import_spec" | "source_file" | "module" |
-            "program" | "translation_unit" | "block" | "statement_block"
-        ) || kind.contains("import") || kind.contains("use")
+        matches!(
+            kind,
+            "import_statement"
+                | "import_from_statement"
+                | "use_declaration"
+                | "import_declaration"
+                | "import_spec"
+                | "source_file"
+                | "module"
+                | "program"
+                | "translation_unit"
+                | "block"
+                | "statement_block"
+        ) || kind.contains("import")
+            || kind.contains("use")
     }
 
     /// Check if a node is an import statement
     fn is_import_node(&self, kind: &str) -> bool {
-        matches!(kind, 
-            "import_statement" | "import_from_statement" | "use_declaration" | 
-            "import_declaration" | "import_spec"
+        matches!(
+            kind,
+            "import_statement"
+                | "import_from_statement"
+                | "use_declaration"
+                | "import_declaration"
+                | "import_spec"
         )
     }
 

@@ -382,11 +382,14 @@ async fn test_cli_exclude_tests_flag() {
     let output = std::process::Command::new("cargo")
         .args([
             "run",
-            "--package", "scribe-analyzer",
-            "--bin", "scribe",
+            "--package",
+            "scribe-analyzer",
+            "--bin",
+            "scribe",
             "--",
             "--verbose",
-            "--out", output_path.to_str().unwrap(),
+            "--out",
+            output_path.to_str().unwrap(),
             repo_path.to_str().unwrap(),
         ])
         .output()
@@ -404,20 +407,23 @@ async fn test_cli_exclude_tests_flag() {
     }
 
     // Read the output to see what files were selected
-    let content_without_exclude = std::fs::read_to_string(&output_path)
-        .expect("Failed to read output file");
+    let content_without_exclude =
+        std::fs::read_to_string(&output_path).expect("Failed to read output file");
 
     // Test with exclude-tests flag (should exclude test files)
     let output_path_exclude = temp_dir.path().join("output_exclude.md");
     let output = std::process::Command::new("cargo")
         .args([
             "run",
-            "--package", "scribe-analyzer", 
-            "--bin", "scribe",
+            "--package",
+            "scribe-analyzer",
+            "--bin",
+            "scribe",
             "--",
             "--exclude-tests",
             "--verbose",
-            "--out", output_path_exclude.to_str().unwrap(),
+            "--out",
+            output_path_exclude.to_str().unwrap(),
             repo_path.to_str().unwrap(),
         ])
         .output()
@@ -431,7 +437,10 @@ async fn test_cli_exclude_tests_flag() {
 
     // Verify command executed successfully
     if !output.status.success() {
-        panic!("Scribe command with exclude-tests failed: {}", stderr_exclude);
+        panic!(
+            "Scribe command with exclude-tests failed: {}",
+            stderr_exclude
+        );
     }
 
     // Read the output to see what files were selected
@@ -440,16 +449,25 @@ async fn test_cli_exclude_tests_flag() {
 
     // Verify that test files are excluded when flag is used
     // The content with exclude-tests should be shorter (fewer files) than without
-    println!("Content length without exclude: {}", content_without_exclude.len());
-    println!("Content length with exclude: {}", content_with_exclude.len());
-    
+    println!(
+        "Content length without exclude: {}",
+        content_without_exclude.len()
+    );
+    println!(
+        "Content length with exclude: {}",
+        content_with_exclude.len()
+    );
+
     // With exclude-tests, we should have fewer references to test files
     let test_references_without = content_without_exclude.matches("test").count();
     let test_references_with = content_with_exclude.matches("test").count();
-    
-    println!("Test references without exclude: {}", test_references_without);
+
+    println!(
+        "Test references without exclude: {}",
+        test_references_without
+    );
     println!("Test references with exclude: {}", test_references_with);
-    
+
     // The exclude tests flag should reduce test-related content
     assert!(
         test_references_with < test_references_without,
@@ -465,7 +483,7 @@ async fn create_test_repository_with_tests() -> TempDir {
     // Add test files that should be excluded
     fs::create_dir_all(repo_path.join("tests")).unwrap();
     fs::create_dir_all(repo_path.join("src/test")).unwrap();
-    
+
     // Create test files with various patterns
     fs::write(repo_path.join("tests/unit_test.rs"),
         "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_config_creation() {\n        let config = Config::default();\n        assert!(config.debug);\n    }\n}"
