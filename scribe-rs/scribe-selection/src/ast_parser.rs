@@ -159,7 +159,7 @@ impl AstParser {
     }
 
     /// Extract signatures using tree-sitter AST
-    /// Extract imports from the given content using tree-sitter
+    /// Extract imports from the given content using optimized tree-sitter traversal
     pub fn extract_imports(&self, content: &str, language: AstLanguage) -> Result<Vec<AstImport>> {
         // Create a fresh parser for this operation to avoid mutable borrow issues
         let mut parser = Parser::new();
@@ -172,25 +172,88 @@ impl AstParser {
             .ok_or_else(|| ScribeError::parse("Failed to parse content"))?;
 
         let mut imports = Vec::new();
-        let root_node = tree.root_node();
-
-        // Extract imports based on language
-        match language {
-            AstLanguage::Python => {
-                self.extract_python_imports(&root_node, content, &mut imports)?;
-            }
-            AstLanguage::JavaScript | AstLanguage::TypeScript => {
-                self.extract_js_ts_imports(&root_node, content, &mut imports)?;
-            }
-            AstLanguage::Go => {
-                self.extract_go_imports(&root_node, content, &mut imports)?;
-            }
-            AstLanguage::Rust => {
-                self.extract_rust_imports(&root_node, content, &mut imports)?;
-            }
-        }
+        
+        // Use TreeCursor for efficient traversal
+        let mut cursor = tree.walk();
+        self.extract_imports_with_cursor(&mut cursor, content, language, &mut imports)?;
 
         Ok(imports)
+    }
+
+    /// Extract imports using TreeCursor for optimal performance
+    fn extract_imports_with_cursor(
+        &self,
+        cursor: &mut tree_sitter::TreeCursor,
+        content: &str,
+        language: AstLanguage,
+        imports: &mut Vec<AstImport>,
+    ) -> Result<()> {
+        let node = cursor.node();
+        
+        // Fast filter: skip nodes that can't contain imports
+        if !self.node_can_contain_imports(node.kind()) {
+            return Ok(());
+        }
+
+        // Process current node if it's an import
+        if self.is_import_node(node.kind()) {
+            self.extract_import_from_node(node, content, language, imports)?;
+        }
+
+        // Traverse children using cursor (much faster than child(i) loops)
+        if cursor.goto_first_child() {
+            loop {
+                self.extract_imports_with_cursor(cursor, content, language, imports)?;
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            cursor.goto_parent();
+        }
+
+        Ok(())
+    }
+
+    /// Check if a node type can contain imports (fast filter)
+    fn node_can_contain_imports(&self, kind: &str) -> bool {
+        matches!(kind,
+            "import_statement" | "import_from_statement" | "use_declaration" | 
+            "import_declaration" | "import_spec" | "source_file" | "module" |
+            "program" | "translation_unit" | "block" | "statement_block"
+        ) || kind.contains("import") || kind.contains("use")
+    }
+
+    /// Check if a node is an import statement
+    fn is_import_node(&self, kind: &str) -> bool {
+        matches!(kind, 
+            "import_statement" | "import_from_statement" | "use_declaration" | 
+            "import_declaration" | "import_spec"
+        )
+    }
+
+    /// Extract import from a specific node (no recursion needed)
+    fn extract_import_from_node(
+        &self,
+        node: Node,
+        content: &str,
+        language: AstLanguage,
+        imports: &mut Vec<AstImport>,
+    ) -> Result<()> {
+        match language {
+            AstLanguage::Python => {
+                self.extract_python_import_node(node, content, imports)?;
+            }
+            AstLanguage::JavaScript | AstLanguage::TypeScript => {
+                self.extract_js_ts_import_node(node, content, imports)?;
+            }
+            AstLanguage::Go => {
+                self.extract_go_import_node(node, content, imports)?;
+            }
+            AstLanguage::Rust => {
+                self.extract_rust_import_node(node, content, imports)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn extract_signatures(
@@ -879,15 +942,13 @@ impl AstParser {
         })
     }
 
-    /// Extract Python imports from AST
-    fn extract_python_imports(
+    /// Extract Python import from a single node (optimized, no recursion)
+    fn extract_python_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<AstImport>,
     ) -> Result<()> {
-        let mut cursor = node.walk();
-
         // Look for import_statement and import_from_statement nodes
         if node.kind() == "import_statement" {
             // Handle import statements like "import os" or "import sys as system"
@@ -977,26 +1038,19 @@ impl AstParser {
             });
         }
 
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_python_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
-    /// Extract JavaScript/TypeScript imports from AST
-    fn extract_js_ts_imports(
+    /// Extract JavaScript/TypeScript import from a single node (optimized, no recursion)
+    fn extract_js_ts_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<AstImport>,
     ) -> Result<()> {
         if node.kind() == "import_statement" {
             let mut module = String::new();
-            let mut items = Vec::new();
+            let items = Vec::new();
 
             // Find the source
             for i in 0..node.child_count() {
@@ -1019,21 +1073,13 @@ impl AstParser {
                 is_relative: false,
             });
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_js_ts_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
-    /// Extract Go imports from AST
-    fn extract_go_imports(
+    /// Extract Go import from a single node (optimized, no recursion)
+    fn extract_go_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<AstImport>,
     ) -> Result<()> {
@@ -1056,21 +1102,13 @@ impl AstParser {
                 }
             }
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_go_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
-    /// Extract Rust imports from AST
-    fn extract_rust_imports(
+    /// Extract Rust import from a single node (optimized, no recursion)
+    fn extract_rust_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<AstImport>,
     ) -> Result<()> {
@@ -1088,14 +1126,6 @@ impl AstParser {
                 });
             }
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_rust_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 

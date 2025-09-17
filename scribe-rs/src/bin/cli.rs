@@ -2263,6 +2263,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .value_name("PATTERNS"),
         )
         .arg(
+            Arg::new("exclude_tests")
+                .long("exclude-tests")
+                .help("Exclude test files from selection (tests/, *_test.*, *.test.*, *.spec.*)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
@@ -2338,7 +2344,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .long("diff-commits")
                 .help("Number of recent commits to analyze")
                 .value_name("COUNT")
-                .default_value("10")
+                .default_value("1")
                 .value_parser(clap::value_parser!(usize)),
         )
         .arg(
@@ -2438,6 +2444,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let diff_branch = matches.get_one::<String>("diff_branch").cloned();
     let diff_relevance_threshold = *matches.get_one::<f64>("diff_relevance_threshold").unwrap();
     let use_scaling = matches.get_flag("scaling");
+    let exclude_tests = matches.get_flag("exclude_tests");
 
     // Set up verbose logging and debug output
     if verbose_level > 0 {
@@ -2518,6 +2525,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         if use_scaling {
             info!("Scaling optimizations: ENABLED");
         }
+        if exclude_tests {
+            info!("Auto-exclude tests: ENABLED");
+        }
     }
 
     info!("🔍 Phase 1: File Discovery");
@@ -2565,6 +2575,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Enable scaling optimizations if requested
     config.features.scaling_enabled = use_scaling;
+    
+    // Enable auto-exclude tests if requested  
+    config.features.auto_exclude_tests = exclude_tests;
 
     if verbose_level > 0 {
         info!("🎯 Token budget configured: {} tokens", token_target);

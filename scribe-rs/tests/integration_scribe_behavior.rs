@@ -370,3 +370,122 @@ async fn create_large_test_repository() -> TempDir {
 
     temp_dir
 }
+
+/// Test CLI exclude-tests flag functionality
+#[tokio::test]
+async fn test_cli_exclude_tests_flag() {
+    let temp_dir = create_test_repository_with_tests().await;
+    let repo_path = temp_dir.path();
+    let output_path = temp_dir.path().join("output.md");
+
+    // Test without exclude-tests flag (should include test files)
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "--package", "scribe-analyzer",
+            "--bin", "scribe",
+            "--",
+            "--verbose",
+            "--out", output_path.to_str().unwrap(),
+            repo_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute scribe command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!("Without exclude-tests flag:");
+    println!("STDOUT: {}", stdout);
+    println!("STDERR: {}", stderr);
+
+    // Verify command executed successfully
+    if !output.status.success() {
+        panic!("Scribe command failed: {}", stderr);
+    }
+
+    // Read the output to see what files were selected
+    let content_without_exclude = std::fs::read_to_string(&output_path)
+        .expect("Failed to read output file");
+
+    // Test with exclude-tests flag (should exclude test files)
+    let output_path_exclude = temp_dir.path().join("output_exclude.md");
+    let output = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "--package", "scribe-analyzer", 
+            "--bin", "scribe",
+            "--",
+            "--exclude-tests",
+            "--verbose",
+            "--out", output_path_exclude.to_str().unwrap(),
+            repo_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute scribe command with exclude-tests");
+
+    let stdout_exclude = String::from_utf8_lossy(&output.stdout);
+    let stderr_exclude = String::from_utf8_lossy(&output.stderr);
+    println!("With exclude-tests flag:");
+    println!("STDOUT: {}", stdout_exclude);
+    println!("STDERR: {}", stderr_exclude);
+
+    // Verify command executed successfully
+    if !output.status.success() {
+        panic!("Scribe command with exclude-tests failed: {}", stderr_exclude);
+    }
+
+    // Read the output to see what files were selected
+    let content_with_exclude = std::fs::read_to_string(&output_path_exclude)
+        .expect("Failed to read output file with exclude");
+
+    // Verify that test files are excluded when flag is used
+    // The content with exclude-tests should be shorter (fewer files) than without
+    println!("Content length without exclude: {}", content_without_exclude.len());
+    println!("Content length with exclude: {}", content_with_exclude.len());
+    
+    // With exclude-tests, we should have fewer references to test files
+    let test_references_without = content_without_exclude.matches("test").count();
+    let test_references_with = content_with_exclude.matches("test").count();
+    
+    println!("Test references without exclude: {}", test_references_without);
+    println!("Test references with exclude: {}", test_references_with);
+    
+    // The exclude tests flag should reduce test-related content
+    assert!(
+        test_references_with < test_references_without,
+        "Expected fewer test references with --exclude-tests flag"
+    );
+}
+
+/// Helper: Create a test repository with test files to verify exclude-tests functionality
+async fn create_test_repository_with_tests() -> TempDir {
+    let temp_dir = create_test_repository().await;
+    let repo_path = temp_dir.path();
+
+    // Add test files that should be excluded
+    fs::create_dir_all(repo_path.join("tests")).unwrap();
+    fs::create_dir_all(repo_path.join("src/test")).unwrap();
+    
+    // Create test files with various patterns
+    fs::write(repo_path.join("tests/unit_test.rs"),
+        "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_config_creation() {\n        let config = Config::default();\n        assert!(config.debug);\n    }\n}"
+    ).unwrap();
+
+    fs::write(repo_path.join("src/lib_test.rs"),
+        "// Test file for library functionality\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn test_utils() {\n        assert_eq!(2 + 2, 4);\n    }\n}"
+    ).unwrap();
+
+    fs::write(repo_path.join("src/test/integration.rs"),
+        "// Integration test file\npub mod helpers {\n    pub fn setup_test_data() {\n        // Test setup code\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::helpers::*;\n    \n    #[test]\n    fn integration_test() {\n        setup_test_data();\n        // Test implementation\n    }\n}"
+    ).unwrap();
+
+    fs::write(repo_path.join("component.test.js"),
+        "// JavaScript test file\ndescribe('Component', () => {\n  test('should render correctly', () => {\n    expect(true).toBe(true);\n  });\n});"
+    ).unwrap();
+
+    fs::write(repo_path.join("service.spec.ts"),
+        "// TypeScript spec file\nimport { Service } from './service';\n\ndescribe('Service', () => {\n  it('should initialize properly', () => {\n    const service = new Service();\n    expect(service).toBeDefined();\n  });\n});"
+    ).unwrap();
+
+    temp_dir
+}

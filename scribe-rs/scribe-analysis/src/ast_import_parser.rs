@@ -1,12 +1,15 @@
-//! Simple AST-based import extraction for analysis module
+//! Optimized AST-based import extraction for analysis module
 //!
-//! This module provides a lightweight AST parser specifically for extracting
-//! import statements from source code without the full complexity of the
-//! scribe-selection module.
+//! This module provides a high-performance AST parser specifically for extracting
+//! import statements from source code using TreeCursor for efficient traversal
+//! and parser reuse for better performance.
 
 use scribe_core::Result;
+use once_cell::sync::Lazy;
+use rayon::prelude::*;
 use std::collections::HashMap;
-use tree_sitter::{Language, Node, Parser, Tree};
+use std::sync::{Arc, Mutex};
+use tree_sitter::{Language, Node, Parser, Tree, TreeCursor};
 
 /// Simple import information
 #[derive(Debug, Clone)]
@@ -52,15 +55,30 @@ impl ImportLanguage {
     }
 }
 
-/// Simple AST parser for import extraction
+/// Thread-safe parser pool for reusing parsers
+static PARSER_POOL: Lazy<Arc<Mutex<HashMap<ImportLanguage, Vec<Parser>>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Node types that can contain imports - for fast filtering
+const IMPORT_NODE_TYPES: &[&str] = &[
+    "import_statement",
+    "import_from_statement", 
+    "use_declaration",
+    "import_declaration",
+    "import_spec",
+    "source_file",
+    "module",
+];
+
+/// Optimized AST parser for import extraction with parser reuse and TreeCursor traversal
 pub struct SimpleAstParser {
-    parsers: HashMap<ImportLanguage, Parser>,
+    // We don't need to store parsers anymore - we use the pool
 }
 
 impl std::fmt::Debug for SimpleAstParser {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SimpleAstParser")
-            .field("parsers", &format!("[{} parsers]", self.parsers.len()))
+            .field("parsers", &"[reusable pool]")
             .finish()
     }
 }
@@ -68,8 +86,15 @@ impl std::fmt::Debug for SimpleAstParser {
 impl SimpleAstParser {
     /// Create a new simple AST parser
     pub fn new() -> Result<Self> {
-        let mut parsers = HashMap::new();
+        // Initialize the parser pool on first creation
+        Self::ensure_parser_pool_initialized()?;
+        Ok(Self {})
+    }
 
+    /// Ensure the parser pool is initialized with all supported languages
+    fn ensure_parser_pool_initialized() -> Result<()> {
+        let mut pool = PARSER_POOL.lock().unwrap();
+        
         for language in [
             ImportLanguage::Python,
             ImportLanguage::JavaScript,
@@ -77,72 +102,171 @@ impl SimpleAstParser {
             ImportLanguage::Go,
             ImportLanguage::Rust,
         ] {
-            let mut parser = Parser::new();
-            parser
-                .set_language(language.tree_sitter_language())
-                .map_err(|e| {
-                    scribe_core::ScribeError::parse(format!(
-                        "Failed to set tree-sitter language: {}",
-                        e
-                    ))
-                })?;
-            parsers.insert(language, parser);
+            if !pool.contains_key(&language) {
+                let mut parser = Parser::new();
+                parser
+                    .set_language(language.tree_sitter_language())
+                    .map_err(|e| {
+                        scribe_core::ScribeError::parse(format!(
+                            "Failed to set tree-sitter language: {}",
+                            e
+                        ))
+                    })?;
+                pool.insert(language, vec![parser]);
+            }
         }
-
-        Ok(Self { parsers })
+        
+        Ok(())
     }
 
-    /// Extract imports from the given content using tree-sitter
+    /// Get a parser from the pool or create a new one
+    fn get_parser(&self, language: ImportLanguage) -> Result<Parser> {
+        let mut pool = PARSER_POOL.lock().unwrap();
+        
+        if let Some(parsers) = pool.get_mut(&language) {
+            if let Some(parser) = parsers.pop() {
+                return Ok(parser);
+            }
+        }
+        
+        // Create a new parser if pool is empty
+        let mut parser = Parser::new();
+        parser
+            .set_language(language.tree_sitter_language())
+            .map_err(|e| {
+                scribe_core::ScribeError::parse(format!(
+                    "Failed to set tree-sitter language: {}",
+                    e
+                ))
+            })?;
+        Ok(parser)
+    }
+
+    /// Return a parser to the pool
+    fn return_parser(&self, language: ImportLanguage, parser: Parser) {
+        let mut pool = PARSER_POOL.lock().unwrap();
+        pool.entry(language).or_insert_with(Vec::new).push(parser);
+    }
+
+    /// Extract imports from the given content using optimized tree-sitter traversal
     pub fn extract_imports(
         &self,
         content: &str,
         language: ImportLanguage,
     ) -> Result<Vec<SimpleImport>> {
-        // Create a fresh parser for this operation to avoid mutable borrow issues
-        let mut parser = Parser::new();
-        parser
-            .set_language(language.tree_sitter_language())
-            .map_err(|e| {
-                scribe_core::ScribeError::parse(format!("Failed to set language: {}", e))
-            })?;
-
+        // Get parser from pool
+        let mut parser = self.get_parser(language)?;
+        
         let tree = parser
             .parse(content, None)
             .ok_or_else(|| scribe_core::ScribeError::parse("Failed to parse content"))?;
 
         let mut imports = Vec::new();
-        let root_node = tree.root_node();
+        
+        // Use TreeCursor for efficient traversal
+        let mut cursor = tree.walk();
+        self.extract_imports_with_cursor(&mut cursor, content, language, &mut imports)?;
 
-        // Extract imports based on language
-        match language {
-            ImportLanguage::Python => {
-                self.extract_python_imports(&root_node, content, &mut imports)?;
-            }
-            ImportLanguage::JavaScript | ImportLanguage::TypeScript => {
-                self.extract_js_ts_imports(&root_node, content, &mut imports)?;
-            }
-            ImportLanguage::Go => {
-                self.extract_go_imports(&root_node, content, &mut imports)?;
-            }
-            ImportLanguage::Rust => {
-                self.extract_rust_imports(&root_node, content, &mut imports)?;
-            }
-        }
+        // Return parser to pool
+        self.return_parser(language, parser);
 
         Ok(imports)
     }
 
-    /// Extract Python imports from AST
-    fn extract_python_imports(
+    /// Extract imports using TreeCursor for optimal performance
+    fn extract_imports_with_cursor(
         &self,
-        node: &Node,
+        cursor: &mut TreeCursor,
+        content: &str,
+        language: ImportLanguage,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
+        let node = cursor.node();
+        
+        // Fast filter: skip nodes that can't contain imports
+        if !self.node_can_contain_imports(node.kind()) {
+            return Ok(());
+        }
+
+        // Process current node if it's an import
+        if self.is_import_node(node.kind()) {
+            self.extract_import_from_node(node, content, language, imports)?;
+        }
+
+        // Traverse children using cursor (much faster than child(i) loops)
+        if cursor.goto_first_child() {
+            loop {
+                self.extract_imports_with_cursor(cursor, content, language, imports)?;
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            cursor.goto_parent();
+        }
+
+        Ok(())
+    }
+
+    /// Check if a node type can contain imports (fast filter)
+    fn node_can_contain_imports(&self, kind: &str) -> bool {
+        IMPORT_NODE_TYPES.contains(&kind) || 
+        kind.contains("import") || 
+        kind.contains("use") ||
+        kind == "program" ||
+        kind == "translation_unit" ||
+        kind == "block" ||
+        kind == "statement_block"
+    }
+
+    /// Check if a node is an import statement
+    fn is_import_node(&self, kind: &str) -> bool {
+        matches!(kind, 
+            "import_statement" | 
+            "import_from_statement" | 
+            "use_declaration" | 
+            "import_declaration" | 
+            "import_spec"
+        )
+    }
+
+    /// Extract import from a specific node (no recursion needed)
+    fn extract_import_from_node(
+        &self,
+        node: Node,
+        content: &str,
+        language: ImportLanguage,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
+        match language {
+            ImportLanguage::Python => {
+                self.extract_python_import_node(node, content, imports)?;
+            }
+            ImportLanguage::JavaScript | ImportLanguage::TypeScript => {
+                self.extract_js_ts_import_node(node, content, imports)?;
+            }
+            ImportLanguage::Go => {
+                self.extract_go_import_node(node, content, imports)?;
+            }
+            ImportLanguage::Rust => {
+                self.extract_rust_import_node(node, content, imports)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Extract Python import from a single node (optimized, no recursion)
+    fn extract_python_import_node(
+        &self,
+        node: Node,
         content: &str,
         imports: &mut Vec<SimpleImport>,
     ) -> Result<()> {
         if node.kind() == "import_statement" {
             // Handle import statements like "import os" or "import sys as system"
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let child = cursor.node();
                     if child.kind() == "dotted_name" || child.kind() == "identifier" {
                         let module = self.node_text(child, content);
                         let line_number = child.start_position().row + 1;
@@ -151,6 +275,9 @@ impl SimpleAstParser {
                             module,
                             line_number,
                         });
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
                     }
                 }
             }
@@ -164,28 +291,22 @@ impl SimpleAstParser {
                 });
             }
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_python_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
-    /// Extract JavaScript/TypeScript imports from AST
-    fn extract_js_ts_imports(
+    /// Extract JavaScript/TypeScript import from a single node (optimized, no recursion)
+    fn extract_js_ts_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<SimpleImport>,
     ) -> Result<()> {
         if node.kind() == "import_statement" {
             // Find the source
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let child = cursor.node();
                     if child.kind() == "string" {
                         let mut module = self.node_text(child, content);
                         // Remove quotes
@@ -197,30 +318,27 @@ impl SimpleAstParser {
                         });
                         break;
                     }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_js_ts_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
-    /// Extract Go imports from AST
-    fn extract_go_imports(
+    /// Extract Go import from a single node (optimized, no recursion)
+    fn extract_go_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<SimpleImport>,
     ) -> Result<()> {
         if node.kind() == "import_spec" {
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let child = cursor.node();
                     if child.kind() == "interpreted_string_literal" {
                         let module = self.node_text(child, content);
                         let module = module.trim_matches('"').to_string();
@@ -231,24 +349,19 @@ impl SimpleAstParser {
                             line_number,
                         });
                     }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_go_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
-    /// Extract Rust imports from AST
-    fn extract_rust_imports(
+    /// Extract Rust import from a single node (optimized, no recursion)
+    fn extract_rust_import_node(
         &self,
-        node: &Node,
+        node: Node,
         content: &str,
         imports: &mut Vec<SimpleImport>,
     ) -> Result<()> {
@@ -263,20 +376,39 @@ impl SimpleAstParser {
                 });
             }
         }
-
-        // Recursively process children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                self.extract_rust_imports(&child, content, imports)?;
-            }
-        }
-
         Ok(())
     }
 
     /// Helper to extract text from a node
     fn node_text(&self, node: Node, content: &str) -> String {
         content[node.start_byte()..node.end_byte()].to_string()
+    }
+
+    /// Extract imports from multiple files in parallel for maximum performance
+    pub fn extract_imports_parallel(
+        &self,
+        files: &[(String, String, ImportLanguage)], // (path, content, language)
+    ) -> Result<Vec<(String, Vec<SimpleImport>)>> {
+        // Use rayon for parallel processing
+        files
+            .par_iter()
+            .map(|(path, content, language)| {
+                let imports = self.extract_imports(content, *language)?;
+                Ok((path.clone(), imports))
+            })
+            .collect()
+    }
+
+    /// Batch extract imports for multiple contents with the same language
+    pub fn extract_imports_batch(
+        &self,
+        contents: &[&str],
+        language: ImportLanguage,
+    ) -> Result<Vec<Vec<SimpleImport>>> {
+        contents
+            .par_iter()
+            .map(|content| self.extract_imports(content, language))
+            .collect()
     }
 }
 

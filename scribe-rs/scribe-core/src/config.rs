@@ -677,6 +677,9 @@ pub struct FeatureFlags {
 
     /// Enable scaling optimizations for large repositories
     pub scaling_enabled: bool,
+
+    /// Automatically exclude test files from selection
+    pub auto_exclude_tests: bool,
 }
 
 impl Default for FeatureFlags {
@@ -689,6 +692,7 @@ impl Default for FeatureFlags {
             ml_features: false,
             experimental_scoring: false,
             scaling_enabled: false,
+            auto_exclude_tests: false,
         }
     }
 }

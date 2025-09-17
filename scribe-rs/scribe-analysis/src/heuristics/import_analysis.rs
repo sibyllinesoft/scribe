@@ -183,21 +183,7 @@ impl ImportGraphBuilder {
         Ok(graph)
     }
 
-    /// Find which file an import statement refers to
-    fn find_matching_file<T>(&mut self, import_path: &str, files: &[T]) -> Option<usize>
-    where
-        T: ScanResult,
-    {
-        let normalized_import = self.normalize_import_path(import_path);
-
-        for (idx, file) in files.iter().enumerate() {
-            if import_matches_file(&normalized_import, file.path()) {
-                return Some(idx);
-            }
-        }
-
-        None
-    }
+    // Note: find_matching_file method removed - replaced with O(1) ImportKeyMap lookup
 
     /// Normalize import path for matching
     fn normalize_import_path(&mut self, import_path: &str) -> String {

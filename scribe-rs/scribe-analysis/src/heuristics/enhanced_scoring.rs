@@ -16,6 +16,7 @@ use super::{HeuristicWeights, ScanResult, ScoreComponents};
 use crate::complexity::{ComplexityAnalyzer, ComplexityConfig, ComplexityMetrics};
 use scribe_core::{Result, ScribeError};
 use std::collections::HashMap;
+use rayon::prelude::*;
 
 /// Enhanced score components that include complexity metrics
 #[derive(Debug, Clone)]
@@ -296,13 +297,60 @@ impl EnhancedHeuristicScorer {
         files_with_content: &[(T, String)],
     ) -> Result<Vec<(usize, EnhancedScoreComponents)>>
     where
-        T: ScanResult + Clone,
+        T: ScanResult + Clone + Sync + Send,
     {
         let files: Vec<_> = files_with_content.iter().map(|(f, _)| f.clone()).collect();
-        let mut scored_files = Vec::new();
+        
+        // PERFORMANCE OPTIMIZATION: Parallelize complexity analysis first
+        let complexity_results: Result<HashMap<usize, Option<ComplexityMetrics>>> = if self.enable_complexity_analysis {
+            // Create a snapshot of cache for parallel access
+            let cache_snapshot: HashMap<String, ComplexityMetrics> = self.content_cache.clone();
+            
+            // Compute complexity metrics in parallel for all files
+            let results: Result<Vec<(usize, Option<ComplexityMetrics>)>> = files_with_content
+                .par_iter()
+                .enumerate()
+                .map(|(idx, (file, content))| {
+                    // Check cache first
+                    if let Some(cached) = cache_snapshot.get(file.path()) {
+                        return Ok((idx, Some(cached.clone())));
+                    }
+                    
+                    // Detect language and analyze complexity
+                    let language = Self::detect_language_static(file.path());
+                    let analyzer = ComplexityAnalyzer::new();
+                    
+                    match analyzer.analyze_content(content, &language) {
+                        Ok(metrics) => Ok((idx, Some(metrics))),
+                        Err(_) => Ok((idx, None)), // Skip files that can't be analyzed
+                    }
+                })
+                .collect();
+            
+            results.map(|vec| vec.into_iter().collect())
+        } else {
+            Ok(HashMap::new())
+        };
 
+        let complexity_results = complexity_results?;
+        
+        // Update cache with new results (sequential for cache safety)
+        for (idx, metrics_opt) in &complexity_results {
+            if let Some(metrics) = metrics_opt {
+                let file_path = files_with_content[*idx].0.path().to_string();
+                self.content_cache.insert(file_path, metrics.clone());
+            }
+        }
+
+        // Now score all files sequentially with pre-computed complexity metrics
+        let mut scored_files = Vec::new();
         for (idx, (file, content)) in files_with_content.iter().enumerate() {
-            let score = self.score_file_enhanced(file, content, &files)?;
+            let score = self.score_file_enhanced_with_precomputed_complexity(
+                file, 
+                content, 
+                &files, 
+                complexity_results.get(&idx).and_then(|opt| opt.as_ref())
+            )?;
             scored_files.push((idx, score));
         }
 
@@ -316,8 +364,83 @@ impl EnhancedHeuristicScorer {
         Ok(scored_files)
     }
 
+    /// Score a file with pre-computed complexity metrics (for parallel optimization)
+    fn score_file_enhanced_with_precomputed_complexity<T>(
+        &mut self,
+        file: &T,
+        file_content: &str,
+        all_files: &[T],
+        precomputed_complexity: Option<&ComplexityMetrics>,
+    ) -> Result<EnhancedScoreComponents>
+    where
+        T: ScanResult + Clone,
+    {
+        // Get base heuristic score
+        let base_score = self.base_scorer.score_file(file, all_files)?;
+
+        // Use pre-computed complexity metrics or defaults
+        let (
+            complexity_metrics,
+            complexity_score,
+            maintainability_score,
+            cognitive_score,
+            quality_score,
+        ) = if let Some(metrics) = precomputed_complexity {
+            // Use pre-computed metrics
+            let complexity_score = self.calculate_complexity_score(metrics);
+            let maintainability_score = self.calculate_maintainability_score(metrics);
+            let cognitive_score = self.calculate_cognitive_score(metrics);
+            let quality_score = self.calculate_quality_score(metrics);
+
+            (
+                Some(metrics.clone()),
+                complexity_score,
+                maintainability_score,
+                cognitive_score,
+                quality_score,
+            )
+        } else {
+            // Skip expensive complexity analysis - use neutral/default scores
+            (None, 0.5, 0.5, 0.5, 0.5)
+        };
+
+        // Apply adaptive adjustments
+        let adjusted_weights = if let Some(ref metrics) = complexity_metrics {
+            self.calculate_adaptive_weights(file, metrics)
+        } else {
+            // Use default weights when complexity analysis is disabled
+            self.weights.clone()
+        };
+
+        // Calculate enhanced final score
+        let enhanced_final_score = self.calculate_enhanced_final_score(
+            &base_score,
+            complexity_score,
+            maintainability_score,
+            cognitive_score,
+            quality_score,
+            &adjusted_weights,
+        );
+
+        Ok(EnhancedScoreComponents {
+            base_score,
+            complexity_score,
+            maintainability_score,
+            cognitive_score,
+            quality_score,
+            enhanced_final_score,
+            complexity_metrics,
+            adjusted_weights,
+        })
+    }
+
     /// Detect programming language from file path
     fn detect_language(&self, path: &str) -> String {
+        Self::detect_language_static(path)
+    }
+
+    /// Static version for parallel processing
+    fn detect_language_static(path: &str) -> String {
         let extension = std::path::Path::new(path)
             .extension()
             .and_then(|ext| ext.to_str())

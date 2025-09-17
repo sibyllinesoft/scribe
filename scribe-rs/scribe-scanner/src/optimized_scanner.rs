@@ -137,7 +137,7 @@ pub struct TimeBreakdown {
 impl Default for OptimizedScanConfig {
     fn default() -> Self {
         Self {
-            enable_git: true,
+            enable_git: false,
             enable_incremental: true,
             enable_monitoring: true,
             parallel_config: ParallelConfig::default(),
