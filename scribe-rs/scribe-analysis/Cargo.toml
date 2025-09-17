@@ -1,6 +1,6 @@
 [package]
 name = "scribe-analysis"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -13,7 +13,7 @@ description = "Code analysis algorithms and AST processing for Scribe"
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.3.0", path = "../scribe-core" }
+scribe-core = { version = "0.4.0", path = "../scribe-core" }
 
 # Core dependencies
 serde = { version = "1.0", features = ["derive"] }

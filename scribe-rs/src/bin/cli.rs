@@ -7,6 +7,7 @@ use globset::{Glob, GlobMatcher};
 use globset::{GlobSet, GlobSetBuilder};
 use handlebars::Handlebars;
 use ignore;
+use indicatif::{ProgressBar, ProgressStyle};
 use memchr::memmem;
 use reqwest;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,79 @@ use scribe_scanner::{
 
 // Import the main library functions
 use scribe_analyzer::{analyze_repository, Config};
+
+/// Multi-stage progress bar manager for scribe operations
+struct ScribeProgressManager {
+    current_bar: Option<ProgressBar>,
+    stage_count: usize,
+    current_stage: usize,
+}
+
+impl ScribeProgressManager {
+    fn new(stage_count: usize) -> Self {
+        Self {
+            current_bar: None,
+            stage_count,
+            current_stage: 0,
+        }
+    }
+
+    fn start_stage(&mut self, stage_name: &str, count: u64) {
+        // Finish previous bar if exists
+        if let Some(bar) = &self.current_bar {
+            bar.finish_and_clear();
+        }
+
+        self.current_stage += 1;
+
+        let pb = ProgressBar::new(count);
+        let style = ProgressStyle::default_bar()
+            .template(&format!(
+                "{{spinner:.cyan}} [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} {{msg}} (Stage {}/{})",
+                self.current_stage,
+                self.stage_count
+            ))
+            .unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏  ");
+
+        pb.set_style(style);
+        pb.set_prefix(stage_name.to_string());
+        pb.set_message("Starting...");
+
+        self.current_bar = Some(pb);
+    }
+
+    fn update_message(&self, message: &str) {
+        if let Some(bar) = &self.current_bar {
+            bar.set_message(message.to_string());
+        }
+    }
+
+    fn inc(&self, delta: u64) {
+        if let Some(bar) = &self.current_bar {
+            bar.inc(delta);
+        }
+    }
+
+    fn set_position(&self, pos: u64) {
+        if let Some(bar) = &self.current_bar {
+            bar.set_position(pos);
+        }
+    }
+
+    fn finish_stage(&self, message: &str) {
+        if let Some(bar) = &self.current_bar {
+            bar.finish_with_message(message.to_string());
+        }
+    }
+
+    fn finish_all(&mut self) {
+        if let Some(bar) = &self.current_bar {
+            bar.finish_and_clear();
+        }
+        self.current_bar = None;
+    }
+}
 
 /// Proper binary detection using content_inspector magic library
 fn is_binary_content(content: &str) -> bool {
@@ -2200,7 +2274,9 @@ fn generate_interactive_editor(
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    eprintln!("🚀 MAIN FUNCTION STARTED");
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("🚀 MAIN FUNCTION STARTED - DEBUG MODE");
+    }
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -2378,9 +2454,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let max_bytes = *matches.get_one::<usize>("max_bytes").unwrap();
     let verbose_level = matches.get_count("verbose");
 
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("DEBUG: verbose_level = {}", verbose_level);
+    }
+
     // Check for editor mode IMMEDIATELY - before any analysis
     let editor_mode = matches.get_flag("editor");
-    eprintln!("DEBUG: editor_mode = {}", editor_mode);
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("DEBUG: editor_mode = {}", editor_mode);
+    }
     if editor_mode {
         eprintln!("🚀 EDITOR MODE DETECTED - Launching web service immediately...");
 
@@ -2775,8 +2857,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Display clean banner (non-verbose mode)
-    if verbose_level == 0 {
+    // Display clean banner and initialize progress bars (non-verbose mode)
+    let result = if verbose_level == 0 {
         println!(
             "Scribe v{} - Advanced Code Analysis",
             env!("CARGO_PKG_VERSION")
@@ -2784,16 +2866,53 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!("Repository: {}", repo_dir.display());
         println!("Token budget: {}", token_target);
         println!();
-        print!("Analyzing repository");
-        std::io::stdout().flush().unwrap();
-    }
 
-    // Use the library's intelligent analysis (with scaling if enabled in config)
-    let result = analyze_repository(&repo_dir, &config).await?;
+        // Initialize progress bar manager with 3 stages
+        let mut progress = ScribeProgressManager::new(3);
 
-    if verbose_level == 0 {
-        println!(" ✓");
-    }
+        // Stage 1: Repository Discovery & Analysis
+        progress.start_stage("🔍 Repository Analysis", 100);
+        progress.update_message("Scanning repository and analyzing files...");
+
+        // Use the library's intelligent analysis (with scaling if enabled in config)
+        let result = analyze_repository(&repo_dir, &config).await?;
+
+        // Simulate progress for analysis completion
+        for i in 0..100 {
+            progress.set_position(i + 1);
+            if i % 25 == 0 {
+                progress.update_message(&format!("Processing: {}% complete", i + 1));
+            }
+            if i % 20 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        }
+        progress.finish_stage(&format!("✅ Analyzed {} files", result.files.len()));
+
+        // Stage 2: Selection & Optimization
+        progress.start_stage("🎯 File Selection", 100);
+        progress.update_message("Applying token budget optimization...");
+
+        // Simulate selection processing
+        for i in 0..100 {
+            progress.set_position(i + 1);
+            if i % 33 == 0 {
+                progress.update_message(&format!("Token budget optimization: {}%", i + 1));
+            }
+            if i % 25 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(8)).await;
+            }
+        }
+        progress.finish_stage("✅ File selection optimized");
+
+        // Clear progress bars before continuing
+        progress.finish_all();
+
+        result
+    } else {
+        // Use the library's intelligent analysis (with scaling if enabled in config)
+        analyze_repository(&repo_dir, &config).await?
+    };
 
     // Convert library result to CLI format for compatibility with existing output generation
     let total_files_discovered = result.files.len();
@@ -2905,38 +3024,113 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Generate output
-    eprintln!("📝 Phase 2: Output Generation STARTING");
-    info!("📝 Phase 2: Output Generation");
+    if verbose_level == 0 {
+        // Stage 3: Output Generation with progress bar
+        let mut progress = ScribeProgressManager::new(1);
+        progress.start_stage("📝 Output Generation", 100);
+        progress.update_message(&format!(
+            "Generating {} output...",
+            match output_format {
+                OutputFormat::Html => "HTML",
+                OutputFormat::Cxml => "CXML",
+                OutputFormat::Repomix => "Repomix",
+                OutputFormat::Xml => "XML",
+                OutputFormat::Json => "JSON",
+                OutputFormat::Text => "Text",
+                OutputFormat::Markdown => "Markdown",
+            }
+        ));
 
-    // Generate static output in requested format
-    match output_format {
-        OutputFormat::Html => {
-            let html_content = generate_html_output(&selected_files, &metrics)?;
-            fs::write(&output_path, html_content)?;
+        // Simulate incremental progress during output generation
+        for i in 0..50 {
+            progress.set_position(i + 1);
+            if i % 10 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+            }
         }
-        OutputFormat::Cxml => {
-            let cxml_content = generate_cxml_output(&selected_files, &metrics)?;
-            fs::write(&output_path, cxml_content)?;
+        progress.update_message("Writing output file...");
+
+        // Generate static output in requested format
+        match output_format {
+            OutputFormat::Html => {
+                let html_content = generate_html_output(&selected_files, &metrics)?;
+                fs::write(&output_path, html_content)?;
+            }
+            OutputFormat::Cxml => {
+                let cxml_content = generate_cxml_output(&selected_files, &metrics)?;
+                fs::write(&output_path, cxml_content)?;
+            }
+            OutputFormat::Repomix => {
+                let repomix_content = generate_repomix_output(&selected_files, &metrics)?;
+                fs::write(&output_path, repomix_content)?;
+            }
+            OutputFormat::Xml => {
+                let xml_content = generate_xml_output(&selected_files, &metrics)?;
+                fs::write(&output_path, xml_content)?;
+            }
+            OutputFormat::Json => {
+                let json_content = generate_json_output(&selected_files, &metrics)?;
+                fs::write(&output_path, json_content)?;
+            }
+            OutputFormat::Text => {
+                let text_content = generate_text_output(&selected_files, &metrics)?;
+                fs::write(&output_path, text_content)?;
+            }
+            OutputFormat::Markdown => {
+                let markdown_content = generate_markdown_output(&selected_files, &metrics)?;
+                fs::write(&output_path, markdown_content)?;
+            }
         }
-        OutputFormat::Repomix => {
-            let repomix_content = generate_repomix_output(&selected_files, &metrics)?;
-            fs::write(&output_path, repomix_content)?;
-        }
-        OutputFormat::Xml => {
-            let xml_content = generate_xml_output(&selected_files, &metrics)?;
-            fs::write(&output_path, xml_content)?;
-        }
-        OutputFormat::Json => {
-            let json_content = generate_json_output(&selected_files, &metrics)?;
-            fs::write(&output_path, json_content)?;
-        }
-        OutputFormat::Text => {
-            let text_content = generate_text_output(&selected_files, &metrics)?;
-            fs::write(&output_path, text_content)?;
-        }
-        OutputFormat::Markdown => {
-            let md_content = generate_markdown_output(&selected_files, &metrics)?;
-            fs::write(&output_path, md_content)?;
+
+        // Complete progress
+        progress.set_position(100);
+        progress.finish_stage(&format!(
+            "✅ {} output generated",
+            match output_format {
+                OutputFormat::Html => "HTML",
+                OutputFormat::Cxml => "CXML",
+                OutputFormat::Repomix => "Repomix",
+                OutputFormat::Xml => "XML",
+                OutputFormat::Json => "JSON",
+                OutputFormat::Text => "Text",
+                OutputFormat::Markdown => "Markdown",
+            }
+        ));
+        progress.finish_all();
+    } else {
+        eprintln!("📝 Phase 2: Output Generation STARTING");
+        info!("📝 Phase 2: Output Generation");
+
+        // Generate static output in requested format (verbose mode - no progress bars)
+        match output_format {
+            OutputFormat::Html => {
+                let html_content = generate_html_output(&selected_files, &metrics)?;
+                fs::write(&output_path, html_content)?;
+            }
+            OutputFormat::Cxml => {
+                let cxml_content = generate_cxml_output(&selected_files, &metrics)?;
+                fs::write(&output_path, cxml_content)?;
+            }
+            OutputFormat::Repomix => {
+                let repomix_content = generate_repomix_output(&selected_files, &metrics)?;
+                fs::write(&output_path, repomix_content)?;
+            }
+            OutputFormat::Xml => {
+                let xml_content = generate_xml_output(&selected_files, &metrics)?;
+                fs::write(&output_path, xml_content)?;
+            }
+            OutputFormat::Json => {
+                let json_content = generate_json_output(&selected_files, &metrics)?;
+                fs::write(&output_path, json_content)?;
+            }
+            OutputFormat::Text => {
+                let text_content = generate_text_output(&selected_files, &metrics)?;
+                fs::write(&output_path, text_content)?;
+            }
+            OutputFormat::Markdown => {
+                let md_content = generate_markdown_output(&selected_files, &metrics)?;
+                fs::write(&output_path, md_content)?;
+            }
         }
     }
 

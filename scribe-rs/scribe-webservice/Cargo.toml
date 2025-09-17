@@ -13,11 +13,11 @@ description = "Web service interface for Scribe repository analysis"
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.3.0", path = "../scribe-core" }
-scribe-scaling = { version = "0.3.0", path = "../scribe-scaling" }
-scribe-selection = { version = "0.3.0", path = "../scribe-selection" }
-scribe-scanner = { version = "0.3.0", path = "../scribe-scanner" }
-scribe-analysis = { version = "0.3.0", path = "../scribe-analysis" }
+scribe-core = { version = "0.4.0", path = "../scribe-core" }
+scribe-scaling = { version = "0.4.0", path = "../scribe-scaling" }
+scribe-selection = { version = "0.4.0", path = "../scribe-selection" }
+scribe-scanner = { version = "0.4.0", path = "../scribe-scanner" }
+scribe-analysis = { version = "0.4.0", path = "../scribe-analysis" }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }

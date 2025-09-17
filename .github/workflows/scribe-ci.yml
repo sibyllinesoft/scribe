@@ -44,40 +44,40 @@ jobs:
       - name: Run Clippy lints
         run: |
           cd scribe-rs
-          cargo clippy --all-targets --all-features --exclude scribe-py -- -D warnings
+          cargo clippy --workspace --all-features --lib --bins --tests -- -D warnings
 
       - name: Build all workspace crates
         run: |
           cd scribe-rs
-          cargo build --workspace --all-features --exclude scribe-py
+          cargo build --workspace --all-features
 
       - name: Run Rust unit tests
         run: |
           cd scribe-rs
-          cargo test --workspace --all-features --exclude scribe-py
+          cargo test --workspace --all-features
 
       - name: Run Rust integration tests
         run: |
           cd scribe-rs
-          cargo test --workspace --all-features --test '*' --exclude scribe-py
+          cargo test --workspace --all-features --test '*'
 
-      - name: Build scribe-web binary
+      - name: Build scribe binary
         run: |
           cd scribe-rs
-          cargo build -p scribe-webservice --bin scribe-web --release
+          cargo build -p scribe-analyzer --bin scribe --release
 
       - name: Test CLI functionality
         run: |
           cd scribe-rs
-          ./target/release/scribe-web --version
-          ./target/release/scribe-web --help
+          ./target/release/scribe --version
+          ./target/release/scribe --help
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rust-artifacts
           path: |
-            scribe-rs/target/release/scribe-web
+            scribe-rs/target/release/scribe
           retention-days: 7
 
   # ================================
@@ -113,7 +113,7 @@ jobs:
           path: scribe-rs/target/release/
 
       - name: Make binary executable
-        run: chmod +x scribe-rs/target/release/scribe-web
+        run: chmod +x scribe-rs/target/release/scribe
 
       - name: Setup e2e test environment
         run: |
@@ -179,7 +179,7 @@ jobs:
           path: scribe-rs/target/release/
 
       - name: Make binary executable
-        run: chmod +x scribe-rs/target/release/scribe-web
+        run: chmod +x scribe-rs/target/release/scribe
 
       - name: Setup test environment
         run: |
@@ -246,13 +246,13 @@ jobs:
           path: scribe-rs/target/release/
 
       - name: Make binary executable
-        run: chmod +x scribe-rs/target/release/scribe-web
+        run: chmod +x scribe-rs/target/release/scribe
 
       - name: Smoke test - Scribe on itself
         run: |
           cd scribe-rs
           # Test Scribe analyzing its own codebase
-          ./target/release/scribe-web . --token-budget 10000 --no-browser --port 9999 &
+          ./target/release/scribe . --token-budget 10000 --no-browser --port 9999 &
           SERVER_PID=$!
           
           # Wait for server to start
@@ -269,7 +269,7 @@ jobs:
         run: |
           cd scribe-rs
           # Test various CLI parameter combinations
-          ./target/release/scribe-web . --token-budget 5000 --max-file-size 100000 --no-exclude-tests --no-browser --port 9998 &
+          ./target/release/scribe . --token-budget 5000 --max-file-size 100000 --no-exclude-tests --no-browser --port 9998 &
           SERVER_PID=$!
           sleep 5
           kill $SERVER_PID || true
@@ -279,7 +279,7 @@ jobs:
         run: |
           cd scribe-rs
           # Quick performance test
-          time ./target/release/scribe-web . --token-budget 1000 --no-browser --port 9997 &
+          time ./target/release/scribe . --token-budget 1000 --no-browser --port 9997 &
           SERVER_PID=$!
           sleep 3
           kill $SERVER_PID || true

@@ -13,9 +13,9 @@ description = "Intelligent code selection and context extraction for Scribe"
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.3.0", path = "../scribe-core" }
-scribe-analysis = { version = "0.3.0", path = "../scribe-analysis" }
-scribe-graph = { version = "0.3.0", path = "../scribe-graph" }
+scribe-core = { version = "0.4.0", path = "../scribe-core" }
+scribe-analysis = { version = "0.4.0", path = "../scribe-analysis" }
+scribe-graph = { version = "0.4.0", path = "../scribe-graph" }
 
 # Workspace dependencies
 serde = { workspace = true }
