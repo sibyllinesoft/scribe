@@ -11,6 +11,10 @@ keywords = ["code-analysis", "ast", "repository", "documentation", "developer-to
 categories = ["development-tools", "text-processing", "parsing"]
 description = "Code analysis algorithms and AST processing for Scribe"
 
+[features]
+default = ["tree-sitter"]
+tree-sitter = []
+
 [dependencies]
 # Local dependencies
 scribe-core = { version = "0.4.0", path = "../scribe-core" }

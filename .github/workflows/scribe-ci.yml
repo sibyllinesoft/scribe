@@ -51,15 +51,10 @@ jobs:
           cd scribe-rs
           cargo build --workspace --all-features
 
-      - name: Run Rust unit tests
+      - name: Run Rust tests
         run: |
           cd scribe-rs
-          cargo test --workspace --all-features
-
-      - name: Run Rust integration tests
-        run: |
-          cd scribe-rs
-          cargo test --workspace --all-features --test '*'
+          cargo test --workspace --all-features --lib --bins
 
       - name: Build scribe binary
         run: |

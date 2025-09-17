@@ -556,7 +556,7 @@ fn prepare_template_data(
 fn render_template(
     template_data: &TemplateData,
 ) -> std::result::Result<String, Box<dyn std::error::Error>> {
-    let template_content = include_str!("../templates/report_bundled.html");
+    let template_content = include_str!("../../templates/report_bundled.html");
 
     let mut handlebars = Handlebars::new();
     handlebars.register_template_string("report", template_content)?;

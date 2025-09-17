@@ -149,10 +149,10 @@ pub struct DependencyGraph {
     /// Node IDs (file paths)
     pub nodes: Vec<String>,
 
-    /// Adjacency list (node_id -> [dependent_node_ids])
+    /// Adjacency list (node_id -> \[dependent_node_ids\])
     pub edges: Vec<Vec<usize>>,
 
-    /// Reverse adjacency list (node_id -> [dependency_node_ids])
+    /// Reverse adjacency list (node_id -> \[dependency_node_ids\])
     pub reverse_edges: Vec<Vec<usize>>,
 
     /// Node metadata

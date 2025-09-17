@@ -80,6 +80,9 @@ categories.workspace = true
 readme = "README.md"
 exclude = ["workspace.toml"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
 [features]
 default = ["core", "analysis", "graph", "scanner", "patterns", "selection", "scaling"]
 cli = ["default"]
@@ -202,3 +205,4 @@ debug = true
 # Disable warnings as errors for development
 [workspace.lints.rust]
 warnings = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }

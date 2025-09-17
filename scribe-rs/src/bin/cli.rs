@@ -2877,32 +2877,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Use the library's intelligent analysis (with scaling if enabled in config)
         let result = analyze_repository(&repo_dir, &config).await?;
 
-        // Simulate progress for analysis completion
-        for i in 0..100 {
-            progress.set_position(i + 1);
-            if i % 25 == 0 {
-                progress.update_message(&format!("Processing: {}% complete", i + 1));
-            }
-            if i % 20 == 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            }
-        }
+        // Mark analysis as complete
+        progress.set_position(100);
         progress.finish_stage(&format!("✅ Analyzed {} files", result.files.len()));
 
         // Stage 2: Selection & Optimization
         progress.start_stage("🎯 File Selection", 100);
         progress.update_message("Applying token budget optimization...");
 
-        // Simulate selection processing
-        for i in 0..100 {
-            progress.set_position(i + 1);
-            if i % 33 == 0 {
-                progress.update_message(&format!("Token budget optimization: {}%", i + 1));
-            }
-            if i % 25 == 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(8)).await;
-            }
-        }
+        // Mark selection as complete
+        progress.set_position(100);
         progress.finish_stage("✅ File selection optimized");
 
         // Clear progress bars before continuing
@@ -3041,13 +3025,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         ));
 
-        // Simulate incremental progress during output generation
-        for i in 0..50 {
-            progress.set_position(i + 1);
-            if i % 10 == 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
-            }
-        }
+        // Mark output generation in progress
+        progress.set_position(50);
         progress.update_message("Writing output file...");
 
         // Generate static output in requested format

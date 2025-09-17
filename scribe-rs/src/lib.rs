@@ -984,6 +984,23 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
 
     let mut files = scanner.scan(path, scan_options).await?;
 
+    // Apply auto-exclude tests if enabled
+    if config.features.auto_exclude_tests {
+        let original_count = files.len();
+        files.retain(|file| !is_test_file(&file.path));
+        let filtered_count = files.len();
+
+        if original_count != filtered_count {
+            if std::env::var("SCRIBE_DEBUG").is_ok() {
+                eprintln!(
+                    "Auto-excluded {} test files, {} files remaining",
+                    original_count - filtered_count,
+                    filtered_count
+                );
+            }
+        }
+    }
+
     // Apply token budget if specified
     if let Some(token_budget) = config.analysis.token_budget {
         if std::env::var("SCRIBE_DEBUG").is_ok() {
@@ -1166,6 +1183,88 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
         final_scores,
         metadata,
     })
+}
+
+/// Check if a file is a test file based on path patterns
+fn is_test_file(path: &std::path::Path) -> bool {
+    let path_str = path.to_string_lossy().to_lowercase();
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    // Exclude output files that might contain test-related content
+    if file_name == "output.md" || file_name.starts_with("output.") {
+        return true;
+    }
+
+    // Test directory patterns
+    if path_str.contains("/test/")
+        || path_str.contains("/tests/")
+        || path_str.contains("\\test\\")
+        || path_str.contains("\\tests\\")
+        || path_str.contains("/__tests__/")
+        || path_str.contains("\\__tests__\\")
+    {
+        return true;
+    }
+
+    // Test file name patterns
+    if file_name.starts_with("test_")
+        || file_name.ends_with("_test.rs")
+        || file_name.ends_with("_test.py")
+        || file_name.ends_with("_test.js")
+        || file_name.ends_with("_test.ts")
+        || file_name.ends_with(".test.js")
+        || file_name.ends_with(".test.ts")
+        || file_name.ends_with(".test.jsx")
+        || file_name.ends_with(".test.tsx")
+        || file_name.ends_with(".spec.js")
+        || file_name.ends_with(".spec.ts")
+        || file_name.ends_with(".spec.jsx")
+        || file_name.ends_with(".spec.tsx")
+        || file_name.ends_with("_spec.py")
+        || file_name.ends_with("_spec.rb")
+    {
+        return true;
+    }
+
+    // Language-specific test patterns
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("rs") => {
+            // Rust: mod tests, #[cfg(test)]
+            file_name.contains("test")
+                && (file_name.starts_with("test_")
+                    || file_name.ends_with("_test.rs")
+                    || path_str.contains("/tests/"))
+        }
+        Some("py") => {
+            // Python: test_*.py, *_test.py, pytest patterns
+            file_name.starts_with("test_")
+                || file_name.ends_with("_test.py")
+                || file_name.contains("test_")
+        }
+        Some("go") => {
+            // Go: *_test.go
+            file_name.ends_with("_test.go")
+        }
+        Some("java") | Some("kt") => {
+            // Java/Kotlin: *Test.java, *Tests.java
+            file_name.ends_with("test.java")
+                || file_name.ends_with("tests.java")
+                || file_name.ends_with("test.kt")
+                || file_name.ends_with("tests.kt")
+        }
+        Some("php") => {
+            // PHP: *Test.php
+            file_name.ends_with("test.php")
+        }
+        Some("rb") => {
+            // Ruby: *_spec.rb, *_test.rb
+            file_name.ends_with("_spec.rb") || file_name.ends_with("_test.rb")
+        }
+        _ => false,
+    }
 }
 
 #[cfg(feature = "scaling")]

@@ -494,27 +494,6 @@ impl FunctionExtractor {
     }
 }
 
-impl AstLanguage {
-    /// Get tree-sitter language for supported languages
-    pub fn tree_sitter_language(&self) -> Option<tree_sitter::Language> {
-        match self {
-            AstLanguage::Python => Some(tree_sitter_python::language()),
-            AstLanguage::JavaScript => Some(tree_sitter_javascript::language()),
-            AstLanguage::TypeScript => Some(tree_sitter_typescript::language_typescript()),
-            AstLanguage::Go => Some(tree_sitter_go::language()),
-            AstLanguage::Rust => Some(tree_sitter_rust::language()),
-            AstLanguage::Html => Some(tree_sitter_html::language()),
-            // TODO: Add when dependencies are available
-            // AstLanguage::Java => Some(tree_sitter_java::language()),
-            // AstLanguage::C => Some(tree_sitter_c::language()),
-            // AstLanguage::Cpp => Some(tree_sitter_cpp::language()),
-            // AstLanguage::Ruby => Some(tree_sitter_ruby::language()),
-            // AstLanguage::CSharp => Some(tree_sitter_c_sharp::language()),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

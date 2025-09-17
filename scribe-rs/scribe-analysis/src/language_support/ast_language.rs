@@ -73,24 +73,7 @@ impl AstLanguage {
             AstLanguage::CSharp => None, // tree_sitter_c_sharp::language() when added
             AstLanguage::C => None,    // tree_sitter_c::language() when added
             AstLanguage::Cpp => None,  // tree_sitter_cpp::language() when added
-            AstLanguage::PHP => None,  // tree_sitter_php::language() when added
             AstLanguage::Ruby => None, // tree_sitter_ruby::language() when added
-            AstLanguage::Swift => None, // tree_sitter_swift::language() when added
-            AstLanguage::Kotlin => None, // tree_sitter_kotlin::language() when added
-
-            // Tier 2: Syntax-aware languages
-            AstLanguage::Css => None, // tree_sitter_css::language() when added
-            AstLanguage::Json => None, // tree_sitter_json::language() when added
-            AstLanguage::Yaml => None, // tree_sitter_yaml::language() when added
-            AstLanguage::Xml => None, // tree_sitter_xml::language() when added
-            AstLanguage::Markdown => None, // tree_sitter_markdown::language() when added
-            AstLanguage::Sql => None, // tree_sitter_sql::language() when added
-            AstLanguage::Bash => None, // tree_sitter_bash::language() when added
-            AstLanguage::PowerShell => None, // tree_sitter_powershell::language() when added
-            AstLanguage::Dockerfile => None, // tree_sitter_dockerfile::language() when added
-
-            // Tier 3: Basic structure languages (no tree-sitter)
-            _ => None,
         }
     }
 

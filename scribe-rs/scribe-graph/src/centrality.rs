@@ -168,7 +168,7 @@ pub struct IntegrationConfig {
 /// Methods for normalizing centrality scores
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NormalizationMethod {
-    /// Normalize to [0,1] range
+    /// Normalize to \[0,1\] range
     MinMax,
     /// Z-score normalization
     ZScore,

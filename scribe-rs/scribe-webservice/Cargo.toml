@@ -10,6 +10,7 @@ documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Web service interface for Scribe repository analysis"
+include = ["src/**/*", "templates/**/*"]
 
 [dependencies]
 # Local dependencies
