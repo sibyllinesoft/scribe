@@ -10,9 +10,11 @@ use ignore;
 use indicatif::{ProgressBar, ProgressStyle};
 use memchr::memmem;
 use reqwest;
+use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json, Value};
 use smallvec::SmallVec;
+use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -709,6 +711,166 @@ struct FileWithContent {
     content_quality_score: f64,
     repository_role_score: f64,
     recency_score: f64,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum FileCategory {
+    Mandatory,
+    Source,
+    Documentation,
+    Other,
+}
+
+fn categorize_file(file: &FileWithContent) -> FileCategory {
+    let path = file.relative_path.to_lowercase();
+    let extension = Path::new(&file.relative_path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    if is_mandatory_path(&path) {
+        return FileCategory::Mandatory;
+    }
+
+    if is_source_extension(&extension) {
+        return FileCategory::Source;
+    }
+
+    if is_documentation_path(&path, &extension) {
+        return FileCategory::Documentation;
+    }
+
+    FileCategory::Other
+}
+
+fn is_mandatory_path(path: &str) -> bool {
+    if path.contains("node_modules/")
+        || path.contains("target/")
+        || path.contains("vendor/")
+        || path.contains(".git/")
+        || path.contains("__pycache__/")
+        || path.contains("build/")
+        || path.contains("dist/")
+        || path.contains(".cache/")
+    {
+        return false;
+    }
+
+    if path.contains("readme") {
+        let depth = path.matches('/').count();
+        return depth <= 1;
+    }
+
+    if !path.contains('/')
+        && matches!(
+            path,
+            "package.json"
+                | "cargo.toml"
+                | "pyproject.toml"
+                | "requirements.txt"
+                | "go.mod"
+                | "pom.xml"
+                | "build.gradle"
+                | "composer.json"
+                | "tsconfig.json"
+                | ".gitignore"
+                | "dockerfile"
+                | "docker-compose.yml"
+        )
+    {
+        return true;
+    }
+
+    if (path.starts_with("src/") || path.starts_with("lib/") || !path.contains('/'))
+        && (path.contains("main") || path.contains("index"))
+    {
+        return true;
+    }
+
+    false
+}
+
+fn is_source_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "rs" | "py"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "go"
+            | "java"
+            | "kt"
+            | "kts"
+            | "c"
+            | "cpp"
+            | "cxx"
+            | "cc"
+            | "h"
+            | "hpp"
+            | "cs"
+            | "rb"
+            | "php"
+            | "swift"
+            | "scala"
+            | "sh"
+            | "pl"
+            | "ps1"
+            | "psm1"
+            | "lua"
+            | "dart"
+            | "m"
+            | "mm"
+            | "sql"
+    )
+}
+
+fn is_documentation_path(path: &str, extension: &str) -> bool {
+    if matches!(
+        extension,
+        "md" | "mdx" | "rst" | "adoc" | "asciidoc" | "txt" | "org"
+    ) {
+        return true;
+    }
+
+    path.contains("/docs/")
+        || path.contains("/doc/")
+        || path.ends_with("/docs")
+        || path.ends_with("/doc")
+        || path.contains("/guides/")
+        || path.contains("/manual/")
+        || path.contains("changelog")
+}
+
+fn token_cost(file: &FileWithContent) -> usize {
+    file.estimated_tokens.max(1)
+}
+
+fn try_include_with_budget(
+    file: FileWithContent,
+    unlimited_budget: bool,
+    token_target: usize,
+    budget_consumed: &mut usize,
+    included_paths: &mut HashSet<String>,
+    selected_files: &mut Vec<FileWithContent>,
+) -> bool {
+    if included_paths.contains(&file.relative_path) {
+        return true;
+    }
+
+    let cost = token_cost(&file);
+
+    if unlimited_budget || budget_consumed.saturating_add(cost) <= token_target {
+        if !unlimited_budget {
+            *budget_consumed = budget_consumed.saturating_add(cost);
+        }
+        included_paths.insert(file.relative_path.clone());
+        selected_files.push(file);
+        true
+    } else {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2778,7 +2940,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Use the library function for proper intelligent analysis
     let mut config = Config::default();
     config.filtering.max_file_size = max_bytes as u64;
-    config.analysis.token_budget = Some(token_target);
+    config.analysis.token_budget = None;
 
     // Enable scaling optimizations if requested
     config.features.scaling_enabled = use_scaling;
@@ -3214,72 +3376,173 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Convert library result to CLI format for compatibility with existing output generation
     let total_files_discovered = result.files.len();
-    let mut selected_files = Vec::new();
+    let selection_start = std::time::Instant::now();
+    let token_counter = TokenCounter::global();
 
-    if let Some(selection) = &result.selection {
-        for selected in &selection.selected_files {
-            let info = &selected.analysis.file_info;
-            let content = info.content.clone().or_else(|| {
-                if !info.is_binary {
-                    fs::read_to_string(&info.path).ok()
-                } else {
-                    None
-                }
-            });
+    let mut candidates = Vec::new();
 
-            if let Some(content) = content {
-                let path_key = info.path.to_string_lossy().to_string();
-                selected_files.push(FileWithContent {
-                    path: info.path.clone(),
-                    relative_path: info.relative_path.clone(),
-                    content,
-                    size: info.size,
-                    estimated_tokens: info.token_estimate.unwrap_or(selected.token_cost),
-                    importance_score: result
-                        .final_scores
-                        .get(&path_key)
-                        .copied()
-                        .unwrap_or(selected.score),
-                    git_changes: None,
-                    centrality_score: info.centrality_score.unwrap_or(0.0),
-                    query_relevance_score: selected.score,
-                    entry_point_proximity: selected.analysis.scores.entrypoint_score,
-                    content_quality_score: selected.analysis.scores.doc_score,
-                    repository_role_score: selected.analysis.scores.centrality_score,
-                    recency_score: selected.analysis.scores.churn_score,
+    for file_info in &result.files {
+        if !file_info.decision.should_include() {
+            continue;
+        }
+
+        let mut content_opt = file_info.content.clone();
+        let mut estimated_tokens = file_info.token_estimate.unwrap_or(0);
+
+        if content_opt.is_none() && !file_info.is_binary {
+            if let Ok(read) = fs::read_to_string(&file_info.path) {
+                estimated_tokens = file_info.token_estimate.unwrap_or_else(|| {
+                    token_counter
+                        .estimate_file_tokens(&read, &file_info.path)
+                        .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&read))
                 });
+                content_opt = Some(read);
             }
+        }
+
+        let content = match content_opt {
+            Some(text) => {
+                if estimated_tokens == 0 {
+                    estimated_tokens = token_counter
+                        .estimate_file_tokens(&text, &file_info.path)
+                        .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&text));
+                }
+                text
+            }
+            None => {
+                if estimated_tokens == 0 {
+                    estimated_tokens = ((file_info.size as usize) / 4).max(1);
+                }
+                String::from("<binary or unavailable content>")
+            }
+        };
+
+        if estimated_tokens == 0 {
+            estimated_tokens = 1;
+        }
+
+        let path_key = file_info.path.to_string_lossy().to_string();
+        let importance_score = result.final_scores.get(&path_key).copied().unwrap_or(0.0);
+
+        candidates.push(FileWithContent {
+            path: file_info.path.clone(),
+            relative_path: file_info.relative_path.clone(),
+            content,
+            size: file_info.size,
+            estimated_tokens,
+            importance_score,
+            git_changes: None,
+            centrality_score: file_info.centrality_score.unwrap_or(0.0),
+            query_relevance_score: 0.0,
+            entry_point_proximity: 0.0,
+            content_quality_score: 0.0,
+            repository_role_score: 0.0,
+            recency_score: 0.0,
+        });
+    }
+
+    if candidates.is_empty() {
+        for file_info in &result.files {
+            let path_key = file_info.path.to_string_lossy().to_string();
+            let importance_score = result.final_scores.get(&path_key).copied().unwrap_or(0.0);
+
+            candidates.push(FileWithContent {
+                path: file_info.path.clone(),
+                relative_path: file_info.relative_path.clone(),
+                content: String::from("<binary or unreadable content omitted>"),
+                size: file_info.size,
+                estimated_tokens: file_info.token_estimate.unwrap_or(1).max(1),
+                importance_score,
+                git_changes: None,
+                centrality_score: file_info.centrality_score.unwrap_or(0.0),
+                query_relevance_score: 0.0,
+                entry_point_proximity: 0.0,
+                content_quality_score: 0.0,
+                repository_role_score: 0.0,
+                recency_score: 0.0,
+            });
+        }
+    }
+
+    let mut candidates_sorted = candidates.clone();
+    candidates_sorted.sort_by(|a, b| {
+        b.importance_score
+            .partial_cmp(&a.importance_score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.relative_path.cmp(&b.relative_path))
+    });
+
+    let fallback_file = candidates_sorted.first().cloned();
+    let unlimited_budget = selection_config.force_traditional || token_target == 0;
+
+    let mut mandatory = Vec::new();
+    let mut source = Vec::new();
+    let mut docs = Vec::new();
+    let mut other = Vec::new();
+
+    for file in &candidates_sorted {
+        match categorize_file(file) {
+            FileCategory::Mandatory => mandatory.push(file.clone()),
+            FileCategory::Source => source.push(file.clone()),
+            FileCategory::Documentation => docs.push(file.clone()),
+            FileCategory::Other => other.push(file.clone()),
+        }
+    }
+
+    let mut selected_files: Vec<FileWithContent> = Vec::new();
+    let mut included_paths: HashSet<String> = HashSet::new();
+    let mut budget_consumed = 0usize;
+
+    for tier in [mandatory, source, docs, other] {
+        if !unlimited_budget && budget_consumed >= token_target {
+            break;
+        }
+
+        for file in tier {
+            if !unlimited_budget && budget_consumed >= token_target {
+                break;
+            }
+
+            let _ = try_include_with_budget(
+                file,
+                unlimited_budget,
+                token_target,
+                &mut budget_consumed,
+                &mut included_paths,
+                &mut selected_files,
+            );
+        }
+    }
+
+    if !unlimited_budget && budget_consumed < token_target {
+        for file in &candidates_sorted {
+            if budget_consumed >= token_target {
+                break;
+            }
+            if included_paths.contains(&file.relative_path) {
+                continue;
+            }
+            let _ = try_include_with_budget(
+                file.clone(),
+                unlimited_budget,
+                token_target,
+                &mut budget_consumed,
+                &mut included_paths,
+                &mut selected_files,
+            );
         }
     }
 
     if selected_files.is_empty() {
-        for file_info in &result.files {
-            let content = file_info.content.clone().or_else(|| {
-                if !file_info.is_binary {
-                    fs::read_to_string(&file_info.path).ok()
-                } else {
-                    None
-                }
-            });
-
-            if let Some(content) = content {
-                let path_key = file_info.path.to_string_lossy().to_string();
-                selected_files.push(FileWithContent {
-                    path: file_info.path.clone(),
-                    relative_path: file_info.relative_path.clone(),
-                    content,
-                    size: file_info.size,
-                    estimated_tokens: file_info.token_estimate.unwrap_or(0),
-                    importance_score: result.final_scores.get(&path_key).copied().unwrap_or(0.0),
-                    git_changes: None,
-                    centrality_score: file_info.centrality_score.unwrap_or(0.0),
-                    query_relevance_score: 0.0,
-                    entry_point_proximity: 0.0,
-                    content_quality_score: 0.0,
-                    repository_role_score: 0.0,
-                    recency_score: 0.0,
-                });
-            }
+        if let Some(file) = fallback_file {
+            let _ = try_include_with_budget(
+                file,
+                true,
+                token_target.max(1),
+                &mut budget_consumed,
+                &mut included_paths,
+                &mut selected_files,
+            );
         }
     }
 
@@ -3316,14 +3579,39 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let total_tokens_estimated: usize = selected_files.iter().map(|f| f.estimated_tokens).sum();
+    let selection_time_ms = selection_start.elapsed().as_millis() as u128;
+
+    let coverage_score = if total_files_discovered > 0 {
+        selected_files.len() as f64 / total_files_discovered as f64
+    } else {
+        1.0
+    };
+
+    let relevance_score = if selected_files.is_empty() {
+        0.0
+    } else {
+        selected_files
+            .iter()
+            .map(|f| f.importance_score)
+            .sum::<f64>()
+            / selected_files.len() as f64
+    };
+
+    let algorithm_label = if unlimited_budget {
+        "Tiered (unlimited budget)".to_string()
+    } else {
+        "Tiered (token-budget)".to_string()
+    };
+
     let metrics = SelectionMetrics {
         total_files_discovered,
         files_selected: selected_files.len(),
-        total_tokens_estimated: selected_files.iter().map(|f| f.estimated_tokens).sum(),
-        selection_time_ms: 0, // TODO: get from library
-        algorithm_used: "Intelligent (Library)".to_string(),
-        coverage_score: 1.0,
-        relevance_score: 0.8,
+        total_tokens_estimated,
+        selection_time_ms,
+        algorithm_used: algorithm_label,
+        coverage_score,
+        relevance_score,
     };
 
     if verbose_level > 0 {

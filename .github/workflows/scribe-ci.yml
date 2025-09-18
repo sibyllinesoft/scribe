@@ -68,6 +68,7 @@ jobs:
           ./target/release/scribe --help
 
       - name: Upload Rust artifacts
+        if: ${{ env.ACT != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: rust-artifacts
@@ -85,54 +86,68 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Skip e2e tests in act
+        if: ${{ env.ACT == 'true' }}
+        run: echo "Skipping e2e-tests job for local act run"
+
       - name: Checkout code
+        if: ${{ env.ACT != 'true' }}
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
+        if: ${{ env.ACT != 'true' }}
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Bun
+        if: ${{ env.ACT != 'true' }}
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
 
       - name: Cache Rust dependencies
+        if: ${{ env.ACT != 'true' }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: scribe-rs
 
       - name: Download Rust artifacts
+        if: ${{ env.ACT != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: rust-artifacts
           path: scribe-rs/target/release/
 
       - name: Make binary executable
+        if: ${{ env.ACT != 'true' }}
         run: chmod +x scribe-rs/target/release/scribe
 
       - name: Setup e2e test environment
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make check-deps
           make deps
 
       - name: Run library unit tests
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make test-lib
 
       - name: Build Scribe for e2e tests
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make build
 
       - name: Run CLI parameter tests
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make test-cli
 
       - name: Upload e2e test results
-        if: always()
+        if: ${{ env.ACT != 'true' && always() }}
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
@@ -149,50 +164,64 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-core
     timeout-minutes: 60
-
+    
     steps:
+      - name: Skip web UI tests in act
+        if: ${{ env.ACT == 'true' }}
+        run: echo "Skipping webui-e2e job for local act run"
+
       - name: Checkout code
+        if: ${{ env.ACT != 'true' }}
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
+        if: ${{ env.ACT != 'true' }}
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Bun
+        if: ${{ env.ACT != 'true' }}
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
 
       - name: Cache Rust dependencies
+        if: ${{ env.ACT != 'true' }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: scribe-rs
 
       - name: Download Rust artifacts
+        if: ${{ env.ACT != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: rust-artifacts
           path: scribe-rs/target/release/
 
       - name: Make binary executable
+        if: ${{ env.ACT != 'true' }}
         run: chmod +x scribe-rs/target/release/scribe
 
       - name: Setup test environment
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make check-deps
           make deps
 
       - name: Install Playwright browsers
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           bun run playwright:install
 
       - name: Build Scribe for web UI tests
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make build
 
       - name: Run Web UI tests
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd tests
           make test-webui
@@ -200,7 +229,7 @@ jobs:
           CI: true
 
       - name: Upload Playwright report
-        if: always()
+        if: ${{ env.ACT != 'true' && always() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
@@ -218,32 +247,43 @@ jobs:
     runs-on: ubuntu-latest
     needs: [rust-core, e2e-tests]
     timeout-minutes: 30
-
+    
     steps:
+      - name: Skip integration tests in act
+        if: ${{ env.ACT == 'true' }}
+        run: echo "Skipping integration job for local act run"
+
       - name: Checkout code
+        if: ${{ env.ACT != 'true' }}
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
+        if: ${{ env.ACT != 'true' }}
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Bun
+        if: ${{ env.ACT != 'true' }}
         uses: oven-sh/setup-bun@v1
 
       - name: Cache Rust dependencies
+        if: ${{ env.ACT != 'true' }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: scribe-rs
 
       - name: Download Rust artifacts
+        if: ${{ env.ACT != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: rust-artifacts
           path: scribe-rs/target/release/
 
       - name: Make binary executable
+        if: ${{ env.ACT != 'true' }}
         run: chmod +x scribe-rs/target/release/scribe
 
       - name: Smoke test - Scribe on itself
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd scribe-rs
           # Test Scribe analyzing its own codebase
@@ -261,6 +301,7 @@ jobs:
           wait $SERVER_PID 2>/dev/null || true
 
       - name: Test different CLI configurations
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd scribe-rs
           # Test various CLI parameter combinations
@@ -271,6 +312,7 @@ jobs:
           wait $SERVER_PID 2>/dev/null || true
 
       - name: Performance baseline test
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd scribe-rs
           # Quick performance test
@@ -332,27 +374,36 @@ jobs:
     name: Release Readiness
     runs-on: ubuntu-latest
     needs: [rust-core, e2e-tests, webui-e2e, integration, security]
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
     timeout-minutes: 15
 
     steps:
+      - name: Skip release checks in act
+        if: ${{ env.ACT == 'true' }}
+        run: echo "Skipping release-check job for local act run"
+
       - name: Checkout code
+        if: ${{ env.ACT != 'true' }}
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
+        if: ${{ env.ACT != 'true' }}
         uses: dtolnay/rust-toolchain@stable
 
       - name: Check release build
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd scribe-rs
           cargo build --release --workspace
 
       - name: Validate documentation
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd scribe-rs
           cargo doc --workspace --all-features --no-deps
 
       - name: Check version consistency
+        if: ${{ env.ACT != 'true' }}
         run: |
           cd scribe-rs
           # Ensure all workspace crates have the same version
@@ -370,6 +421,7 @@ jobs:
           done
 
       - name: Generate release summary
+        if: ${{ env.ACT != 'true' }}
         run: |
           echo "# Scribe Release Summary" > release-summary.md
           echo "" >> release-summary.md
@@ -385,6 +437,7 @@ jobs:
           echo "- ✅ Security checks passed" >> release-summary.md
 
       - name: Upload release artifacts
+        if: ${{ env.ACT != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-summary
@@ -406,20 +459,60 @@ jobs:
           echo "==================================="
           echo "Scribe CI/CD Pipeline Summary"
           echo "==================================="
-          echo "Rust Core: ${{ needs.rust-core.result }}"
-          echo "E2E Tests: ${{ needs.e2e-tests.result }}"
-          echo "Web UI Tests: ${{ needs.webui-e2e.result }}"
-          echo "Integration: ${{ needs.integration.result }}"
-          echo "Security: ${{ needs.security.result }}"
+          rust_core="${{ needs.rust-core.result }}"
+          e2e="${{ needs.e2e-tests.result }}"
+          webui="${{ needs.webui-e2e.result }}"
+          integration="${{ needs.integration.result }}"
+          security="${{ needs.security.result }}"
+
+          echo "Rust Core: ${rust_core}"
+          echo "E2E Tests: ${e2e}"
+          echo "Web UI Tests: ${webui}"
+          echo "Integration: ${integration}"
+          echo "Security: ${security}"
           echo "==================================="
           
-          # Determine overall status
-          if [[ "${{ needs.rust-core.result }}" == "success" && 
-                "${{ needs.e2e-tests.result }}" == "success" && 
-                "${{ needs.integration.result }}" == "success" && 
-                "${{ needs.security.result }}" == "success" ]]; then
+          treat_as_success() {
+            local label="$1"
+            local result="$2"
+
+            case "$result" in
+              success)
+                return 0
+                ;;
+              skipped)
+                if [[ "${ACT:-}" == "true" ]]; then
+                  echo "ℹ️  ${label} skipped under act run; treating as success."
+                  return 0
+                fi
+                ;;
+              neutral)
+                if [[ "${ACT:-}" == "true" ]]; then
+                  echo "ℹ️  ${label} reported neutral; treating as success for act."
+                  return 0
+                fi
+                ;;
+            esac
+
+            echo "⚠️  ${label} reported status '${result}'."
+            return 1
+          }
+
+          overall_ok=true
+
+          treat_as_success "Rust Core" "$rust_core" || overall_ok=false
+          treat_as_success "E2E Tests" "$e2e" || overall_ok=false
+          treat_as_success "Web UI Tests" "$webui" || overall_ok=false
+          treat_as_success "Integration" "$integration" || overall_ok=false
+          treat_as_success "Security" "$security" || overall_ok=false
+
+          if $overall_ok; then
             echo "🎉 Overall Status: SUCCESS"
-            echo "All critical tests passed!"
+            if [[ "${ACT:-}" == "true" ]]; then
+              echo "All mandatory jobs passed; optional jobs skipped locally."
+            else
+              echo "All critical tests passed!"
+            fi
             exit 0
           else
             echo "❌ Overall Status: FAILURE"
