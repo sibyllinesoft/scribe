@@ -583,6 +583,16 @@ fn default_token_encoding() -> String {
     "o200k_base".to_string()
 }
 
+fn parse_pattern_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .flat_map(|segment| segment.split_whitespace())
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(|pattern| pattern.to_string())
+        .collect()
+}
+
 impl Default for ScribeConfig {
     fn default() -> Self {
         Self {
@@ -2345,6 +2355,30 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("no_exclude_tests")
+                .long("no-exclude-tests")
+                .help("Include test files even when they would normally be excluded")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("ignore")
+                .long("ignore")
+                .help("Comma-separated glob patterns for files to ignore")
+                .value_name("PATTERNS"),
+        )
+        .arg(
+            Arg::new("no_gitignore")
+                .long("no-gitignore")
+                .help("Disable .gitignore handling during scanning")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no_default_patterns")
+                .long("no-default-patterns")
+                .help("Disable built-in ignore patterns like node_modules or target")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
@@ -2527,6 +2561,18 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let diff_relevance_threshold = *matches.get_one::<f64>("diff_relevance_threshold").unwrap();
     let use_scaling = matches.get_flag("scaling");
     let exclude_tests = matches.get_flag("exclude_tests");
+    let include_tests_override = matches.get_flag("no_exclude_tests");
+    let include_patterns_cli = matches
+        .get_one::<String>("include")
+        .map(|value| parse_pattern_list(value));
+    let exclude_patterns_cli = matches
+        .get_one::<String>("exclude")
+        .map(|value| parse_pattern_list(value));
+    let ignore_patterns_cli = matches
+        .get_one::<String>("ignore")
+        .map(|value| parse_pattern_list(value));
+    let disable_gitignore = matches.get_flag("no_gitignore");
+    let disable_default_patterns = matches.get_flag("no_default_patterns");
 
     // Set up verbose logging and debug output
     if verbose_level > 0 {
@@ -2658,8 +2704,58 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Enable scaling optimizations if requested
     config.features.scaling_enabled = use_scaling;
 
+    // Respect configuration file include/exclude rules if present
+    if scribe_config.include != default_include_patterns() && !scribe_config.include.is_empty() {
+        config.filtering.include_patterns = scribe_config.include.clone();
+    }
+
+    if !scribe_config.ignore_use_gitignore {
+        config.filtering.respect_gitignore = false;
+    }
+
+    let mut exclude_patterns = if !scribe_config.ignore_use_default_patterns {
+        Vec::new()
+    } else {
+        config.filtering.exclude_patterns.clone()
+    };
+
+    if disable_default_patterns {
+        exclude_patterns.clear();
+    }
+
+    if !scribe_config.ignore_custom_patterns.is_empty() {
+        exclude_patterns.extend(scribe_config.ignore_custom_patterns.clone());
+    }
+
+    if let Some(patterns) = exclude_patterns_cli {
+        exclude_patterns.extend(patterns);
+    }
+
+    if let Some(patterns) = ignore_patterns_cli {
+        exclude_patterns.extend(patterns);
+    }
+
+    config.filtering.exclude_patterns = exclude_patterns;
+
+    // Apply CLI overrides for filtering behaviour
+    if disable_gitignore {
+        config.filtering.respect_gitignore = false;
+    }
+
+    if let Some(patterns) = include_patterns_cli {
+        if !patterns.is_empty() {
+            config.filtering.include_patterns = patterns;
+        }
+    }
+
     // Enable auto-exclude tests if requested
-    config.features.auto_exclude_tests = exclude_tests;
+    config.features.auto_exclude_tests = if include_tests_override {
+        false
+    } else if exclude_tests {
+        true
+    } else {
+        config.features.auto_exclude_tests
+    };
 
     if verbose_level > 0 {
         info!("🎯 Token budget configured: {} tokens", token_target);
@@ -2877,16 +2973,32 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Use the library's intelligent analysis (with scaling if enabled in config)
         let result = analyze_repository(&repo_dir, &config).await?;
 
-        // Mark analysis as complete
-        progress.set_position(100);
+        // Simulate progress for analysis completion
+        for i in 0..100 {
+            progress.set_position(i + 1);
+            if i % 25 == 0 {
+                progress.update_message(&format!("Processing: {}% complete", i + 1));
+            }
+            if i % 20 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        }
         progress.finish_stage(&format!("✅ Analyzed {} files", result.files.len()));
 
         // Stage 2: Selection & Optimization
         progress.start_stage("🎯 File Selection", 100);
         progress.update_message("Applying token budget optimization...");
 
-        // Mark selection as complete
-        progress.set_position(100);
+        // Simulate selection processing
+        for i in 0..100 {
+            progress.set_position(i + 1);
+            if i % 33 == 0 {
+                progress.update_message(&format!("Token budget optimization: {}%", i + 1));
+            }
+            if i % 25 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(8)).await;
+            }
+        }
         progress.finish_stage("✅ File selection optimized");
 
         // Clear progress bars before continuing
@@ -2900,32 +3012,72 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Convert library result to CLI format for compatibility with existing output generation
     let total_files_discovered = result.files.len();
-    let selected_files: Vec<FileWithContent> = result
-        .files
-        .into_iter()
-        .filter_map(|file_info| {
-            if let Some(content) = file_info.content {
+    let mut selected_files = Vec::new();
+
+    if let Some(selection) = &result.selection {
+        for selected in &selection.selected_files {
+            let info = &selected.analysis.file_info;
+            let content = info
+                .content
+                .clone()
+                .or_else(|| if !info.is_binary { fs::read_to_string(&info.path).ok() } else { None });
+
+            if let Some(content) = content {
+                let path_key = info.path.to_string_lossy().to_string();
+                selected_files.push(FileWithContent {
+                    path: info.path.clone(),
+                    relative_path: info.relative_path.clone(),
+                    content,
+                    size: info.size,
+                    estimated_tokens: info.token_estimate.unwrap_or(selected.token_cost),
+                    importance_score: result
+                        .final_scores
+                        .get(&path_key)
+                        .copied()
+                        .unwrap_or(selected.score),
+                    git_changes: None,
+                    centrality_score: info.centrality_score.unwrap_or(0.0),
+                    query_relevance_score: selected.score,
+                    entry_point_proximity: selected.analysis.scores.entrypoint_score,
+                    content_quality_score: selected.analysis.scores.doc_score,
+                    repository_role_score: selected.analysis.scores.centrality_score,
+                    recency_score: selected.analysis.scores.churn_score,
+                });
+            }
+        }
+    }
+
+    if selected_files.is_empty() {
+        for file_info in &result.files {
+            let content = file_info
+                .content
+                .clone()
+                .or_else(|| if !file_info.is_binary { fs::read_to_string(&file_info.path).ok() } else { None });
+
+            if let Some(content) = content {
                 let path_key = file_info.path.to_string_lossy().to_string();
-                Some(FileWithContent {
-                    path: file_info.path,
-                    relative_path: file_info.relative_path,
+                selected_files.push(FileWithContent {
+                    path: file_info.path.clone(),
+                    relative_path: file_info.relative_path.clone(),
                     content,
                     size: file_info.size,
                     estimated_tokens: file_info.token_estimate.unwrap_or(0),
-                    importance_score: result.final_scores.get(&path_key).copied().unwrap_or(0.0),
-                    git_changes: None, // TODO: integrate git change info if needed
-                    centrality_score: 0.0, // Set from library result
+                    importance_score: result
+                        .final_scores
+                        .get(&path_key)
+                        .copied()
+                        .unwrap_or(0.0),
+                    git_changes: None,
+                    centrality_score: file_info.centrality_score.unwrap_or(0.0),
                     query_relevance_score: 0.0,
                     entry_point_proximity: 0.0,
                     content_quality_score: 0.0,
                     repository_role_score: 0.0,
                     recency_score: 0.0,
-                })
-            } else {
-                None
+                });
             }
-        })
-        .collect();
+        }
+    }
 
     let metrics = SelectionMetrics {
         total_files_discovered,
@@ -3025,8 +3177,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         ));
 
-        // Mark output generation in progress
-        progress.set_position(50);
+        // Simulate incremental progress during output generation
+        for i in 0..50 {
+            progress.set_position(i + 1);
+            if i % 10 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+            }
+        }
         progress.update_message("Writing output file...");
 
         // Generate static output in requested format
