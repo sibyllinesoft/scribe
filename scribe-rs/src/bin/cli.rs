@@ -593,6 +593,32 @@ fn parse_pattern_list(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn normalize_patterns(patterns: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for pattern in patterns {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let normalized = trimmed.to_string();
+        if seen.insert(normalized.clone()) {
+            result.push(normalized.clone());
+        }
+
+        if !normalized.contains('/') && !normalized.contains('\\') && !normalized.contains("**") {
+            let recursive = format!("**/{}", normalized);
+            if seen.insert(recursive.clone()) {
+                result.push(recursive);
+            }
+        }
+    }
+
+    result
+}
+
 impl Default for ScribeConfig {
     fn default() -> Self {
         Self {
@@ -2564,13 +2590,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let include_tests_override = matches.get_flag("no_exclude_tests");
     let include_patterns_cli = matches
         .get_one::<String>("include")
-        .map(|value| parse_pattern_list(value));
+        .map(|value| normalize_patterns(parse_pattern_list(value)));
     let exclude_patterns_cli = matches
         .get_one::<String>("exclude")
-        .map(|value| parse_pattern_list(value));
+        .map(|value| normalize_patterns(parse_pattern_list(value)));
     let ignore_patterns_cli = matches
         .get_one::<String>("ignore")
-        .map(|value| parse_pattern_list(value));
+        .map(|value| normalize_patterns(parse_pattern_list(value)));
     let disable_gitignore = matches.get_flag("no_gitignore");
     let disable_default_patterns = matches.get_flag("no_default_patterns");
 
@@ -2706,7 +2732,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Respect configuration file include/exclude rules if present
     if scribe_config.include != default_include_patterns() && !scribe_config.include.is_empty() {
-        config.filtering.include_patterns = scribe_config.include.clone();
+        config.filtering.include_patterns = normalize_patterns(scribe_config.include.clone());
     }
 
     if !scribe_config.ignore_use_gitignore {
@@ -2724,7 +2750,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     if !scribe_config.ignore_custom_patterns.is_empty() {
-        exclude_patterns.extend(scribe_config.ignore_custom_patterns.clone());
+        exclude_patterns.extend(normalize_patterns(scribe_config.ignore_custom_patterns.clone()));
     }
 
     if let Some(patterns) = exclude_patterns_cli {
@@ -2735,7 +2761,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         exclude_patterns.extend(patterns);
     }
 
-    config.filtering.exclude_patterns = exclude_patterns;
+    config.filtering.exclude_patterns = normalize_patterns(exclude_patterns);
 
     // Apply CLI overrides for filtering behaviour
     if disable_gitignore {
