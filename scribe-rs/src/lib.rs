@@ -392,7 +392,9 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
     fallback_scan(path, &optimized_config).await
 }
 
-async fn apply_token_budget_selection(
+/// Apply the library's tiered token budget selection to a set of files.
+/// Exposed for reuse by the CLI so both paths share the same behaviour.
+pub async fn apply_token_budget_selection(
     files: Vec<FileInfo>,
     token_budget: usize,
     config: &Config,

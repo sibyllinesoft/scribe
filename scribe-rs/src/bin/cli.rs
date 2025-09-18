@@ -40,7 +40,7 @@ use scribe_scanner::{
 };
 
 // Import the main library functions
-use scribe_analyzer::{analyze_repository, Config};
+use scribe_analyzer::{analyze_repository, apply_token_budget_selection, Config};
 
 /// Multi-stage progress bar manager for scribe operations
 struct ScribeProgressManager {
@@ -711,166 +711,6 @@ struct FileWithContent {
     content_quality_score: f64,
     repository_role_score: f64,
     recency_score: f64,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum FileCategory {
-    Mandatory,
-    Source,
-    Documentation,
-    Other,
-}
-
-fn categorize_file(file: &FileWithContent) -> FileCategory {
-    let path = file.relative_path.to_lowercase();
-    let extension = Path::new(&file.relative_path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    if is_mandatory_path(&path) {
-        return FileCategory::Mandatory;
-    }
-
-    if is_source_extension(&extension) {
-        return FileCategory::Source;
-    }
-
-    if is_documentation_path(&path, &extension) {
-        return FileCategory::Documentation;
-    }
-
-    FileCategory::Other
-}
-
-fn is_mandatory_path(path: &str) -> bool {
-    if path.contains("node_modules/")
-        || path.contains("target/")
-        || path.contains("vendor/")
-        || path.contains(".git/")
-        || path.contains("__pycache__/")
-        || path.contains("build/")
-        || path.contains("dist/")
-        || path.contains(".cache/")
-    {
-        return false;
-    }
-
-    if path.contains("readme") {
-        let depth = path.matches('/').count();
-        return depth <= 1;
-    }
-
-    if !path.contains('/')
-        && matches!(
-            path,
-            "package.json"
-                | "cargo.toml"
-                | "pyproject.toml"
-                | "requirements.txt"
-                | "go.mod"
-                | "pom.xml"
-                | "build.gradle"
-                | "composer.json"
-                | "tsconfig.json"
-                | ".gitignore"
-                | "dockerfile"
-                | "docker-compose.yml"
-        )
-    {
-        return true;
-    }
-
-    if (path.starts_with("src/") || path.starts_with("lib/") || !path.contains('/'))
-        && (path.contains("main") || path.contains("index"))
-    {
-        return true;
-    }
-
-    false
-}
-
-fn is_source_extension(extension: &str) -> bool {
-    matches!(
-        extension,
-        "rs" | "py"
-            | "js"
-            | "jsx"
-            | "ts"
-            | "tsx"
-            | "go"
-            | "java"
-            | "kt"
-            | "kts"
-            | "c"
-            | "cpp"
-            | "cxx"
-            | "cc"
-            | "h"
-            | "hpp"
-            | "cs"
-            | "rb"
-            | "php"
-            | "swift"
-            | "scala"
-            | "sh"
-            | "pl"
-            | "ps1"
-            | "psm1"
-            | "lua"
-            | "dart"
-            | "m"
-            | "mm"
-            | "sql"
-    )
-}
-
-fn is_documentation_path(path: &str, extension: &str) -> bool {
-    if matches!(
-        extension,
-        "md" | "mdx" | "rst" | "adoc" | "asciidoc" | "txt" | "org"
-    ) {
-        return true;
-    }
-
-    path.contains("/docs/")
-        || path.contains("/doc/")
-        || path.ends_with("/docs")
-        || path.ends_with("/doc")
-        || path.contains("/guides/")
-        || path.contains("/manual/")
-        || path.contains("changelog")
-}
-
-fn token_cost(file: &FileWithContent) -> usize {
-    file.estimated_tokens.max(1)
-}
-
-fn try_include_with_budget(
-    file: FileWithContent,
-    unlimited_budget: bool,
-    token_target: usize,
-    budget_consumed: &mut usize,
-    included_paths: &mut HashSet<String>,
-    selected_files: &mut Vec<FileWithContent>,
-) -> bool {
-    if included_paths.contains(&file.relative_path) {
-        return true;
-    }
-
-    let cost = token_cost(&file);
-
-    if unlimited_budget || budget_consumed.saturating_add(cost) <= token_target {
-        if !unlimited_budget {
-            *budget_consumed = budget_consumed.saturating_add(cost);
-        }
-        included_paths.insert(file.relative_path.clone());
-        selected_files.push(file);
-        true
-    } else {
-        false
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -3000,6 +2840,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         config.features.auto_exclude_tests
     };
 
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("Include patterns: {:?}", config.filtering.include_patterns);
+        eprintln!("Exclude patterns: {:?}", config.filtering.exclude_patterns);
+    }
+
     if verbose_level > 0 {
         info!("🎯 Token budget configured: {} tokens", token_target);
         info!("📏 Max file size limit: {} bytes", max_bytes);
@@ -3379,60 +3224,117 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let selection_start = std::time::Instant::now();
     let token_counter = TokenCounter::global();
 
-    let mut candidates = Vec::new();
+    let unlimited_budget = selection_config.force_traditional || token_target == 0;
 
-    for file_info in &result.files {
-        if !file_info.decision.should_include() {
-            continue;
-        }
-
-        let mut content_opt = file_info.content.clone();
-        let mut estimated_tokens = file_info.token_estimate.unwrap_or(0);
-
-        if content_opt.is_none() && !file_info.is_binary {
-            if let Ok(read) = fs::read_to_string(&file_info.path) {
-                estimated_tokens = file_info.token_estimate.unwrap_or_else(|| {
-                    token_counter
-                        .estimate_file_tokens(&read, &file_info.path)
-                        .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&read))
-                });
-                content_opt = Some(read);
+    // Apply include patterns again at the CLI layer to ensure we only surface
+    // what the user explicitly requested (e.g. `--include "*.rs"").
+    let include_filter = if config.filtering.include_patterns.is_empty() {
+        None
+    } else {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in &config.filtering.include_patterns {
+            if let Ok(glob) = Glob::new(pattern) {
+                builder.add(glob);
             }
         }
+        builder.build().ok()
+    };
 
-        let content = match content_opt {
-            Some(text) => {
-                if estimated_tokens == 0 {
-                    estimated_tokens = token_counter
-                        .estimate_file_tokens(&text, &file_info.path)
-                        .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&text));
+    let filtered_infos: Vec<_> = result
+        .files
+        .iter()
+        .filter(|info| info.decision.should_include())
+        .filter(|info| {
+            if let Some(includes) = include_filter.as_ref() {
+                includes.is_match(info.relative_path.as_str())
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect();
+
+    let mut selected_infos = if unlimited_budget {
+        filtered_infos.clone()
+    } else {
+        apply_token_budget_selection(filtered_infos.clone(), token_target, &config).await?
+    };
+
+    selected_infos.sort_by(|a, b| {
+        let a_key = a.path.to_string_lossy();
+        let b_key = b.path.to_string_lossy();
+        let a_score = result
+            .final_scores
+            .get(&a_key.to_string())
+            .copied()
+            .unwrap_or(0.0);
+        let b_score = result
+            .final_scores
+            .get(&b_key.to_string())
+            .copied()
+            .unwrap_or(0.0);
+
+        b_score
+            .partial_cmp(&a_score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.relative_path.cmp(&b.relative_path))
+    });
+
+    if unlimited_budget {
+        for info in selected_infos.iter_mut() {
+            if info.content.is_none() && !info.is_binary {
+                if let Ok(read) = fs::read_to_string(&info.path) {
+                    info.content = Some(read);
                 }
-                text
             }
-            None => {
-                if estimated_tokens == 0 {
-                    estimated_tokens = ((file_info.size as usize) / 4).max(1);
-                }
-                String::from("<binary or unavailable content>")
-            }
-        };
+        }
+    }
 
-        if estimated_tokens == 0 {
-            estimated_tokens = 1;
+    let mut selected_files: Vec<FileWithContent> = Vec::new();
+    let mut budget_consumed = 0usize;
+
+    for info in selected_infos {
+        let mut content = info.content.clone();
+        if content.is_none() && !info.is_binary {
+            if let Ok(read) = fs::read_to_string(&info.path) {
+                content = Some(read);
+            }
         }
 
-        let path_key = file_info.path.to_string_lossy().to_string();
+        let text = content.unwrap_or_else(|| String::from("<binary or unavailable content>"));
+        let estimated_tokens = info.token_estimate.unwrap_or_else(|| {
+            token_counter
+                .estimate_file_tokens(&text, &info.path)
+                .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&text))
+                .max(1)
+        });
+
+        if !unlimited_budget {
+            if budget_consumed.saturating_add(estimated_tokens) > token_target {
+                continue;
+            }
+            budget_consumed = budget_consumed.saturating_add(estimated_tokens);
+        }
+
+        let path_key = info.path.to_string_lossy().to_string();
         let importance_score = result.final_scores.get(&path_key).copied().unwrap_or(0.0);
 
-        candidates.push(FileWithContent {
-            path: file_info.path.clone(),
-            relative_path: file_info.relative_path.clone(),
-            content,
-            size: file_info.size,
+        let display_path = info
+            .path
+            .strip_prefix(&repo_dir)
+            .unwrap_or(&info.path)
+            .to_string_lossy()
+            .to_string();
+
+        selected_files.push(FileWithContent {
+            path: info.path.clone(),
+            relative_path: display_path,
+            content: text,
+            size: info.size,
             estimated_tokens,
             importance_score,
             git_changes: None,
-            centrality_score: file_info.centrality_score.unwrap_or(0.0),
+            centrality_score: info.centrality_score.unwrap_or(0.0),
             query_relevance_score: 0.0,
             entry_point_proximity: 0.0,
             content_quality_score: 0.0,
@@ -3441,108 +3343,52 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    if candidates.is_empty() {
-        for file_info in &result.files {
-            let path_key = file_info.path.to_string_lossy().to_string();
-            let importance_score = result.final_scores.get(&path_key).copied().unwrap_or(0.0);
+    if let Some(include_globs) = include_filter.as_ref() {
+        selected_files.retain(|file| {
+            file.relative_path == "DIRECTORY_MAP.txt" || include_globs.is_match(&file.relative_path)
+        });
+    }
 
-            candidates.push(FileWithContent {
-                path: file_info.path.clone(),
-                relative_path: file_info.relative_path.clone(),
-                content: String::from("<binary or unreadable content omitted>"),
-                size: file_info.size,
-                estimated_tokens: file_info.token_estimate.unwrap_or(1).max(1),
-                importance_score,
+    if selected_files.is_empty() {
+        let fallback_candidate = if !filtered_infos.is_empty() {
+            filtered_infos.first()
+        } else {
+            result.files.first()
+        };
+
+        if let Some(first) = fallback_candidate {
+            let fallback_content = fs::read_to_string(&first.path).unwrap_or_default();
+            let estimated_tokens = token_counter
+                .estimate_file_tokens(&fallback_content, &first.path)
+                .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&fallback_content))
+                .max(1);
+
+            let fallback_display = first
+                .path
+                .strip_prefix(&repo_dir)
+                .unwrap_or(&first.path)
+                .to_string_lossy()
+                .to_string();
+
+            selected_files.push(FileWithContent {
+                path: first.path.clone(),
+                relative_path: fallback_display,
+                content: fallback_content,
+                size: first.size,
+                estimated_tokens,
+                importance_score: result
+                    .final_scores
+                    .get(&first.path.to_string_lossy().to_string())
+                    .copied()
+                    .unwrap_or(0.0),
                 git_changes: None,
-                centrality_score: file_info.centrality_score.unwrap_or(0.0),
+                centrality_score: first.centrality_score.unwrap_or(0.0),
                 query_relevance_score: 0.0,
                 entry_point_proximity: 0.0,
                 content_quality_score: 0.0,
                 repository_role_score: 0.0,
                 recency_score: 0.0,
             });
-        }
-    }
-
-    let mut candidates_sorted = candidates.clone();
-    candidates_sorted.sort_by(|a, b| {
-        b.importance_score
-            .partial_cmp(&a.importance_score)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| a.relative_path.cmp(&b.relative_path))
-    });
-
-    let fallback_file = candidates_sorted.first().cloned();
-    let unlimited_budget = selection_config.force_traditional || token_target == 0;
-
-    let mut mandatory = Vec::new();
-    let mut source = Vec::new();
-    let mut docs = Vec::new();
-    let mut other = Vec::new();
-
-    for file in &candidates_sorted {
-        match categorize_file(file) {
-            FileCategory::Mandatory => mandatory.push(file.clone()),
-            FileCategory::Source => source.push(file.clone()),
-            FileCategory::Documentation => docs.push(file.clone()),
-            FileCategory::Other => other.push(file.clone()),
-        }
-    }
-
-    let mut selected_files: Vec<FileWithContent> = Vec::new();
-    let mut included_paths: HashSet<String> = HashSet::new();
-    let mut budget_consumed = 0usize;
-
-    for tier in [mandatory, source, docs, other] {
-        if !unlimited_budget && budget_consumed >= token_target {
-            break;
-        }
-
-        for file in tier {
-            if !unlimited_budget && budget_consumed >= token_target {
-                break;
-            }
-
-            let _ = try_include_with_budget(
-                file,
-                unlimited_budget,
-                token_target,
-                &mut budget_consumed,
-                &mut included_paths,
-                &mut selected_files,
-            );
-        }
-    }
-
-    if !unlimited_budget && budget_consumed < token_target {
-        for file in &candidates_sorted {
-            if budget_consumed >= token_target {
-                break;
-            }
-            if included_paths.contains(&file.relative_path) {
-                continue;
-            }
-            let _ = try_include_with_budget(
-                file.clone(),
-                unlimited_budget,
-                token_target,
-                &mut budget_consumed,
-                &mut included_paths,
-                &mut selected_files,
-            );
-        }
-    }
-
-    if selected_files.is_empty() {
-        if let Some(file) = fallback_file {
-            let _ = try_include_with_budget(
-                file,
-                true,
-                token_target.max(1),
-                &mut budget_consumed,
-                &mut included_paths,
-                &mut selected_files,
-            );
         }
     }
 
