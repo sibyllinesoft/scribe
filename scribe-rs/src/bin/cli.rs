@@ -619,6 +619,55 @@ fn normalize_patterns(patterns: Vec<String>) -> Vec<String> {
     result
 }
 
+fn build_directory_map(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+
+    let mut sorted = paths.to_vec();
+    sorted.sort();
+
+    let mut printed = HashSet::new();
+    printed.insert(String::new());
+
+    let mut lines = Vec::new();
+    lines.push("Repository Directory Map".to_string());
+    lines.push("========================".to_string());
+    lines.push(".".to_string());
+
+    for path_str in sorted {
+        let parts: Vec<String> = Path::new(&path_str)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+
+        if parts.is_empty() {
+            continue;
+        }
+
+        let mut current = String::new();
+        for (idx, part) in parts.iter().enumerate().take(parts.len() - 1) {
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(part);
+
+            if printed.insert(current.clone()) {
+                let indent = "  ".repeat(idx + 1);
+                lines.push(format!("{}{}{}", indent, part, "/"));
+            }
+        }
+
+        if let Some(filename) = parts.last() {
+            let indent = "  ".repeat(parts.len());
+            lines.push(format!("{}{}", indent, filename));
+        }
+    }
+
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 impl Default for ScribeConfig {
     fn default() -> Self {
         Self {
@@ -2750,7 +2799,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     if !scribe_config.ignore_custom_patterns.is_empty() {
-        exclude_patterns.extend(normalize_patterns(scribe_config.ignore_custom_patterns.clone()));
+        exclude_patterns.extend(normalize_patterns(
+            scribe_config.ignore_custom_patterns.clone(),
+        ));
     }
 
     if let Some(patterns) = exclude_patterns_cli {
@@ -2796,6 +2847,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Collect files from repository using Git-aware discovery
     let mut files = Vec::new();
+    let mut all_relative_paths = Vec::new();
 
     // Use git ls-files for FAST tracked file discovery (major performance fix!)
     // If we're in a subdirectory, filter files to only include current directory and subdirectories
@@ -2951,6 +3003,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
+        all_relative_paths.push(relative_path.clone());
+
         if let Some(manager) = progress.as_ref() {
             manager.inc(1);
             if i % 50 == 0 {
@@ -3088,10 +3142,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if let Some(selection) = &result.selection {
         for selected in &selection.selected_files {
             let info = &selected.analysis.file_info;
-            let content = info
-                .content
-                .clone()
-                .or_else(|| if !info.is_binary { fs::read_to_string(&info.path).ok() } else { None });
+            let content = info.content.clone().or_else(|| {
+                if !info.is_binary {
+                    fs::read_to_string(&info.path).ok()
+                } else {
+                    None
+                }
+            });
 
             if let Some(content) = content {
                 let path_key = info.path.to_string_lossy().to_string();
@@ -3120,10 +3177,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     if selected_files.is_empty() {
         for file_info in &result.files {
-            let content = file_info
-                .content
-                .clone()
-                .or_else(|| if !file_info.is_binary { fs::read_to_string(&file_info.path).ok() } else { None });
+            let content = file_info.content.clone().or_else(|| {
+                if !file_info.is_binary {
+                    fs::read_to_string(&file_info.path).ok()
+                } else {
+                    None
+                }
+            });
 
             if let Some(content) = content {
                 let path_key = file_info.path.to_string_lossy().to_string();
@@ -3133,11 +3193,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     content,
                     size: file_info.size,
                     estimated_tokens: file_info.token_estimate.unwrap_or(0),
-                    importance_score: result
-                        .final_scores
-                        .get(&path_key)
-                        .copied()
-                        .unwrap_or(0.0),
+                    importance_score: result.final_scores.get(&path_key).copied().unwrap_or(0.0),
                     git_changes: None,
                     centrality_score: file_info.centrality_score.unwrap_or(0.0),
                     query_relevance_score: 0.0,
@@ -3147,6 +3203,39 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     recency_score: 0.0,
                 });
             }
+        }
+    }
+
+    if !all_relative_paths.is_empty()
+        && !selected_files
+            .iter()
+            .any(|file| file.relative_path == "DIRECTORY_MAP.txt")
+    {
+        let directory_map = build_directory_map(&all_relative_paths);
+        if !directory_map.is_empty() {
+            let mut map_tokens = directory_map.split_whitespace().count() * 4 / 3;
+            if map_tokens == 0 {
+                map_tokens = 1;
+            }
+            let map_size = directory_map.len() as u64;
+            selected_files.insert(
+                0,
+                FileWithContent {
+                    path: repo_dir.join("DIRECTORY_MAP.txt"),
+                    relative_path: "DIRECTORY_MAP.txt".to_string(),
+                    content: directory_map,
+                    size: map_size,
+                    estimated_tokens: map_tokens,
+                    importance_score: 1.0,
+                    git_changes: None,
+                    centrality_score: 0.0,
+                    query_relevance_score: 0.0,
+                    entry_point_proximity: 0.0,
+                    content_quality_score: 0.0,
+                    repository_role_score: 0.0,
+                    recency_score: 0.0,
+                },
+            );
         }
     }
 
