@@ -2762,6 +2762,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         info!("📏 Max file size limit: {} bytes", max_bytes);
     }
 
+    let mut progress = if verbose_level == 0 {
+        Some(ScribeProgressManager::new(3))
+    } else {
+        None
+    };
+
     // Collect files from repository using Git-aware discovery
     let mut files = Vec::new();
 
@@ -2869,6 +2875,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    if let Some(manager) = progress.as_mut() {
+        let total = git_files.len().max(1) as u64;
+        manager.start_stage("📂 Repository scan", total);
+        manager.update_message("Collecting repository files...");
+        if git_files.is_empty() {
+            manager.update_message("No files discovered");
+        }
+    }
+
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         eprintln!(
             "🚨 CHECKPOINT: git_files assignment complete, count: {}",
@@ -2908,6 +2923,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Check .scribeignore patterns
         if should_ignore_file(&relative_path, &ignore_patterns) {
             continue;
+        }
+
+        if let Some(manager) = progress.as_ref() {
+            manager.inc(1);
+            if i % 50 == 0 {
+                let msg = format!("Scanning {} of {}", i + 1, git_files.len());
+                manager.update_message(&msg);
+            }
         }
 
         // Check file size
@@ -2953,56 +2976,78 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if let Some(manager) = progress.as_ref() {
+        if git_files.is_empty() {
+            manager.finish_stage("ℹ️  Repository contained no files");
+        } else {
+            manager.finish_stage("✅ Repository scan complete");
+        }
+    }
+
     // Display clean banner and initialize progress bars (non-verbose mode)
     let result = if verbose_level == 0 {
+        println!();
         println!(
-            "Scribe v{} - Advanced Code Analysis",
+            "Scribe v{} · Intelligent Repository Analysis",
             env!("CARGO_PKG_VERSION")
         );
-        println!("Repository: {}", repo_dir.display());
-        println!("Token budget: {}", token_target);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("📁 Repository   : {}", repo_dir.display());
+        println!("🎯 Token budget : {} tokens", token_target);
+        println!(
+            "🧪 Test files   : {}",
+            if config.features.auto_exclude_tests {
+                "auto-excluded"
+            } else {
+                "included"
+            }
+        );
         println!();
 
-        // Initialize progress bar manager with 3 stages
-        let mut progress = ScribeProgressManager::new(3);
-
-        // Stage 1: Repository Discovery & Analysis
-        progress.start_stage("🔍 Repository Analysis", 100);
-        progress.update_message("Scanning repository and analyzing files...");
+        if let Some(manager) = progress.as_mut() {
+            manager.start_stage("🧠 Repository analysis", 100);
+            manager.update_message("Computing heuristics and scores...");
+        }
 
         // Use the library's intelligent analysis (with scaling if enabled in config)
         let result = analyze_repository(&repo_dir, &config).await?;
 
-        // Simulate progress for analysis completion
-        for i in 0..100 {
-            progress.set_position(i + 1);
-            if i % 25 == 0 {
-                progress.update_message(&format!("Processing: {}% complete", i + 1));
+        if let Some(manager) = progress.as_ref() {
+            for i in 0..100 {
+                manager.set_position(i + 1);
+                if i % 25 == 0 {
+                    let msg = format!("Analyzing repository ({}%)", i + 1);
+                    manager.update_message(&msg);
+                }
+                if i % 20 == 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                }
             }
-            if i % 20 == 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            }
+            manager.finish_stage(&format!("✅ Analyzed {} files", result.files.len()));
         }
-        progress.finish_stage(&format!("✅ Analyzed {} files", result.files.len()));
 
-        // Stage 2: Selection & Optimization
-        progress.start_stage("🎯 File Selection", 100);
-        progress.update_message("Applying token budget optimization...");
-
-        // Simulate selection processing
-        for i in 0..100 {
-            progress.set_position(i + 1);
-            if i % 33 == 0 {
-                progress.update_message(&format!("Token budget optimization: {}%", i + 1));
-            }
-            if i % 25 == 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(8)).await;
-            }
+        if let Some(manager) = progress.as_mut() {
+            manager.start_stage("🎯 File selection", 100);
+            manager.update_message("Optimizing token usage...");
         }
-        progress.finish_stage("✅ File selection optimized");
 
-        // Clear progress bars before continuing
-        progress.finish_all();
+        if let Some(manager) = progress.as_ref() {
+            for i in 0..100 {
+                manager.set_position(i + 1);
+                if i % 33 == 0 {
+                    let msg = format!("Optimizing selection ({}%)", i + 1);
+                    manager.update_message(&msg);
+                }
+                if i % 25 == 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(8)).await;
+                }
+            }
+            manager.finish_stage("✅ Selection complete");
+        }
+
+        if let Some(manager) = progress.as_mut() {
+            manager.finish_all();
+        }
 
         result
     } else {
@@ -3095,8 +3140,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             metrics.files_selected, metrics.total_tokens_estimated
         );
     } else {
+        println!("📊 Selection summary");
+        println!("  • Files scanned   : {}", total_files_discovered);
         println!(
-            "Selected {} files ({} tokens)",
+            "  • Files selected  : {} ({} tokens)",
             metrics.files_selected, metrics.total_tokens_estimated
         );
     }
@@ -3105,21 +3152,30 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         if verbose_level > 0 {
             info!("Enhanced Selection Metrics:");
         } else {
-            println!("\nDetailed Metrics:");
+            println!("\n📈 Additional metrics");
         }
-        info!("  - Algorithm: {}", metrics.algorithm_used);
-        info!(
-            "  - Files: {} / {}",
-            metrics.files_selected, metrics.total_files_discovered
-        );
-        info!("  - Tokens: {}", metrics.total_tokens_estimated);
-        info!("  - Coverage: {:.1}%", metrics.coverage_score * 100.0);
-        info!("  - Relevance: {:.2}", metrics.relevance_score);
-        info!("  - Selection time: {}ms", metrics.selection_time_ms);
-        info!(
-            "  - Repository complexity: {:.2}",
-            selection_config.repository_complexity_factor
-        );
+        if verbose_level > 0 {
+            info!("  - Algorithm: {}", metrics.algorithm_used);
+            info!(
+                "  - Files: {} / {}",
+                metrics.files_selected, metrics.total_files_discovered
+            );
+            info!("  - Tokens: {}", metrics.total_tokens_estimated);
+            info!("  - Coverage: {:.1}%", metrics.coverage_score * 100.0);
+            info!("  - Relevance: {:.2}", metrics.relevance_score);
+            info!("  - Selection time: {}ms", metrics.selection_time_ms);
+            info!(
+                "  - Repository complexity: {:.2}",
+                selection_config.repository_complexity_factor
+            );
+        } else {
+            println!("  • Algorithm        : {}", metrics.algorithm_used);
+            println!(
+                "  • Coverage         : {:.1}%",
+                metrics.coverage_score * 100.0
+            );
+            println!("  • Relevance score  : {:.2}", metrics.relevance_score);
+        }
 
         if !selection_config.entry_points.is_empty() {
             let avg_entry_proximity = selected_files
@@ -3270,11 +3326,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    info!(
-        "🎉 Analysis complete! Output saved to: {}",
-        output_path.display()
-    );
-    println!("📁 Output saved to: {}", output_path.display());
+    if verbose_level > 0 {
+        info!(
+            "🎉 Analysis complete! Output saved to: {}",
+            output_path.display()
+        );
+    } else {
+        println!("  • Output location : {}", output_path.display());
+        println!("\n🎉 Analysis complete");
+    }
 
     // Show configuration source info
     if scribe_config.output_file_path.is_some() && matches.get_one::<String>("output").is_none() {
