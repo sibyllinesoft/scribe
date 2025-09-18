@@ -23,10 +23,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::SystemTime;
 use tempfile::TempDir;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use url::Url;
+
+use chrono::{DateTime, Local};
 
 // Import the optimized scanner components
 use scribe_scanner::{
@@ -619,49 +622,44 @@ fn normalize_patterns(patterns: Vec<String>) -> Vec<String> {
     result
 }
 
-fn build_directory_map(paths: &[String]) -> String {
-    if paths.is_empty() {
+fn build_directory_map(entries: &[InventoryEntry]) -> String {
+    if entries.is_empty() {
         return String::new();
     }
 
-    let mut sorted = paths.to_vec();
-    sorted.sort();
-
-    let mut printed = HashSet::new();
-    printed.insert(String::new());
+    let mut sorted: Vec<&InventoryEntry> = entries.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then_with(|| b.is_dir.cmp(&a.is_dir))
+    });
 
     let mut lines = Vec::new();
-    lines.push("Repository Directory Map".to_string());
-    lines.push("========================".to_string());
-    lines.push(".".to_string());
+    lines.push("Repository Inventory".to_string());
+    lines.push("====================".to_string());
+    lines.push(format!(
+        "{:<60} {:<4} {:>10} {}",
+        "Path", "Type", "Size", "Modified"
+    ));
+    lines.push(format!(
+        "{:-<60} {:-<4} {:-<10} {:-<19}",
+        "", "", "", ""
+    ));
 
-    for path_str in sorted {
-        let parts: Vec<String> = Path::new(&path_str)
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .collect();
+    for entry in sorted {
+        let display_path = if entry.path.is_empty() {
+            "."
+        } else {
+            entry.path.as_str()
+        };
+        let type_label = if entry.is_dir { "dir" } else { "file" };
+        let size_label = format_bytes(entry.size);
+        let modified_label = format_timestamp(entry.modified);
 
-        if parts.is_empty() {
-            continue;
-        }
-
-        let mut current = String::new();
-        for (idx, part) in parts.iter().enumerate().take(parts.len() - 1) {
-            if !current.is_empty() {
-                current.push('/');
-            }
-            current.push_str(part);
-
-            if printed.insert(current.clone()) {
-                let indent = "  ".repeat(idx + 1);
-                lines.push(format!("{}{}{}", indent, part, "/"));
-            }
-        }
-
-        if let Some(filename) = parts.last() {
-            let indent = "  ".repeat(parts.len());
-            lines.push(format!("{}{}", indent, filename));
-        }
+        lines.push(format!(
+            "{:<60} {:<4} {:>10} {}",
+            display_path, type_label, size_label, modified_label
+        ));
     }
 
     lines.push(String::new());
@@ -713,6 +711,14 @@ struct FileWithContent {
     content_quality_score: f64,
     repository_role_score: f64,
     recency_score: f64,
+}
+
+#[derive(Debug, Clone)]
+struct InventoryEntry {
+    path: String,
+    is_dir: bool,
+    size: u64,
+    modified: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -2845,9 +2851,25 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    let repo_metadata = fs::metadata(&repo_dir).ok();
+    let root_modified = repo_metadata
+        .as_ref()
+        .and_then(|meta| meta.modified().ok());
+    let root_size = repo_metadata.as_ref().map(|meta| meta.len()).unwrap_or(0);
+
+    let mut inventory_entries = Vec::new();
+    inventory_entries.push(InventoryEntry {
+        path: String::new(),
+        is_dir: true,
+        size: root_size,
+        modified: root_modified,
+    });
+
+    let mut directory_set: HashSet<String> = HashSet::new();
+    directory_set.insert(String::new());
+
     // Collect files from repository using Git-aware discovery
     let mut files = Vec::new();
-    let mut all_relative_paths = Vec::new();
 
     // Use git ls-files for FAST tracked file discovery (major performance fix!)
     // If we're in a subdirectory, filter files to only include current directory and subdirectories
@@ -3003,7 +3025,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        all_relative_paths.push(relative_path.clone());
+        let mut ancestor = Path::new(&relative_path).parent();
+        while let Some(parent) = ancestor {
+            let parent_str = parent.to_string_lossy().to_string();
+            if parent_str.is_empty() {
+                break;
+            }
+            directory_set.insert(parent_str);
+            ancestor = parent.parent();
+        }
 
         if let Some(manager) = progress.as_ref() {
             manager.inc(1);
@@ -3013,46 +3043,57 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Check file size
-        if let Ok(metadata) = fs::metadata(&path) {
-            let file_size = metadata.len();
-            if file_size > max_bytes as u64 {
+        let metadata = match fs::metadata(&path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+
+        let file_size = metadata.len();
+        let modified = metadata.modified().ok();
+
+        inventory_entries.push(InventoryEntry {
+            path: relative_path.clone(),
+            is_dir: false,
+            size: file_size,
+            modified,
+        });
+
+        if file_size > max_bytes as u64 {
+            continue;
+        }
+
+        // Read file content
+        if let Ok(content) = fs::read_to_string(&path) {
+            // Skip binary files (simple heuristic)
+            if content
+                .chars()
+                .take(1000)
+                .any(|c| c as u32 > 127 && (c as u32) < 32)
+            {
                 continue;
             }
 
-            // Read file content
-            if let Ok(content) = fs::read_to_string(&path) {
-                // Skip binary files (simple heuristic)
-                if content
-                    .chars()
-                    .take(1000)
-                    .any(|c| c as u32 > 127 && (c as u32) < 32)
-                {
-                    continue;
-                }
+            let estimated_tokens = content.split_whitespace().count() * 4 / 3; // Rough estimate
 
-                let estimated_tokens = content.split_whitespace().count() * 4 / 3; // Rough estimate
+            // 🚀 PERFORMANCE FIX: Skip expensive git analysis for now
+            // TODO: Implement batch git analysis instead of per-file
+            let git_changes = None;
 
-                // 🚀 PERFORMANCE FIX: Skip expensive git analysis for now
-                // TODO: Implement batch git analysis instead of per-file
-                let git_changes = None;
-
-                files.push(FileWithContent {
-                    path: path.to_path_buf(),
-                    relative_path,
-                    content,
-                    size: file_size,
-                    estimated_tokens,
-                    importance_score: 0.0,
-                    git_changes,
-                    centrality_score: 0.0,
-                    query_relevance_score: 0.0,
-                    entry_point_proximity: 0.0,
-                    content_quality_score: 0.0,
-                    repository_role_score: 0.0,
-                    recency_score: 0.0,
-                });
-            }
+            files.push(FileWithContent {
+                path: path.to_path_buf(),
+                relative_path,
+                content,
+                size: file_size,
+                estimated_tokens,
+                importance_score: 0.0,
+                git_changes,
+                centrality_score: 0.0,
+                query_relevance_score: 0.0,
+                entry_point_proximity: 0.0,
+                content_quality_score: 0.0,
+                repository_role_score: 0.0,
+                recency_score: 0.0,
+            });
         }
     }
 
@@ -3062,6 +3103,24 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         } else {
             manager.finish_stage("✅ Repository scan complete");
         }
+    }
+
+    for dir in directory_set.into_iter() {
+        if dir.is_empty() {
+            continue;
+        }
+
+        let dir_path = repo_dir.join(&dir);
+        let metadata = fs::metadata(dir_path).ok();
+        let modified = metadata.as_ref().and_then(|meta| meta.modified().ok());
+        let size = metadata.as_ref().map(|meta| meta.len()).unwrap_or(0);
+
+        inventory_entries.push(InventoryEntry {
+            path: dir,
+            is_dir: true,
+            size,
+            modified,
+        });
     }
 
     // Display clean banner and initialize progress bars (non-verbose mode)
@@ -3206,12 +3265,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if !all_relative_paths.is_empty()
+    if !inventory_entries.is_empty()
         && !selected_files
             .iter()
             .any(|file| file.relative_path == "DIRECTORY_MAP.txt")
     {
-        let directory_map = build_directory_map(&all_relative_paths);
+        let directory_map = build_directory_map(&inventory_entries);
         if !directory_map.is_empty() {
             let mut map_tokens = directory_map.split_whitespace().count() * 4 / 3;
             if map_tokens == 0 {
@@ -3582,6 +3641,16 @@ fn get_file_icon(file_path: &str) -> &'static str {
         "zip" | "tar" | "gz" | "bz2" | "7z" | "rar" => "archive",
         "toml" => "settings",
         _ => "file",
+    }
+}
+
+fn format_timestamp(time: Option<SystemTime>) -> String {
+    match time {
+        Some(t) => {
+            let datetime: DateTime<Local> = DateTime::from(t);
+            datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        None => "-".to_string(),
     }
 }
 
