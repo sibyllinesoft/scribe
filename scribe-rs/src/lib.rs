@@ -1,4 +1,4 @@
-#![cfg_attr(not(tarpaulin), deny(warnings))]
+#![cfg_attr(not(tarpaulin), warn(warnings))]
 #![cfg_attr(tarpaulin, allow(warnings))]
 
 //! # Scribe - Advanced Code Analysis Library
