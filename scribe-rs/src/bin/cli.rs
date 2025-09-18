@@ -56,7 +56,7 @@ impl ScribeProgressManager {
         }
     }
 
-    fn start_stage(&mut self, stage_name: &str, count: u64) {
+    fn start_stage(&mut self, stage_name: &str, count: u64) -> Option<ProgressBar> {
         // Finish previous bar if exists
         if let Some(bar) = &self.current_bar {
             bar.finish_and_clear();
@@ -79,6 +79,7 @@ impl ScribeProgressManager {
         pb.set_message("Starting...");
 
         self.current_bar = Some(pb);
+        self.current_bar()
     }
 
     fn update_message(&self, message: &str) {
@@ -110,6 +111,10 @@ impl ScribeProgressManager {
             bar.finish_and_clear();
         }
         self.current_bar = None;
+    }
+
+    fn current_bar(&self) -> Option<ProgressBar> {
+        self.current_bar.as_ref().map(|bar| bar.clone())
     }
 }
 
@@ -628,11 +633,7 @@ fn build_directory_map(entries: &[InventoryEntry]) -> String {
     }
 
     let mut sorted: Vec<&InventoryEntry> = entries.iter().collect();
-    sorted.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then_with(|| b.is_dir.cmp(&a.is_dir))
-    });
+    sorted.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| b.is_dir.cmp(&a.is_dir)));
 
     let mut lines = Vec::new();
     lines.push("Repository Inventory".to_string());
@@ -641,10 +642,7 @@ fn build_directory_map(entries: &[InventoryEntry]) -> String {
         "{:<60} {:<4} {:>10} {}",
         "Path", "Type", "Size", "Modified"
     ));
-    lines.push(format!(
-        "{:-<60} {:-<4} {:-<10} {:-<19}",
-        "", "", "", ""
-    ));
+    lines.push(format!("{:-<60} {:-<4} {:-<10} {:-<19}", "", "", "", ""));
 
     for entry in sorted {
         let display_path = if entry.path.is_empty() {
@@ -2852,9 +2850,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     };
 
     let repo_metadata = fs::metadata(&repo_dir).ok();
-    let root_modified = repo_metadata
-        .as_ref()
-        .and_then(|meta| meta.modified().ok());
+    let root_modified = repo_metadata.as_ref().and_then(|meta| meta.modified().ok());
     let root_size = repo_metadata.as_ref().map(|meta| meta.len()).unwrap_or(0);
 
     let mut inventory_entries = Vec::new();
@@ -2977,10 +2973,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     if let Some(manager) = progress.as_mut() {
         let total = git_files.len().max(1) as u64;
-        manager.start_stage("📂 Repository scan", total);
-        manager.update_message("Collecting repository files...");
-        if git_files.is_empty() {
-            manager.update_message("No files discovered");
+        if let Some(bar) = manager.start_stage("📂 Repository scan", total) {
+            if git_files.is_empty() {
+                bar.set_message("No files discovered");
+            } else {
+                bar.set_message("Collecting repository files...");
+            }
         }
     }
 
@@ -3143,13 +3141,23 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         );
         println!();
 
-        if let Some(manager) = progress.as_mut() {
-            manager.start_stage("🧠 Repository analysis", 100);
-            manager.update_message("Computing heuristics and scores...");
-        }
+        let analysis_bar = if let Some(manager) = progress.as_mut() {
+            let bar = manager.start_stage("🧠 Repository analysis", 100);
+            if let Some(bar_ref) = bar.as_ref() {
+                bar_ref.set_message("Computing heuristics and scores...");
+                bar_ref.enable_steady_tick(std::time::Duration::from_millis(120));
+            }
+            bar
+        } else {
+            None
+        };
 
         // Use the library's intelligent analysis (with scaling if enabled in config)
         let result = analyze_repository(&repo_dir, &config).await?;
+
+        if let Some(bar) = analysis_bar.as_ref() {
+            bar.disable_steady_tick();
+        }
 
         if let Some(manager) = progress.as_ref() {
             for i in 0..100 {
@@ -3165,10 +3173,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             manager.finish_stage(&format!("✅ Analyzed {} files", result.files.len()));
         }
 
-        if let Some(manager) = progress.as_mut() {
-            manager.start_stage("🎯 File selection", 100);
-            manager.update_message("Optimizing token usage...");
-        }
+        let selection_bar = if let Some(manager) = progress.as_mut() {
+            let bar = manager.start_stage("🎯 File selection", 100);
+            if let Some(bar_ref) = bar.as_ref() {
+                bar_ref.set_message("Optimizing token usage...");
+                bar_ref.enable_steady_tick(std::time::Duration::from_millis(100));
+            }
+            bar
+        } else {
+            None
+        };
 
         if let Some(manager) = progress.as_ref() {
             for i in 0..100 {
@@ -3182,6 +3196,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 }
             }
             manager.finish_stage("✅ Selection complete");
+        }
+
+        if let Some(bar) = selection_bar.as_ref() {
+            bar.disable_steady_tick();
         }
 
         if let Some(manager) = progress.as_mut() {
