@@ -7,8 +7,8 @@
 //! - Language-specific semantic chunking and signature extraction using tree-sitter AST parsing
 
 use crate::ast_parser::{AstLanguage, AstParser};
+use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{Result, ScribeError};
-use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;

@@ -1,6 +1,7 @@
 //! # Core Scoring Algorithms for Heuristic File Prioritization
 //!
-//! Implements the multi-dimensional scoring system from the Python FastPath heuristics:
+//! Implements the multi-dimensional scoring system originally prototyped in Python and now
+//! maintained directly inside the Scribe Rust workspace:
 //!
 //! ## Scoring Formula
 //! ```text

@@ -1,144 +1,44 @@
-# Scribe Architecture Documentation
+# Scribe Architecture
 
-## Overview
+## High-Level Overview
 
-Scribe is a sophisticated repository analysis tool with a dual-system architecture optimized for both high-performance analysis and comprehensive research capabilities.
+Scribe is centred around a Rust workspace that scans a repository, extracts structured metadata, scores files, and renders the resulting bundle in a variety of formats. The workspace is supported by a minimal Python package that provides auxiliary tooling (secret scanning and pack validation).
 
-## System Architecture
-
-### Rust Core (`scribe-rs`)
-**Role:** High-performance analysis engine and core logic library
-**Responsibilities:**
-- File scanning and metadata extraction
-- Language detection and syntax analysis
-- Heuristic analysis (imports, complexity, patterns)
-- Graph-based file importance scoring
-- Configuration management
-- All core analysis algorithms (TF-IDF, BM25, FastPath, etc.)
-
-**Key Principles:**
-- Zero knowledge of Python evaluation framework
-- Compilable as Python native module via PyO3
-- Single source of truth for all analysis logic
-- Optimized for performance and memory efficiency
-
-### Python Research Framework
-**Role:** High-level orchestrator for research, benchmarking, and CI/CD
-**Responsibilities:**
-- Research experiment orchestration
-- Statistical analysis and validation
-- Benchmark execution and reporting
-- CI/CD pipeline management
-- Publication artifact generation (LaTeX, figures)
-- Web interface and visualization
-
-**Key Principles:**
-- Imports and calls Rust library for ALL core analysis
-- NO reimplementation of analysis logic
-- Focus on research methodology and presentation
-- Statistical rigor and reproducibility
-
-## Interface Design
-
-### FFI Boundary (Python ↔ Rust)
-The interface between Python and Rust is managed through:
-
-1. **PyO3 Bindings:** `scribe-py` workspace crate exposes Rust functionality
-2. **Unified Configuration:** Rust `Config` struct is the single source of truth
-3. **Type Safety:** Strong typing across the FFI boundary
-4. **Error Handling:** Consistent error propagation from Rust to Python
-
-### Data Flow
-```
-Python Framework → scribe-py (PyO3) → scribe-rs Core → Results → Python
-```
-
-## Module Structure
-
-### Rust Workspace (`scribe-rs/`)
 ```
 scribe-rs/
-├── scribe-core/          # Core types, config, file handling
-├── scribe-scanner/       # File system scanning
-├── scribe-analysis/      # Heuristic analysis
-├── scribe-graph/         # Graph algorithms and scoring
-├── scribe-scaling/       # Performance and scaling
-├── scribe-selection/     # File selection strategies
-└── scribe-py/            # Python FFI bindings (NEW)
+├── scribe-core          # Shared domain types and configuration logic
+├── scribe-scanner       # Repository traversal, filtering, and language detection
+├── scribe-analysis      # File content analysis and tree-sitter powered AST helpers
+├── scribe-graph         # Import graph construction and graph algorithms
+├── scribe-selection     # Selection heuristics and scoring strategies
+├── scribe-scaling       # Token budgeting and scaling utilities
+├── scribe-webservice    # Axum-based API that exposes the bundle editor
+└── scribe-analyzer      # CLI entry point that stitches the crates together
 ```
 
-### Python Framework
-```
-research/                 # Research experiments and analysis
-ci/                      # CI/CD orchestration
-eval/                    # Evaluation and benchmarking
-docs/                    # Documentation and artifacts
-```
+The CLI and the web service both depend on the same internal crates. They differ only in how they present the analysed data (terminal output vs. HTML templates/REST responses).
 
-## Design Decisions
+## Data Flow
 
-### Why Dual-System Architecture?
-1. **Performance:** Rust provides optimal performance for compute-intensive analysis
-2. **Research Flexibility:** Python ecosystem excels at statistical analysis and visualization
-3. **Reproducibility:** Clear separation enables independent testing and validation
-4. **Maintainability:** Each system has a focused responsibility
+1. **Scanning** – `scribe-scanner` walks the repository, applies ignore rules, applies size limits, and records metadata for every file encountered.
+2. **Analysis** – `scribe-analysis` and `scribe-graph` parse files using tree-sitter, build import graphs, and compute heuristics such as PageRank or complexity estimates.
+3. **Selection** – `scribe-selection` combines the metadata and analysis results to decide which files should enter the bundle for the chosen algorithm variant.
+4. **Scaling** – `scribe-scaling` keeps the bundle within the requested token budget while preserving important context.
+5. **Rendering** – `scribe-analyzer` formats the selected files using the chosen output format (Markdown, HTML, JSON, etc.) and can optionally emit an interactive editor view via Handlebars templates.
 
-### Configuration Strategy
-- **Single Source:** Rust `Config` struct defines all settings
-- **Python Access:** PyO3 exposes config to Python with type safety
-- **Environment Integration:** Config supports environment variables and files
-- **Validation:** Rust compile-time checks ensure config consistency
+## Python Package
 
-### Error Handling Strategy
-- **Rust:** Comprehensive error types with context
-- **Python:** Rust errors propagate as Python exceptions
-- **Logging:** Structured logging from Rust core
-- **Debugging:** Rich error context for troubleshooting
+The Python support modules tucked away under `scripts/support/` remain intentionally small. They expose functionality that is easier to script in Python while delegating repository analysis to the Rust CLI:
 
-## Build and Deployment
+- `SecretScanner` – scans directories for likely credentials.
+- `PackVerifier` – validates the JSON representation of a generated bundle.
 
-### Local Development
-1. `make build` - Compile Rust library
-2. `make install-dev` - Setup Python environment with local wheel
-3. `make test` - Run all tests (Rust + Python)
-4. `make benchmark` - Execute benchmark suite
+CLI wrappers in `scripts/` import these helpers so they can be executed without writing additional code.
 
-### CI/CD Pipeline
-1. Build Rust core with `maturin`
-2. Install Python wheel in virtual environment
-3. Run comprehensive test suite
-4. Generate research artifacts and reports
+## Extending the System
 
-## Future Evolution
+- **New selection heuristics** can be implemented in `scribe-selection` and wired up through the CLI by editing `SelectionAlgorithm`.
+- **Additional output formats** can be added to `scribe-analyzer` by introducing a new `ReportFormat` variant and providing a renderer alongside the existing Markdown/HTML/JSON exporters.
+- **Custom web experiences** can be built on top of the Axum service in `scribe-webservice` or by generating bespoke templates within the CLI.
 
-### Planned Enhancements
-- Additional language support via data-driven approach
-- Real-time analysis capabilities
-- Enhanced visualization components
-- Performance optimizations
-
-### Architectural Principles for Future Development
-1. **Rust Core Stability:** Treat as stable API with semantic versioning
-2. **Python Innovation:** Experiment with new research methods in Python
-3. **Clear Boundaries:** Maintain strict separation of concerns
-4. **Performance First:** Always optimize in Rust before Python
-5. **Research Rigor:** Maintain statistical validity and reproducibility
-
-## Migration Status
-
-### Completed
-- ✅ Core Rust implementation
-- ✅ Workspace structure
-- ✅ Basic functionality
-
-### In Progress (Phase 1-2)
-- 🔄 PyO3 FFI implementation
-- 🔄 Python framework cleanup
-- 🔄 Build system consolidation
-- 🔄 Technical debt reduction
-
-### Planned (Phase 3+)
-- ⏳ Integration testing
-- ⏳ API stabilization
-- ⏳ Documentation completion
-- ⏳ Performance optimization
+The codebase deliberately minimises cross-language coupling so the Rust components stay authoritative and Python remains a thin layer around utilities.

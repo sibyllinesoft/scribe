@@ -1,8 +1,8 @@
 //! # Heuristic Scoring System for File Prioritization
 //!
 //! Implements a sophisticated multi-dimensional scoring system for ranking file importance
-//! within a codebase. This module ports and enhances the Python FastPath heuristic system
-//! with advanced features:
+//! within a codebase. This module ports and enhances the legacy Python heuristics that
+//! originally powered Scribe, while adding more robust Rust-based features:
 //!
 //! ## Core Scoring Formula
 //! ```text

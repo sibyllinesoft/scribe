@@ -3,8 +3,8 @@
 //! This module replaces regex-based parsing with proper syntax-aware analysis
 //! using tree-sitter parsers for multiple programming languages.
 
+use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{Result, ScribeError};
-use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};

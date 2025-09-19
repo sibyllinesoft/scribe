@@ -1,7 +1,7 @@
 //! # Centrality Calculator with Heuristics Integration
 //!
-//! Main interface for PageRank centrality calculation and integration with the existing
-//! FastPath heuristic scoring system. This module provides the high-level API for:
+//! Main interface for PageRank centrality calculation and integration with the
+//! heuristic scoring system used by Scribe. This module provides the high-level API for:
 //!
 //! ## Key Features
 //! - **PageRank Centrality Computation**: Research-grade algorithm with convergence detection
@@ -11,7 +11,7 @@
 //! - **Multi-language Support**: Import detection across programming languages
 //! - **Comprehensive Analysis**: Full graph statistics and structural insights
 //!
-//! ## Integration with FastPath Heuristics
+//! ## Integration with Scribe Heuristics
 //! The centrality scores are integrated into the heuristic scoring formula:
 //! ```text
 //! final_score = Σ(weight_i × normalized_score_i) + priority_boost + template_boost
@@ -903,8 +903,7 @@ impl ImportDetector {
         };
 
         if !module_parts.is_empty() {
-            if let Some(resolved) =
-                self.resolve_relative_python(&base_dir, &module_parts, file_map)
+            if let Some(resolved) = self.resolve_relative_python(&base_dir, &module_parts, file_map)
             {
                 return Some(resolved);
             }
@@ -939,16 +938,12 @@ impl ImportDetector {
                 return None;
             }
 
-            if let Some(resolved) =
-                self.resolve_relative_js(parent_dir, cleaned_import, file_map)
-            {
+            if let Some(resolved) = self.resolve_relative_js(parent_dir, cleaned_import, file_map) {
                 return Some(resolved);
             }
         } else {
             // Attempt to resolve within the same directory first
-            if let Some(resolved) =
-                self.resolve_relative_js(parent_dir, cleaned_import, file_map)
-            {
+            if let Some(resolved) = self.resolve_relative_js(parent_dir, cleaned_import, file_map) {
                 return Some(resolved);
             }
 
@@ -957,8 +952,10 @@ impl ImportDetector {
             }
 
             let normalized = strip_known_suffix(cleaned_import, JS_SUFFIXES);
-            let module_parts: Vec<&str> =
-                normalized.split('/').filter(|segment| !segment.is_empty()).collect();
+            let module_parts: Vec<&str> = normalized
+                .split('/')
+                .filter(|segment| !segment.is_empty())
+                .collect();
 
             if module_parts.is_empty() {
                 return None;
@@ -1017,9 +1014,7 @@ impl ImportDetector {
             return None;
         }
 
-        if let Some(resolved) =
-            self.resolve_relative_rust(&base_dir, &module_parts, file_map)
-        {
+        if let Some(resolved) = self.resolve_relative_rust(&base_dir, &module_parts, file_map) {
             return Some(resolved);
         }
 
@@ -1208,11 +1203,7 @@ impl ImportDetector {
         None
     }
 
-    fn find_module_candidate(
-        &self,
-        module_parts: &[&str],
-        extensions: &[&str],
-    ) -> Option<String> {
+    fn find_module_candidate(&self, module_parts: &[&str], extensions: &[&str]) -> Option<String> {
         if module_parts.is_empty() {
             return None;
         }

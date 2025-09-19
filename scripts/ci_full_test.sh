@@ -1,6 +1,6 @@
 #!/bin/bash
-# PackRepo Full CI Test Suite
-# Comprehensive testing pipeline for hermetic builds
+# Scribe CI Test Suite
+# Runs formatting, linting, unit tests, and pack validation helpers
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 # Ensure artifacts directory exists
 mkdir -p "$ARTIFACTS_DIR"
 
-log_info "Starting PackRepo CI Full Test Suite"
+log_info "Starting Scribe CI Test Suite"
 log_info "Project root: $PROJECT_ROOT"
 log_info "Artifacts: $ARTIFACTS_DIR"
 
@@ -38,7 +38,7 @@ else
 fi
 
 if command -v mypy &> /dev/null; then
-    mypy packrepo/ --json-report "$ARTIFACTS_DIR/mypy_report" || log_warning "Type checking issues detected"
+    mypy scripts/support/ --json-report "$ARTIFACTS_DIR/mypy_report" || log_warning "Type checking issues detected"
     log_success "MyPy analysis completed"
 else
     log_warning "MyPy not available"
@@ -47,7 +47,7 @@ fi
 # 2. Security Scanning
 log_info "Running security scans..."
 if command -v bandit &> /dev/null; then
-    bandit -r packrepo/ -f json -o "$ARTIFACTS_DIR/bandit_results.json" || log_warning "Security issues detected"
+    bandit -r scripts/support/ -f json -o "$ARTIFACTS_DIR/bandit_results.json" || log_warning "Security issues detected"
     log_success "Bandit security scan completed"
 else
     log_warning "Bandit not available"
@@ -80,16 +80,13 @@ fi
 
 # 5. Import Tests
 log_info "Testing core imports..."
+# shellcheck disable=SC2016
 python -c "
 import sys
 sys.path.insert(0, '$PROJECT_ROOT')
 try:
-    import packrepo
-    import packrepo.packer.chunker
-    import packrepo.packer.selector
-    import packrepo.packer.tokenizer
-    import packrepo.packer.packfmt
-    print('✓ All core imports successful')
+    import scripts.support
+    print('✓ Python support package import successful')
 except ImportError as e:
     print(f'✗ Import failed: {e}')
     sys.exit(1)
@@ -102,7 +99,7 @@ log_info "Generating test report..."
 cat > "$ARTIFACTS_DIR/ci_test_report.json" << EOF
 {
     "timestamp": "$(date -Iseconds)",
-    "test_suite": "ci_full_test",
+    "test_suite": "ci",
     "environment": {
         "python_version": "$(python --version)",
         "hostname": "$(hostname)",
@@ -118,5 +115,5 @@ cat > "$ARTIFACTS_DIR/ci_test_report.json" << EOF
 }
 EOF
 
-log_success "CI Full Test Suite completed successfully"
+log_success "Scribe CI suite completed successfully"
 log_info "Results available in: $ARTIFACTS_DIR/"

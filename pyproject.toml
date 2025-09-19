@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scribe-support"
+version = "0.1.0"
+description = "Support utilities used by Scribe's Python scripts"
+license = {text = "Apache-2.0"}
+authors = [
+  {name = "Scribe Project Maintainers"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "jsonschema>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/scribe/scribe"
+
+[tool.setuptools.packages.find]
+include = ["scripts.support"]

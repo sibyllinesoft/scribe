@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "Validation schema for PackRepo pack index and format",
+  "description": "Validation schema for Scribe pack index and format",
   "properties": {
     "budget_info": {
       "properties": {
@@ -215,6 +215,6 @@
     "statistics"
   ],
   "additionalProperties": false,
-  "title": "PackRepo Pack Format Schema",
+  "title": "Scribe Pack Format Schema",
   "type": "object"
 }

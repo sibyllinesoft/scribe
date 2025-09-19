@@ -18,7 +18,7 @@
 //! - **Performance optimized** for large codebases (10k+ files)
 //! - **Concurrent processing** support for multi-core systems
 //!
-//! ### Integration with FastPath Heuristics
+//! ### Integration with Scribe Heuristics
 //! - **Seamless V2 integration** with existing heuristic scoring system
 //! - **Configurable centrality weighting** in final importance scores
 //! - **Multiple normalization methods** (min-max, z-score, rank-based)
@@ -122,7 +122,7 @@ use std::collections::HashMap;
 /// Main entry point for PageRank centrality analysis
 ///
 /// This is the primary interface for computing PageRank centrality scores
-/// and integrating them with the FastPath heuristic system.
+/// and integrating them with the Scribe heuristic system.
 pub struct PageRankAnalysis {
     calculator: CentralityCalculator,
 }
@@ -166,7 +166,7 @@ impl PageRankAnalysis {
 
     /// Integrate centrality scores with existing heuristic scores
     ///
-    /// This combines PageRank centrality with FastPath heuristic scores using
+    /// This combines PageRank centrality with Scribe heuristic scores using
     /// configurable weights. The default configuration uses 15% centrality weight
     /// and 85% heuristic weight.
     pub fn integrate_with_heuristics(
