@@ -304,7 +304,9 @@ fn build_directory_map_for_analysis(repo_path: &Path, files: &[FileInfo]) -> Opt
         return None;
     }
 
-    let estimated_tokens = directory_map.split_whitespace().count() * 4 / 3;
+    let estimated_tokens = TokenCounter::global()
+        .count_tokens(&directory_map)
+        .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&directory_map));
     let tokens = estimated_tokens.max(1);
     let size = directory_map.len() as u64;
 

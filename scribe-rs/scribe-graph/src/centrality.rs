@@ -23,7 +23,7 @@ use scribe_analysis::heuristics::ScanResult;
 use scribe_core::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::graph::{DependencyGraph, NodeId};
 use crate::pagerank::{PageRankComputer, PageRankConfig, PageRankResults};
@@ -731,6 +731,22 @@ pub struct ImportDetector {
     available_paths: HashSet<String>,
 }
 
+const PYTHON_FILE_EXTENSIONS: &[&str] = &["py"];
+const PYTHON_SUFFIXES: &[&str] = &[".py"];
+const JS_FILE_EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs"];
+const JS_SUFFIXES: &[&str] = &[".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"];
+const RUST_FILE_EXTENSIONS: &[&str] = &["rs"];
+const RUST_SUFFIXES: &[&str] = &[".rs"];
+
+fn strip_known_suffix<'a>(value: &'a str, suffixes: &[&str]) -> &'a str {
+    for suffix in suffixes {
+        if value.ends_with(suffix) {
+            return &value[..value.len() - suffix.len()];
+        }
+    }
+    value
+}
+
 impl ImportDetector {
     /// Create with configuration
     pub fn with_config(config: ImportResolutionConfig) -> Self {
@@ -852,43 +868,53 @@ impl ImportDetector {
         T: ScanResult,
     {
         let cleaned_import = import_str.trim();
+        if cleaned_import.is_empty() {
+            return None;
+        }
 
-        // Skip standard library imports if configured
         if self.config.exclude_stdlib_imports && self.is_python_stdlib(cleaned_import) {
             return None;
         }
 
-        // Convert module path to file path
-        let module_parts: Vec<&str> = cleaned_import.split('.').collect();
-
-        // Try various combinations
-        let mut candidates = Vec::new();
-
-        // Direct module file
-        candidates.push(format!("{}.py", module_parts.join("/")));
-
-        // Module package
-        candidates.push(format!("{}/__init__.py", module_parts.join("/")));
-
-        // Relative to current file directory
-        if let Some(parent) = current_path.parent() {
-            let parent_str = parent.to_string_lossy();
-            let relative_candidates: Vec<String> = candidates
-                .iter()
-                .map(|candidate| format!("{}/{}", parent_str, candidate))
-                .collect();
-            candidates.extend(relative_candidates);
+        let mut module = cleaned_import;
+        if let Some(alias_index) = module.find(" as ") {
+            module = &module[..alias_index];
         }
 
-        // Find first matching candidate
-        for candidate in &candidates {
-            if file_map.contains_key(candidate.as_str()) {
-                return Some(candidate.clone());
+        let mut base_dir = current_path.parent().unwrap_or(current_path).to_path_buf();
+        let mut relative_levels = 0;
+        while module.starts_with('.') {
+            relative_levels += 1;
+            module = &module[1..];
+        }
+
+        for _ in 0..relative_levels {
+            if let Some(parent) = base_dir.parent() {
+                base_dir = parent.to_path_buf();
             }
         }
 
-        // Fuzzy matching as fallback
-        self.fuzzy_match_import(&module_parts, file_map)
+        module = module.trim();
+        let module = strip_known_suffix(module, PYTHON_SUFFIXES);
+        let module_parts: Vec<&str> = if module.is_empty() {
+            Vec::new()
+        } else {
+            module.split('.').filter(|part| !part.is_empty()).collect()
+        };
+
+        if !module_parts.is_empty() {
+            if let Some(resolved) =
+                self.resolve_relative_python(&base_dir, &module_parts, file_map)
+            {
+                return Some(resolved);
+            }
+        }
+
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        self.find_module_candidate(&module_parts, PYTHON_FILE_EXTENSIONS)
     }
 
     /// Resolve JavaScript/TypeScript import
@@ -902,30 +928,43 @@ impl ImportDetector {
         T: ScanResult,
     {
         let cleaned_import = import_str.trim();
+        if cleaned_import.is_empty() {
+            return None;
+        }
 
-        // Handle relative imports
+        let parent_dir = current_path.parent().unwrap_or(current_path);
+
         if cleaned_import.starts_with("./") || cleaned_import.starts_with("../") {
             if !self.config.resolve_relative_imports {
                 return None;
             }
 
-            if let Some(parent) = current_path.parent() {
-                let resolved_path = parent.join(&cleaned_import[2..]); // Remove ./
-                let resolved_str = resolved_path.to_string_lossy();
-
-                // Try different extensions
-                for ext in &[".js", ".ts", ".jsx", ".tsx", "/index.js", "/index.ts"] {
-                    let candidate = format!("{}{}", resolved_str, ext);
-                    if file_map.contains_key(candidate.as_str()) {
-                        return Some(candidate);
-                    }
-                }
+            if let Some(resolved) =
+                self.resolve_relative_js(parent_dir, cleaned_import, file_map)
+            {
+                return Some(resolved);
             }
-        }
-        // Handle absolute imports
-        else if self.config.resolve_absolute_imports {
-            let import_parts: Vec<&str> = cleaned_import.split('/').collect();
-            return self.fuzzy_match_import(&import_parts, file_map);
+        } else {
+            // Attempt to resolve within the same directory first
+            if let Some(resolved) =
+                self.resolve_relative_js(parent_dir, cleaned_import, file_map)
+            {
+                return Some(resolved);
+            }
+
+            if !self.config.resolve_absolute_imports {
+                return None;
+            }
+
+            let normalized = strip_known_suffix(cleaned_import, JS_SUFFIXES);
+            let module_parts: Vec<&str> =
+                normalized.split('/').filter(|segment| !segment.is_empty()).collect();
+
+            if module_parts.is_empty() {
+                return None;
+            }
+
+            return self.find_module_candidate(&module_parts, JS_FILE_EXTENSIONS);
         }
 
         None
@@ -935,45 +974,65 @@ impl ImportDetector {
     fn resolve_rust_import<T>(
         &self,
         import_str: &str,
-        _current_path: &Path,
+        current_path: &Path,
         file_map: &HashMap<&str, &T>,
     ) -> Option<String>
     where
         T: ScanResult,
     {
         let cleaned_import = import_str.trim();
+        if cleaned_import.is_empty() {
+            return None;
+        }
 
-        // Skip standard library crates
         if self.config.exclude_stdlib_imports && self.is_rust_stdlib(cleaned_import) {
             return None;
         }
 
-        let parts: Vec<&str> = cleaned_import.split("::").collect();
+        let mut module = cleaned_import;
 
-        // Try to resolve as file path
-        let mut candidates = Vec::new();
-
-        // Direct module file
-        candidates.push(format!("{}.rs", parts.join("/")));
-
-        // Module directory with mod.rs
-        candidates.push(format!("{}/mod.rs", parts.join("/")));
-
-        // lib.rs in crate
-        if parts.len() == 1 {
-            candidates.push(format!("{}/lib.rs", parts[0]));
-            candidates.push(format!("{}/src/lib.rs", parts[0]));
+        if let Some(stripped) = module.strip_prefix("crate::") {
+            module = stripped;
         }
 
-        // Find first matching candidate
-        for candidate in &candidates {
-            if file_map.contains_key(candidate.as_str()) {
-                return Some(candidate.clone());
+        while let Some(stripped) = module.strip_prefix("self::") {
+            module = stripped;
+        }
+
+        let mut base_dir = current_path.parent().unwrap_or(current_path).to_path_buf();
+        while let Some(stripped) = module.strip_prefix("super::") {
+            module = stripped;
+            if let Some(parent) = base_dir.parent() {
+                base_dir = parent.to_path_buf();
             }
         }
 
-        // Fuzzy matching
-        self.fuzzy_match_import(&parts, file_map)
+        module = strip_known_suffix(module, RUST_SUFFIXES);
+        let module_parts: Vec<&str> = module
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .collect();
+
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        if let Some(resolved) =
+            self.resolve_relative_rust(&base_dir, &module_parts, file_map)
+        {
+            return Some(resolved);
+        }
+
+        if module_parts.len() == 1 {
+            let crate_lib = base_dir.join("lib.rs");
+            if let Some(candidate_str) = crate_lib.to_str() {
+                if file_map.contains_key(candidate_str) {
+                    return Some(candidate_str.to_string());
+                }
+            }
+        }
+
+        self.find_module_candidate(&module_parts, RUST_FILE_EXTENSIONS)
     }
 
     /// Resolve Go import
@@ -1025,6 +1084,227 @@ impl ImportDetector {
         let cleaned_import = import_str.trim();
         let parts: Vec<&str> = cleaned_import.split(&['/', '.', ':']).collect();
         self.fuzzy_match_import(&parts, file_map)
+    }
+
+    fn resolve_relative_python<T>(
+        &self,
+        base_dir: &Path,
+        module_parts: &[&str],
+        file_map: &HashMap<&str, &T>,
+    ) -> Option<String>
+    where
+        T: ScanResult,
+    {
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        let mut module_path = base_dir.to_path_buf();
+        for part in module_parts {
+            module_path.push(part);
+        }
+
+        let mut candidate = module_path.clone();
+        candidate.set_extension("py");
+        if let Some(candidate_str) = candidate.to_str() {
+            if file_map.contains_key(candidate_str) {
+                return Some(candidate_str.to_string());
+            }
+        }
+
+        let init_candidate = module_path.join("__init__.py");
+        if let Some(candidate_str) = init_candidate.to_str() {
+            if file_map.contains_key(candidate_str) {
+                return Some(candidate_str.to_string());
+            }
+        }
+
+        None
+    }
+
+    fn resolve_relative_js<T>(
+        &self,
+        base_dir: &Path,
+        import_path: &str,
+        file_map: &HashMap<&str, &T>,
+    ) -> Option<String>
+    where
+        T: ScanResult,
+    {
+        let normalized = strip_known_suffix(import_path, JS_SUFFIXES);
+        let target = self.build_relative_js_path(base_dir, normalized);
+
+        for ext in JS_FILE_EXTENSIONS {
+            let mut candidate = target.clone();
+            candidate.set_extension(ext);
+            if let Some(candidate_str) = candidate.to_str() {
+                if file_map.contains_key(candidate_str) {
+                    return Some(candidate_str.to_string());
+                }
+            }
+        }
+
+        for ext in JS_FILE_EXTENSIONS {
+            let index_candidate = target.join(format!("index.{}", ext));
+            if let Some(candidate_str) = index_candidate.to_str() {
+                if file_map.contains_key(candidate_str) {
+                    return Some(candidate_str.to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn build_relative_js_path(&self, base_dir: &Path, import_path: &str) -> PathBuf {
+        let mut resolved = base_dir.to_path_buf();
+        for segment in import_path.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    if let Some(parent) = resolved.parent() {
+                        resolved = parent.to_path_buf();
+                    }
+                }
+                _ => resolved.push(segment),
+            }
+        }
+        resolved
+    }
+
+    fn resolve_relative_rust<T>(
+        &self,
+        base_dir: &Path,
+        module_parts: &[&str],
+        file_map: &HashMap<&str, &T>,
+    ) -> Option<String>
+    where
+        T: ScanResult,
+    {
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        let mut module_path = base_dir.to_path_buf();
+        for part in module_parts {
+            module_path.push(part);
+        }
+
+        let mut candidate = module_path.clone();
+        candidate.set_extension("rs");
+        if let Some(candidate_str) = candidate.to_str() {
+            if file_map.contains_key(candidate_str) {
+                return Some(candidate_str.to_string());
+            }
+        }
+
+        let mod_candidate = module_path.join("mod.rs");
+        if let Some(candidate_str) = mod_candidate.to_str() {
+            if file_map.contains_key(candidate_str) {
+                return Some(candidate_str.to_string());
+            }
+        }
+
+        None
+    }
+
+    fn find_module_candidate(
+        &self,
+        module_parts: &[&str],
+        extensions: &[&str],
+    ) -> Option<String> {
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        let stem = module_parts.last().unwrap().to_lowercase();
+        let candidates = self.stem_to_paths.get(&stem)?;
+
+        for candidate in candidates {
+            if self.module_path_matches(candidate, module_parts, extensions) {
+                return Some(candidate.clone());
+            }
+        }
+
+        None
+    }
+
+    fn module_path_matches(
+        &self,
+        candidate: &str,
+        module_parts: &[&str],
+        extensions: &[&str],
+    ) -> bool {
+        let path = Path::new(candidate);
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => return false,
+        };
+
+        let lower_file = file_name.to_lowercase();
+        if lower_file == "__init__.py" {
+            return self.dir_path_matches(path.parent(), module_parts);
+        }
+
+        let ext = Path::new(file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        if !extensions
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(&ext))
+        {
+            return false;
+        }
+
+        let stem = Path::new(file_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        if stem == "index" && !module_parts.is_empty() {
+            return self.dir_path_matches(path.parent(), module_parts);
+        }
+
+        if module_parts.is_empty() {
+            return false;
+        }
+
+        if stem != module_parts.last().unwrap().to_lowercase() {
+            return false;
+        }
+
+        self.dir_path_matches(
+            path.parent(),
+            &module_parts[..module_parts.len().saturating_sub(1)],
+        )
+    }
+
+    fn dir_path_matches(&self, dir: Option<&Path>, module_parts: &[&str]) -> bool {
+        if module_parts.is_empty() {
+            return true;
+        }
+
+        let mut current = dir;
+        for expected in module_parts.iter().rev() {
+            match current {
+                Some(path) => {
+                    let name = path.file_name().and_then(|n| n.to_str());
+                    match name {
+                        Some(name) if name.eq_ignore_ascii_case(expected) => {
+                            current = path.parent();
+                        }
+                        _ => return false,
+                    }
+                }
+                None => return false,
+            }
+        }
+
+        true
     }
 
     /// Fuzzy matching for import resolution - OPTIMIZED with pre-computed maps

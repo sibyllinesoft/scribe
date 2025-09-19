@@ -94,7 +94,7 @@ graph = ["core", "analysis", "dep:scribe-graph"]
 scanner = ["core", "dep:scribe-scanner"]
 patterns = ["core", "dep:scribe-patterns"]
 selection = ["core", "analysis", "graph", "dep:scribe-selection"]
-scaling = ["core", "dep:scribe-scaling", "scribe-core/scaling"]
+scaling = ["core", "dep:scribe-scaling"]
 
 # Convenience feature groups
 full = ["default", "scaling"]

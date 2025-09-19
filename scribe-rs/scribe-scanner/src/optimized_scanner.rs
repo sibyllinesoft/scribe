@@ -6,25 +6,35 @@
 //! scanning, and comprehensive performance monitoring.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
-use scribe_core::{Result, ScribeError, FileInfo};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use scribe_core::{
+    FileInfo, GitFileStatus, GitStatus, RenderDecision, Result, ScribeError,
+};
+use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 
 use crate::{
-    filtering::{FileFilter, DirectoryFilter, FilterResult},
-    git_batch::{GitBatchProcessor, BulkStatusResult},
+    content::ContentAnalyzer,
+    filtering::{DirectoryFilter, FileFilter, FilterResult},
+    git_batch::{BatchMetrics, BulkStatusResult, GitBatchProcessor},
+    metadata::{FileSystemType, MetadataExtractor},
     parallel::{ParallelController, ParallelConfig, WorkItem},
     compact_data::CompactFileCollection,
     incremental::{IncrementalScanner, IncrementalConfig},
     performance::{PerformanceMonitor, PerfTimer, PERF_MONITOR},
+    language_detection::LanguageDetector,
 };
+use tokio::sync::Mutex;
 
 /// High-performance optimized file scanner
 pub struct OptimizedScanner {
     /// File and directory filters
     file_filter: FileFilter,
     dir_filter: DirectoryFilter,
+    /// Shared metadata extractor
+    metadata_extractor: Arc<MetadataExtractor>,
     /// Batched git processor
-    git_processor: Option<GitBatchProcessor>,
+    git_processor: Option<Arc<Mutex<GitBatchProcessor>>>,
     /// Parallel processing controller
     parallel_controller: ParallelController,
     /// Incremental scanner
@@ -134,6 +144,13 @@ pub struct TimeBreakdown {
     pub parallel_wait_time_ms: f64,
 }
 
+#[derive(Clone)]
+struct ProcessorResources {
+    metadata_extractor: Arc<MetadataExtractor>,
+    git_processor: Option<Arc<Mutex<GitBatchProcessor>>>,
+    repo_root: PathBuf,
+}
+
 impl Default for OptimizedScanConfig {
     fn default() -> Self {
         Self {
@@ -183,10 +200,12 @@ impl OptimizedScanner {
         let dir_filter = DirectoryFilter::new()
             .with_additional_cold_dirs(config.exclude_directories.clone());
 
+        let metadata_extractor = Arc::new(MetadataExtractor::new());
+
         // Initialize git processor
         let git_processor = if config.enable_git {
             match GitBatchProcessor::new(&repo_root) {
-                Ok(processor) => Some(processor),
+                Ok(processor) => Some(Arc::new(Mutex::new(processor))),
                 Err(e) => {
                     log::warn!("Git integration disabled: {}", e);
                     None
@@ -220,6 +239,7 @@ impl OptimizedScanner {
         Ok(Self {
             file_filter,
             dir_filter,
+            metadata_extractor,
             git_processor,
             parallel_controller,
             incremental_scanner,
@@ -306,12 +326,18 @@ impl OptimizedScanner {
 
         // Phase 3: Git Batch Loading
         let git_start = Instant::now();
-        let git_stats = if let Some(ref mut git_processor) = self.git_processor {
+        let mut git_metrics_snapshot: Option<BatchMetrics> = None;
+        let git_stats = if let Some(ref git_processor) = self.git_processor {
             let _timer = PerfTimer::start("git_batch_load");
-            match git_processor.load_bulk_status() {
+            let mut guard = git_processor.lock().await;
+            match guard.load_bulk_status() {
                 Ok(result) => {
-                    log::info!("Loaded git status for {} files in {}ms", 
-                              result.files_processed, result.load_time_ms);
+                    git_metrics_snapshot = Some(guard.metrics().clone());
+                    log::info!(
+                        "Loaded git status for {} files in {}ms",
+                        result.files_processed,
+                        result.load_time_ms
+                    );
                     Some(result)
                 }
                 Err(e) => {
@@ -339,10 +365,17 @@ impl OptimizedScanner {
             })
             .collect();
 
+        let resources = ProcessorResources {
+            metadata_extractor: Arc::clone(&self.metadata_extractor),
+            git_processor: self.git_processor.clone(),
+            repo_root: self.repo_root.clone(),
+        };
+
         let processor = {
-            let git_ref = self.git_processor.as_mut();
+            let resources = resources.clone();
             move |path: PathBuf| {
-                Self::process_single_file(path, git_ref)
+                let resources = resources.clone();
+                async move { Self::process_single_file(path, resources).await }
             }
         };
 
@@ -378,6 +411,18 @@ impl OptimizedScanner {
         );
 
         // Calculate comprehensive performance metrics
+        let git_batch_efficiency = git_metrics_snapshot
+            .as_ref()
+            .map(|m| m.status_calls_avoided as f64)
+            .or_else(|| {
+                self.git_processor.as_ref().and_then(|git| {
+                    git.try_lock()
+                        .ok()
+                        .map(|guard| guard.metrics().status_calls_avoided as f64)
+                })
+            })
+            .unwrap_or(0.0);
+
         let performance = OptimizedPerformanceMetrics {
             files_per_second: if total_duration.as_secs_f64() > 0.0 {
                 stats.files_processed as f64 / total_duration.as_secs_f64()
@@ -394,11 +439,7 @@ impl OptimizedScanner {
             } else {
                 0.0
             },
-            git_batch_efficiency: if let Some(ref git_processor) = self.git_processor {
-                git_processor.metrics().status_calls_avoided as f64
-            } else {
-                0.0
-            },
+            git_batch_efficiency,
             cache_hit_rate: stats.files_cached as f64 / stats.files_processed.max(1) as f64,
             memory_compression_ratio: file_collection.stats().compression_ratio,
             parallelism_utilization: self.parallel_controller.metrics().current_concurrency as f64 
@@ -478,51 +519,118 @@ impl OptimizedScanner {
     /// Process a single file with all optimizations
     async fn process_single_file(
         path: PathBuf,
-        git_processor: Option<&mut GitBatchProcessor>,
+        resources: ProcessorResources,
     ) -> Result<FileInfo, String> {
         let _timer = PerfTimer::start("process_file");
 
-        // Get basic file metadata
-        let metadata = tokio::fs::metadata(&path).await
-            .map_err(|e| format!("Failed to read metadata: {}", e))?;
+        let metadata = resources
+            .metadata_extractor
+            .extract_metadata(&path)
+            .await
+            .map_err(|e| format!("Metadata extraction failed for {}: {}", path.display(), e))?;
 
-        // Get git status if available
-        let git_status = if let Some(git) = git_processor {
-            git.get_file_status(&path).ok()
-        } else {
-            None
-        };
+        if metadata.file_type != FileSystemType::RegularFile {
+            return Err(format!("Skipping non-regular file {}", path.display()));
+        }
 
-        // Basic language detection
-        use crate::language_detection::LanguageDetector;
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if FileInfo::detect_binary_by_extension(&extension) {
+            return Err(format!("Skipping binary file {}", path.display()));
+        }
+
+        let raw_bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+        if raw_bytes.iter().take(1024).any(|b| *b == 0) {
+            return Err(format!("Skipping binary file {}", path.display()));
+        }
+
+        let content = String::from_utf8_lossy(&raw_bytes).into_owned();
+        let line_count = content.lines().count();
+        let char_count = content.chars().count();
+
         let language_detector = LanguageDetector::new();
         let language = language_detector.detect_language(&path);
 
-        // Create FileInfo
-        let relative_path = path.strip_prefix(&path.parent().unwrap_or(&path))
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let analyzer = ContentAnalyzer::new();
+        let analysis_summary = match analyzer.analyze_content(&content, &language).await {
+            Ok(stats) => Some(stats),
+            Err(err) => {
+                log::debug!(
+                    "Content analysis failed for {}: {}",
+                    path.display(),
+                    err
+                );
+                None
+            }
+        };
 
-        let file_info = FileInfo {
-            path,
-            relative_path,
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
-            decision: scribe_core::RenderDecision::Include("processed".to_string()),
-            file_type: scribe_core::FileType::Source { language: language.clone() }, // Simplified
+        let mut decision = RenderDecision::include("optimized_scan");
+        if let Some(ref stats) = analysis_summary {
+            decision = decision.with_context(format!(
+                "imports={},docs={}",
+                stats.imports.total_imports,
+                stats.documentation.headings.len()
+            ));
+        }
+
+        let token_estimate = TokenCounter::global()
+            .estimate_file_tokens(&content, &path)
+            .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&content));
+
+        let relative_path = path
+            .strip_prefix(&resources.repo_root)
+            .map(|rel| rel.to_string_lossy().to_string())
+            .unwrap_or_else(|_| path.to_string_lossy().to_string());
+
+        let mut file_info = FileInfo {
+            path: path.clone(),
+            relative_path: relative_path.clone(),
+            size: metadata.size,
+            modified: metadata
+                .modified
+                .map(|secs| UNIX_EPOCH + Duration::from_secs(secs)),
+            decision,
+            file_type: FileInfo::classify_file_type(
+                &relative_path,
+                &language,
+                &extension,
+            ),
             language,
-            content: None, // Don't load content for performance
-            token_estimate: Some(metadata.len() as usize / 4), // Rough estimate
-            line_count: None,
-            char_count: None,
+            content: Some(content),
+            token_estimate: Some(token_estimate),
+            line_count: Some(line_count),
+            char_count: Some(char_count),
             is_binary: false,
-            git_status: git_status.map(|status| scribe_core::GitStatus {
-                working_tree: status,
-                index: scribe_core::GitFileStatus::Unmodified,
-            }),
+            git_status: None,
             centrality_score: None,
         };
+
+        if let Some(ref git_arc) = resources.git_processor {
+            if let Ok(status) = git_arc.lock().await.get_file_status(&path) {
+                file_info.git_status = Some(GitStatus {
+                    working_tree: status,
+                    index: GitFileStatus::Unmodified,
+                });
+            }
+        }
+
+        if let Some(stats) = analysis_summary {
+            let dependency_count =
+                (stats.imports.internal_dependencies.len() + stats.imports.external_dependencies.len())
+                    as f64;
+            if stats.imports.total_imports > 0 {
+                file_info.centrality_score = Some(
+                    (dependency_count / stats.imports.total_imports as f64).min(1.0),
+                );
+            }
+        }
 
         Ok(file_info)
     }
@@ -533,6 +641,16 @@ impl OptimizedScanner {
         stats: &ScanStats, 
         duration: std::time::Duration,
     ) -> OptimizedPerformanceMetrics {
+        let git_batch_efficiency = self
+            .git_processor
+            .as_ref()
+            .and_then(|git| {
+                git.try_lock()
+                    .ok()
+                    .map(|guard| guard.metrics().status_calls_avoided as f64)
+            })
+            .unwrap_or(0.0);
+
         OptimizedPerformanceMetrics {
             files_per_second: if duration.as_secs_f64() > 0.0 {
                 stats.files_processed as f64 / duration.as_secs_f64()
@@ -549,11 +667,7 @@ impl OptimizedScanner {
             } else {
                 0.0
             },
-            git_batch_efficiency: if let Some(ref git_processor) = self.git_processor {
-                git_processor.metrics().status_calls_avoided as f64
-            } else {
-                0.0
-            },
+            git_batch_efficiency,
             cache_hit_rate: if stats.files_processed > 0 {
                 stats.files_cached as f64 / stats.files_processed as f64
             } else {
@@ -587,10 +701,14 @@ impl OptimizedScanner {
         
         self.parallel_controller.reset_metrics();
         
-        if let Some(ref mut git_processor) = self.git_processor {
-            git_processor.clear_cache();
+        if let Some(ref git_processor) = self.git_processor {
+            if let Ok(mut guard) = git_processor.try_lock() {
+                guard.clear_cache();
+            } else {
+                log::debug!("Unable to reset git metrics: processor busy");
+            }
         }
-        
+
         self.file_filter.reset_stats();
     }
 }

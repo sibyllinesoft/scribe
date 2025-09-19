@@ -122,15 +122,6 @@ pub enum ScribeError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    /// Scaling optimization errors (when scaling feature is enabled)
-    #[cfg(feature = "scaling")]
-    #[error("Scaling error: {message}")]
-    Scaling {
-        message: String,
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
-    },
-
     /// General internal errors (should not occur in normal operation)
     #[error("Internal error: {message}")]
     Internal {
@@ -305,27 +296,6 @@ impl ScribeError {
         source: Box<dyn std::error::Error + Send + Sync>,
     ) -> Self {
         Self::Tokenization {
-            message: message.into(),
-            source: Some(source),
-        }
-    }
-
-    /// Create a new scaling error (when scaling feature is enabled)
-    #[cfg(feature = "scaling")]
-    pub fn scaling<S: Into<String>>(message: S) -> Self {
-        Self::Scaling {
-            message: message.into(),
-            source: None,
-        }
-    }
-
-    /// Create a new scaling error with source (when scaling feature is enabled)
-    #[cfg(feature = "scaling")]
-    pub fn scaling_with_source<S: Into<String>>(
-        message: S,
-        source: Box<dyn std::error::Error + Send + Sync>,
-    ) -> Self {
-        Self::Scaling {
             message: message.into(),
             source: Some(source),
         }

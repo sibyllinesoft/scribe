@@ -45,12 +45,12 @@ impl WebService {
         let auto_shutdown = self.config.auto_shutdown;
         let shutdown_timeout = self.config.auto_shutdown_timeout;
 
-        info!("🚀 Starting Scribe web service on http://{}", addr);
-        info!("📁 Repository: {}", self.config.repo_path.display());
-        info!("🎯 Token budget: {}", self.config.token_budget);
+        info!("Starting Scribe web service on http://{}", addr);
+        info!("Repository: {}", self.config.repo_path.display());
+        info!("Token budget: {}", self.config.token_budget);
 
         if auto_shutdown {
-            info!("⏰ Auto-shutdown enabled: {}s timeout", shutdown_timeout);
+            info!("Auto-shutdown enabled: {}s timeout", shutdown_timeout);
         }
 
         // Create shutdown channel
@@ -70,7 +70,7 @@ impl WebService {
         // Open browser if requested
         if auto_open_browser {
             let url = format!("http://{}/editor", addr); // Go directly to editor
-            info!("🌐 Opening browser to {}", url);
+            info!("Opening browser to {}", url);
 
             if let Err(e) = open::that(&url) {
                 warn!(
@@ -94,7 +94,7 @@ impl WebService {
 
                     if elapsed > timeout_duration {
                         info!(
-                            "⏰ Auto-shutdown triggered after {}s of inactivity",
+                            "Auto-shutdown triggered after {}s of inactivity",
                             elapsed.as_secs()
                         );
                         std::process::exit(0);
@@ -105,7 +105,7 @@ impl WebService {
 
         // Start the server
         let listener = tokio::net::TcpListener::bind(&addr).await?;
-        info!("✅ Web service ready at http://{}", addr);
+        info!("Web service ready at http://{}", addr);
 
         // Run server until shutdown signal
         tokio::select! {
@@ -113,7 +113,7 @@ impl WebService {
                 result.map_err(|e| WebServiceError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
             }
             _ = shutdown_rx => {
-                info!("🛑 Shutdown signal received, stopping server");
+                info!("Shutdown signal received, stopping server");
             }
         }
 

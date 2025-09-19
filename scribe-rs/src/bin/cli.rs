@@ -25,7 +25,7 @@ fn generate_interactive_editor(
     output_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
-        "🚀 Starting interactive editor generation with {} files",
+        "Starting interactive editor generation with {} files",
         files.len()
     );
     let mut handlebars = Handlebars::new();
@@ -148,7 +148,7 @@ enum Algorithm {
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!("🚀 MAIN FUNCTION STARTED - DEBUG MODE");
+        info!("CLI main started in debug mode");
     }
     // Initialize logging
     tracing_subscriber::fmt()
@@ -353,27 +353,23 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let verbose_level = matches.get_count("verbose");
 
     if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!("DEBUG: verbose_level = {}", verbose_level);
+        info!("Verbose level set to {}", verbose_level);
     }
 
     // Check for editor mode IMMEDIATELY - before any analysis
     let editor_mode = matches.get_flag("editor");
     if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!("DEBUG: editor_mode = {}", editor_mode);
+        info!("Editor mode flag: {}", editor_mode);
     }
     if editor_mode {
-        eprintln!("🚀 EDITOR MODE DETECTED - Launching web service immediately...");
+        info!("Launching scribe-web for interactive editor mode");
 
         // Find first available port starting at 5000
         let mut port = 5000u16;
-        eprintln!("🔍 Looking for available port starting at 5000...");
         while port < 6000 {
-            eprintln!("🔍 Testing port {}...", port);
             if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-                eprintln!("✅ Port {} is available!", port);
                 break;
             }
-            eprintln!("❌ Port {} is in use", port);
             port += 1;
         }
 
@@ -381,18 +377,23 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             return Err("No available ports in range 5000-5999".into());
         }
 
-        eprintln!("🎯 Selected port: {}", port);
-
+        info!("Selected editor port: {}", port);
         let mut web_service_cmd = std::process::Command::new("scribe-web");
         web_service_cmd
             .arg(&repo_path_or_url)
             .arg("--token-budget")
             .arg(&token_target.to_string())
+            .arg("--max-file-size")
+            .arg(max_bytes.to_string())
             .arg("--port")
             .arg(&port.to_string());
 
-        eprintln!(
-            "🌐 Starting: scribe-web {} --token-budget {} --port {}",
+        if matches.get_flag("no_exclude_tests") {
+            web_service_cmd.arg("--no-exclude-tests");
+        }
+
+        info!(
+            "Starting scribe-web {} --token-budget {} --port {}",
             repo_path_or_url, token_target, port
         );
 

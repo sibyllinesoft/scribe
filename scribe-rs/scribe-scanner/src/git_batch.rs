@@ -26,6 +26,10 @@ pub struct GitBatchProcessor {
     path_interner: StringInterner,
     /// Cached file statuses by interned path ID
     status_cache: FxHashMap<PathId, GitFileStatus>,
+    /// Cached last commit hash per path
+    last_commit_cache: FxHashMap<PathId, Option<u64>>,
+    /// Cached churn scores per path
+    churn_cache: FxHashMap<PathId, f32>,
     /// Bulk status loaded flag
     bulk_status_loaded: bool,
     /// Cache validity timestamp
@@ -85,6 +89,8 @@ impl GitBatchProcessor {
             repo_path,
             path_interner: StringInterner::new(),
             status_cache: FxHashMap::default(),
+            last_commit_cache: FxHashMap::default(),
+            churn_cache: FxHashMap::default(),
             bulk_status_loaded: false,
             cache_timestamp: None,
             cache_ttl: std::time::Duration::from_secs(300),
@@ -326,6 +332,23 @@ impl GitBatchProcessor {
         Ok(results)
     }
 
+    fn resolve_relative_path(&self, path: &Path) -> Result<PathBuf> {
+        if path.is_absolute() {
+            path.strip_prefix(&self.repo_path)
+                .map(|p| p.to_path_buf())
+                .map_err(|_| ScribeError::git("Path not in repository".to_string()))
+        } else {
+            Ok(path.to_path_buf())
+        }
+    }
+
+    fn intern_relative_path(&mut self, path: &Path) -> Result<(PathId, PathBuf)> {
+        let relative_path = self.resolve_relative_path(path)?;
+        let relative_str = relative_path.to_string_lossy();
+        let path_id = self.path_interner.get_or_intern(relative_str.as_ref());
+        Ok((path_id, relative_path))
+    }
+
     /// Convert git2 status flags to our GitFileStatus enum
     fn convert_git2_status(&self, status: git2::Status) -> GitFileStatus {
         if status.contains(git2::Status::WT_NEW) || status.contains(git2::Status::INDEX_NEW) {
@@ -344,18 +367,149 @@ impl GitBatchProcessor {
     }
 
     /// Get cached last commit hash for a file (simplified for performance)
-    fn get_cached_last_commit_hash(&self, _path: &Path) -> Result<Option<u64>> {
-        // For performance, we'll implement a simplified version
-        // In a full implementation, this would use libgit2 to efficiently
-        // get the last commit hash for each file
+    fn get_cached_last_commit_hash(&mut self, path: &Path) -> Result<Option<u64>> {
+        let repo = match &self.repo {
+            Some(repo) => repo,
+            None => return Ok(None),
+        };
+
+        let (path_id, relative_path) = self.intern_relative_path(path)?;
+        if let Some(cached) = self.last_commit_cache.get(&path_id) {
+            return Ok(*cached);
+        }
+
+        let relative_str = relative_path.to_string_lossy();
+        let diff_path = relative_str.replace('\', "/");
+
+        let mut revwalk = repo
+            .revwalk()
+            .map_err(|e| ScribeError::git(format!("Failed to create revwalk: {}", e)))?;
+        revwalk
+            .push_head()
+            .map_err(|e| ScribeError::git(format!("Failed to push HEAD: {}", e)))?;
+        revwalk
+            .set_sorting(git2::Sort::TIME)
+            .map_err(|e| ScribeError::git(format!("Failed to sort revwalk: {}", e)))?;
+
+        for oid_result in revwalk.take(256) {
+            let oid = oid_result
+                .map_err(|e| ScribeError::git(format!("Failed to get commit OID: {}", e)))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| ScribeError::git(format!("Failed to find commit: {}", e)))?;
+            let tree = commit
+                .tree()
+                .map_err(|e| ScribeError::git(format!("Failed to load commit tree: {}", e)))?;
+
+            let parent_tree = if commit.parent_count() > 0 {
+                Some(
+                    commit
+                        .parent(0)
+                        .map_err(|e| {
+                            ScribeError::git(format!("Failed to access parent commit: {}", e))
+                        })?
+                        .tree()
+                        .map_err(|e| {
+                            ScribeError::git(format!("Failed to load parent tree: {}", e))
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            let mut diff_opts = git2::DiffOptions::new();
+            diff_opts.pathspec(&diff_path);
+
+            let diff = repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
+                .map_err(|e| ScribeError::git(format!("Failed to diff trees: {}", e)))?;
+
+            if diff.deltas().len() > 0 {
+                let hash = xxh3_64(commit.id().as_bytes());
+                self.last_commit_cache.insert(path_id, Some(hash));
+                return Ok(Some(hash));
+            }
+        }
+
+        self.last_commit_cache.insert(path_id, None);
         Ok(None)
     }
 
     /// Calculate file churn score based on git history
-    fn calculate_churn_score(&self, _path: &Path) -> Result<f32> {
-        // Simplified churn calculation
-        // In a full implementation, this would analyze git history efficiently
-        Ok(0.5)
+    fn calculate_churn_score(&mut self, path: &Path) -> Result<f32> {
+        let repo = match &self.repo {
+            Some(repo) => repo,
+            None => return Ok(0.0),
+        };
+
+        let (path_id, relative_path) = self.intern_relative_path(path)?;
+        if let Some(cached) = self.churn_cache.get(&path_id) {
+            return Ok(*cached);
+        }
+
+        let diff_path = relative_path.to_string_lossy().replace('\', "/");
+
+        let mut revwalk = repo
+            .revwalk()
+            .map_err(|e| ScribeError::git(format!("Failed to create revwalk: {}", e)))?;
+        revwalk
+            .push_head()
+            .map_err(|e| ScribeError::git(format!("Failed to push HEAD: {}", e)))?;
+        revwalk
+            .set_sorting(git2::Sort::TIME)
+            .map_err(|e| ScribeError::git(format!("Failed to sort revwalk: {}", e)))?;
+
+        let mut changes = 0usize;
+        let mut total = 0usize;
+        const MAX_COMMITS: usize = 200;
+
+        for oid_result in revwalk.take(MAX_COMMITS) {
+            let oid = oid_result
+                .map_err(|e| ScribeError::git(format!("Failed to get commit OID: {}", e)))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| ScribeError::git(format!("Failed to find commit: {}", e)))?;
+            let tree = commit
+                .tree()
+                .map_err(|e| ScribeError::git(format!("Failed to load commit tree: {}", e)))?;
+
+            let parent_tree = if commit.parent_count() > 0 {
+                Some(
+                    commit
+                        .parent(0)
+                        .map_err(|e| {
+                            ScribeError::git(format!("Failed to access parent commit: {}", e))
+                        })?
+                        .tree()
+                        .map_err(|e| {
+                            ScribeError::git(format!("Failed to load parent tree: {}", e))
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            let mut diff_opts = git2::DiffOptions::new();
+            diff_opts.pathspec(&diff_path);
+
+            let diff = repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
+                .map_err(|e| ScribeError::git(format!("Failed to diff trees: {}", e)))?;
+
+            if diff.deltas().len() > 0 {
+                changes += 1;
+            }
+            total += 1;
+        }
+
+        let score = if total == 0 {
+            0.0
+        } else {
+            (changes as f32 / total as f32).clamp(0.0, 1.0)
+        };
+
+        self.churn_cache.insert(path_id, score);
+        Ok(score)
     }
 
     /// Check if the cache is still valid
@@ -373,6 +527,8 @@ impl GitBatchProcessor {
     /// Clear all caches and reset state
     pub fn clear_cache(&mut self) {
         self.status_cache.clear();
+        self.last_commit_cache.clear();
+        self.churn_cache.clear();
         self.path_interner.clear();
         self.bulk_status_loaded = false;
         self.cache_timestamp = None;

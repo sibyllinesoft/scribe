@@ -6,11 +6,13 @@
 //! - Progressive degradation preserves critical functionality
 //! - Language-specific semantic chunking and signature extraction using tree-sitter AST parsing
 
-use crate::ast_parser::{AstChunk as AstParserChunk, AstLanguage, AstParser, AstSignature};
+use crate::ast_parser::{AstLanguage, AstParser};
 use scribe_core::{Result, ScribeError};
+use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 
 /// Content fidelity levels for demotion system
@@ -80,7 +82,7 @@ impl CodeChunker {
     pub fn chunk_content(&mut self, content: &str, file_path: &str) -> Result<Vec<ChunkInfo>> {
         let language = match self.detect_language(file_path) {
             Some(lang) => lang,
-            None => return Ok(self.chunk_generic(content)),
+            None => return Ok(self.chunk_generic(content, file_path)),
         };
 
         // Use AST parser to get semantic chunks
@@ -108,7 +110,7 @@ impl CodeChunker {
                 chunk_type: ast_chunk.chunk_type,
                 content: ast_chunk.content.clone(),
                 importance_score: ast_chunk.importance_score,
-                estimated_tokens: ast_chunk.content.len() / 4, // Rough estimate
+                estimated_tokens: estimate_tokens_for_content(&ast_chunk.content, file_path),
                 dependencies: Vec::new(), // Could be enhanced with dependency analysis
             };
             chunks.push(chunk);
@@ -117,7 +119,7 @@ impl CodeChunker {
         Ok(chunks)
     }
 
-    fn chunk_generic(&self, content: &str) -> Vec<ChunkInfo> {
+    fn chunk_generic(&self, content: &str, file_path: &str) -> Vec<ChunkInfo> {
         let lines: Vec<&str> = content.split('\n').collect();
         let chunk_size = 20; // Lines per chunk
         let mut chunks = Vec::new();
@@ -133,7 +135,7 @@ impl CodeChunker {
                 chunk_type: "generic".to_string(),
                 content: content.clone(),
                 importance_score: 0.5, // Default score for generic chunks
-                estimated_tokens: content.len() / 4,
+                estimated_tokens: estimate_tokens_for_content(&content, file_path),
                 dependencies: Vec::new(),
             };
             chunks.push(chunk);
@@ -275,7 +277,7 @@ impl DemotionEngine {
         target_mode: FidelityMode,
         token_budget: Option<usize>,
     ) -> Result<DemotionResult> {
-        let original_tokens = content.len() / 4; // Rough estimate
+        let original_tokens = estimate_tokens_for_content(content, file_path);
 
         match target_mode {
             FidelityMode::Full => Ok(DemotionResult {
@@ -344,17 +346,16 @@ impl DemotionEngine {
             }
             1 // Minimum tokens for empty content
         } else {
-            let word_count = demoted_content.split_whitespace().count();
+            let tokens = estimate_tokens_for_content(&demoted_content, file_path);
             if std::env::var("SCRIBE_DEBUG").is_ok() {
                 eprintln!(
-                    "CHUNK DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens",
+                    "CHUNK DEMOTION DEBUG: {} has {} chars -> {} tokens",
                     file_path,
                     demoted_content.len(),
-                    word_count,
-                    std::cmp::max(1, word_count)
+                    std::cmp::max(1, tokens)
                 );
             }
-            std::cmp::max(1, word_count)
+            std::cmp::max(1, tokens)
         };
 
         let quality_score = if chunks_total > 0 {
@@ -392,41 +393,27 @@ impl DemotionEngine {
 
         // If no signatures extracted, fall back to basic fallback
         let demoted_content = if signatures.is_empty() {
-            // Create basic fallback signatures for Rust files
-            let lines: Vec<&str> = content.lines().collect();
-            let mut fallback_signatures = Vec::new();
+            match self
+                .chunker
+                .ast_parser
+                .borrow_mut()
+                .parse_chunks(content, file_path)
+            {
+                Ok(chunks) => {
+                    let mut fallback = Vec::new();
+                    for chunk in chunks {
+                        if let Some(name) = chunk.name {
+                            fallback.push(format!("{} {}", chunk.chunk_type, name));
+                        }
+                    }
 
-            // Extract key lines (function definitions, struct/type definitions, imports)
-            for line in lines.iter() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("pub fn ")
-                    || trimmed.starts_with("fn ")
-                    || trimmed.starts_with("pub struct ")
-                    || trimmed.starts_with("struct ")
-                    || trimmed.starts_with("pub enum ")
-                    || trimmed.starts_with("enum ")
-                    || trimmed.starts_with("pub trait ")
-                    || trimmed.starts_with("trait ")
-                    || trimmed.starts_with("impl ")
-                    || trimmed.starts_with("use ")
-                    || trimmed.starts_with("mod ")
-                    || trimmed.starts_with("pub mod ")
-                {
-                    fallback_signatures.push(trimmed.to_string());
+                    if fallback.is_empty() {
+                        self.signature_extractor.extract_generic_signatures(content)
+                    } else {
+                        fallback.join("\n")
+                    }
                 }
-            }
-
-            if fallback_signatures.is_empty() {
-                // Last resort: take first few non-empty lines
-                lines
-                    .iter()
-                    .filter(|line| !line.trim().is_empty())
-                    .take(5)
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                fallback_signatures.join("\n")
+                Err(_) => self.signature_extractor.extract_generic_signatures(content),
             }
         } else {
             signatures.join("\n")
@@ -439,17 +426,16 @@ impl DemotionEngine {
             }
             1 // Minimum tokens for empty content
         } else {
-            let word_count = demoted_content.split_whitespace().count();
+            let tokens = estimate_tokens_for_content(&demoted_content, file_path);
             if std::env::var("SCRIBE_DEBUG").is_ok() {
                 eprintln!(
-                    "DEMOTION DEBUG: {} has {} chars, {} words -> {} tokens",
+                    "DEMOTION DEBUG: {} has {} chars -> {} tokens",
                     file_path,
                     demoted_content.len(),
-                    word_count,
-                    std::cmp::max(1, word_count)
+                    std::cmp::max(1, tokens)
                 );
             }
-            std::cmp::max(1, word_count)
+            std::cmp::max(1, tokens)
         };
 
         Ok(DemotionResult {
@@ -470,6 +456,13 @@ impl Default for DemotionEngine {
     fn default() -> Self {
         Self::new().expect("Failed to create DemotionEngine")
     }
+}
+
+fn estimate_tokens_for_content(content: &str, file_path: &str) -> usize {
+    let path_hint = Path::new(file_path);
+    TokenCounter::global()
+        .estimate_file_tokens(content, path_hint)
+        .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(content))
 }
 
 #[cfg(test)]

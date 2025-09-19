@@ -313,7 +313,7 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
 ) -> Result<RepositoryAnalysis> {
     use std::collections::HashMap;
 
-    // 🚀 NUCLEAR FIX: Use optimized config with performance tuning
+    // Apply default performance tuning for faster analysis
     let mut optimized_config = config.clone();
 
     // Tune PerformanceConfig for maximum parallel throughput
@@ -325,7 +325,7 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
     optimized_config.analysis.enable_caching = true;
     optimized_config.scoring.enable_advanced = true;
 
-    // 🚀 ARCHITECTURAL FIX: Use scaling engine for better performance (if enabled)
+    // When available, leverage the scaling engine for large repositories
     #[cfg(feature = "scaling")]
     {
         use scribe_scaling::{create_scaling_engine, quick_scale_estimate};
@@ -408,7 +408,7 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
         }
     }
 
-    // 🚀 FALLBACK: Optimized basic scanning
+    // Fallback to the optimized scanning pipeline when advanced selection fails
     fallback_scan(path, &optimized_config).await
 }
 

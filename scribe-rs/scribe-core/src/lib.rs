@@ -40,10 +40,6 @@ pub mod traits;
 pub mod types;
 pub mod utils;
 
-// Scaling optimizations (optional)
-#[cfg(feature = "scaling")]
-pub mod scaling;
-
 // Re-export commonly used types for convenience
 pub use error::{Result, ScribeError};
 

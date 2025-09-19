@@ -4,6 +4,7 @@
 //! using tree-sitter parsers for multiple programming languages.
 
 use scribe_core::{Result, ScribeError};
+use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
@@ -532,7 +533,9 @@ impl AstParser {
         let end_position = node.end_position();
 
         let chunk_content = &content[start_byte..end_byte];
-        let estimated_tokens = chunk_content.split_whitespace().count();
+        let estimated_tokens = TokenCounter::global()
+            .count_tokens(chunk_content)
+            .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(chunk_content));
 
         // Calculate importance score based on chunk type and language
         let importance_score = self.calculate_importance_score(chunk_type, language, node, content);

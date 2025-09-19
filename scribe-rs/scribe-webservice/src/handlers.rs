@@ -365,14 +365,40 @@ pub async fn generate_bundle(
         Ok(cached) => {
             update_bundle_state(&state, &cached.analysis).await;
 
-            if request.format.eq_ignore_ascii_case("html") {
-                let html = cached
-                    .rendered_html
-                    .clone()
-                    .or_else(|| render_template(&cached.template_data).ok());
+            let included_files = {
+                let bundle_state = state.bundle_state.read().await;
+                bundle_state.included_files.clone()
+            };
 
-                return match html {
-                    Some(content) => {
+            if included_files.is_empty() {
+                return Json(ApiResponse::error(
+                    "No files selected for bundle".to_string(),
+                ));
+            }
+
+            if request.format.eq_ignore_ascii_case("html") {
+                let repo_root = {
+                    let cfg = state.config.read().await;
+                    cfg.repo_path.clone()
+                };
+                let included_set: HashSet<&str> =
+                    included_files.iter().map(|path| path.as_str()).collect();
+                let filtered_reports: Vec<ReportFile> = cached
+                    .analysis
+                    .selected_files
+                    .iter()
+                    .filter(|file| included_set.contains(file.relative_path.as_str()))
+                    .cloned()
+                    .collect();
+
+                let template_data = prepare_template_data(
+                    &repo_root,
+                    &filtered_reports,
+                    &cached.analysis.metrics,
+                );
+
+                return match render_template(&template_data) {
+                    Ok(content) => {
                         let bundle = GeneratedBundle {
                             format: request.format.clone(),
                             filename: "scribe-bundle.html".to_string(),
@@ -381,8 +407,8 @@ pub async fn generate_bundle(
                         };
                         Json(ApiResponse::success(bundle))
                     }
-                    None => {
-                        error!("Bundle generation failed: template rendering unavailable");
+                    Err(err) => {
+                        error!("Bundle generation failed: {}", err);
                         Json(ApiResponse::error(
                             "Unable to render HTML bundle".to_string(),
                         ))
@@ -391,7 +417,7 @@ pub async fn generate_bundle(
             }
 
             let context_extractor = ContextExtractor::new();
-            let selection_result = build_selection_result(&cached.analysis);
+            let selection_result = build_selection_result(&cached.analysis, &included_files);
             let context = match context_extractor
                 .extract(&selection_result, &ContextOptions::default())
                 .await
@@ -476,19 +502,43 @@ pub async fn save_bundle(
 
     update_bundle_state(&state, &cached.analysis).await;
 
+    let included_files = {
+        let bundle_state = state.bundle_state.read().await;
+        bundle_state.included_files.clone()
+    };
+
+    if included_files.is_empty() {
+        return Json(ApiResponse::error(
+            "No files selected for bundle".to_string(),
+        ));
+    }
+
     let repo_root = {
         let cfg = state.config.read().await;
         cfg.repo_path.clone()
     };
 
     let content = if request.format.eq_ignore_ascii_case("html") {
-        match cached
-            .rendered_html
-            .clone()
-            .or_else(|| render_template(&cached.template_data).ok())
-        {
-            Some(html) => html,
-            None => {
+        let included_set: HashSet<&str> =
+            included_files.iter().map(|path| path.as_str()).collect();
+        let filtered_reports: Vec<ReportFile> = cached
+            .analysis
+            .selected_files
+            .iter()
+            .filter(|file| included_set.contains(file.relative_path.as_str()))
+            .cloned()
+            .collect();
+
+        let template_data = prepare_template_data(
+            &repo_root,
+            &filtered_reports,
+            &cached.analysis.metrics,
+        );
+
+        match render_template(&template_data) {
+            Ok(html) => html,
+            Err(err) => {
+                error!("Bundle generation failed: {}", err);
                 return Json(ApiResponse::error(
                     "Unable to render HTML bundle".to_string(),
                 ));
@@ -496,7 +546,7 @@ pub async fn save_bundle(
         }
     } else {
         let context_extractor = ContextExtractor::new();
-        let selection_result = build_selection_result(&cached.analysis);
+        let selection_result = build_selection_result(&cached.analysis, &included_files);
         let context = match context_extractor
             .extract(&selection_result, &ContextOptions::default())
             .await
@@ -665,34 +715,72 @@ async fn analyze_repository_for_web(
 }
 
 fn recompute_bundle_summary(bundle_state: &mut BundleState, analysis: &AnalysisOutput) {
-    let selected_paths: HashSet<&str> = analysis
-        .selected_files
+    let repo_lookup: HashMap<&str, &FileInfo> = analysis
+        .repository_files
         .iter()
-        .map(|file| file.relative_path.as_str())
+        .map(|info| (info.relative_path.as_str(), info))
         .collect();
 
-    let mut excluded = Vec::new();
-    for file in &analysis.repository_files {
-        if !selected_paths.contains(file.relative_path.as_str()) {
-            excluded.push(file.relative_path.clone());
+    let original_paths = bundle_state.included_files.clone();
+    bundle_state.included_files.clear();
+
+    let mut total_size: u64 = 0;
+    let mut total_tokens: usize = 0;
+
+    for path in original_paths {
+        if let Some(info) = repo_lookup.get(path.as_str()) {
+            total_size += info.size;
+            total_tokens = total_tokens.saturating_add(info.token_estimate.unwrap_or(0));
+            bundle_state.included_files.push(path);
         }
     }
 
-    let total_size: u64 = analysis.selected_files.iter().map(|file| file.size).sum();
+    let included_set: HashSet<&str> = bundle_state
+        .included_files
+        .iter()
+        .map(|path| path.as_str())
+        .collect();
+
+    let excluded = analysis
+        .repository_files
+        .iter()
+        .filter(|info| !included_set.contains(info.relative_path.as_str()))
+        .map(|info| info.relative_path.clone())
+        .collect();
 
     bundle_state.total_size = file_size_to_usize(total_size);
-    bundle_state.token_estimate = analysis.metrics.total_tokens_estimated;
-    bundle_state.excluded_files = HashMap::from([("excluded".to_string(), excluded)]);
+    bundle_state.token_estimate = total_tokens;
+    bundle_state.excluded_files = HashMap::from([( "excluded".to_string(), excluded )]);
     bundle_state.last_updated = chrono::Utc::now();
 }
 
 async fn update_bundle_state(state: &AppState, analysis: &AnalysisOutput) {
     let mut bundle_state = state.bundle_state.write().await;
-    bundle_state.included_files = analysis
-        .selected_files
-        .iter()
-        .map(|file| file.relative_path.clone())
-        .collect();
+    if bundle_state.included_files.is_empty() {
+        bundle_state.included_files = analysis
+            .selected_files
+            .iter()
+            .map(|file| file.relative_path.clone())
+            .collect();
+    } else {
+        let valid_paths: HashSet<&str> = analysis
+            .repository_files
+            .iter()
+            .map(|file| file.relative_path.as_str())
+            .collect();
+
+        bundle_state
+            .included_files
+            .retain(|path| valid_paths.contains(path.as_str()));
+
+        if bundle_state.included_files.is_empty() {
+            bundle_state.included_files = analysis
+                .selected_files
+                .iter()
+                .map(|file| file.relative_path.clone())
+                .collect();
+        }
+    }
     recompute_bundle_summary(&mut bundle_state, analysis);
 }
 
@@ -728,24 +816,34 @@ fn file_size_to_usize(value: u64) -> usize {
     }
 }
 
-fn build_selection_result(analysis: &AnalysisOutput) -> SelectionResult {
+fn build_selection_result(analysis: &AnalysisOutput, included_files: &[String]) -> SelectionResult {
+    let included_set: HashSet<&str> = included_files.iter().map(|path| path.as_str()).collect();
+
+    let mut selected_infos = Vec::new();
+    let mut total_tokens = 0usize;
+
+    for info in &analysis.repository_files {
+        if included_set.contains(info.relative_path.as_str()) {
+            total_tokens = total_tokens.saturating_add(info.token_estimate.unwrap_or(0));
+            selected_infos.push(info.clone());
+        }
+    }
+
     let budget = if analysis.token_budget == 0 {
         analysis.metrics.total_tokens_estimated
     } else {
         analysis.token_budget
     };
 
-    let unused_tokens = if analysis.token_budget == 0 {
+    let unused_tokens = if budget == 0 {
         0
     } else {
-        analysis
-            .token_budget
-            .saturating_sub(analysis.metrics.total_tokens_estimated)
+        budget.saturating_sub(total_tokens)
     };
 
     SelectionResult {
-        files: analysis.selected_file_infos.clone(),
-        total_tokens_used: analysis.metrics.total_tokens_estimated,
+        files: selected_infos,
+        total_tokens_used: total_tokens,
         budget,
         unused_tokens,
         total_files_considered: analysis.metrics.total_files_discovered,
