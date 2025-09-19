@@ -6,17 +6,9 @@
 //! - Automatic browser opening
 //! - Interactive file selection interface
 
-use axum::{
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{Html, Json},
-    routing::{get, post},
-    Router,
-};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 pub mod handlers;
 pub mod server;
@@ -67,7 +59,7 @@ impl Default for WebServiceConfig {
 /// Application state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
-    pub config: WebServiceConfig,
+    pub config: Arc<RwLock<WebServiceConfig>>,
     pub bundle_state: Arc<RwLock<BundleState>>,
     pub last_ping: Arc<tokio::sync::RwLock<tokio::time::Instant>>,
     pub shutdown_sender: Arc<tokio::sync::RwLock<Option<tokio::sync::oneshot::Sender<()>>>>,
@@ -251,15 +243,17 @@ mod tests {
             ..Default::default()
         };
 
+        let config_arc = Arc::new(RwLock::new(config.clone()));
         let state = AppState {
-            config: config.clone(),
+            config: config_arc.clone(),
             bundle_state: Arc::new(RwLock::new(BundleState::default())),
             last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
             shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
         };
 
-        assert_eq!(state.config.port, config.port);
-        assert_eq!(state.config.host, config.host);
+        let cfg_guard = state.config.blocking_read();
+        assert_eq!(cfg_guard.port, config.port);
+        assert_eq!(cfg_guard.host, config.host);
 
         // Test that we can access the bundle state
         let bundle_state = state.bundle_state.try_read().unwrap();

@@ -13,7 +13,7 @@ default-members = ["scribe-core"]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -122,13 +122,13 @@ open = "5.0"
 indicatif = { version = "0.17", features = ["tokio", "futures", "rayon"] }
 
 # Sub-crate dependencies with optional features
-scribe-core = { path = "./scribe-core", version = "0.4.0", optional = true }
-scribe-analysis = { path = "./scribe-analysis", version = "0.4.0", optional = true }
-scribe-graph = { path = "./scribe-graph", version = "0.4.0", optional = true }
-scribe-scanner = { path = "./scribe-scanner", version = "0.4.0", optional = true }
-scribe-patterns = { path = "./scribe-patterns", version = "0.4.0", optional = true }
-scribe-selection = { path = "./scribe-selection", version = "0.4.0", optional = true }
-scribe-scaling = { path = "./scribe-scaling", version = "0.4.0", optional = true }
+scribe-core = { path = "./scribe-core", version = "0.5.0", optional = true }
+scribe-analysis = { path = "./scribe-analysis", version = "0.5.0", optional = true }
+scribe-graph = { path = "./scribe-graph", version = "0.5.0", optional = true }
+scribe-scanner = { path = "./scribe-scanner", version = "0.5.0", optional = true }
+scribe-patterns = { path = "./scribe-patterns", version = "0.5.0", optional = true }
+scribe-selection = { path = "./scribe-selection", version = "0.5.0", optional = true }
+scribe-scaling = { path = "./scribe-scaling", version = "0.5.0", optional = true }
 
 # Core dependencies used by multiple crates
 serde = { version = "1.0", features = ["derive"] }

@@ -23,19 +23,16 @@
 //! - **Documentation Coverage**: Analyze docstrings, comments, and documentation
 //! - **Language-Specific Complexity**: Tailored complexity metrics per language
 //! - **Import/Dependency Analysis**: Accurate dependency graph construction
-//! - **Symbol Resolution**: Variable, function, and class usage tracking
 
 pub mod ast_language;
 pub mod documentation_analysis;
 pub mod function_extraction;
 pub mod language_metrics;
-pub mod symbol_analysis;
 
 pub use ast_language::{AstLanguage, LanguageFeatures, LanguageTier};
 pub use documentation_analysis::{DocumentationAnalyzer, DocumentationCoverage};
 pub use function_extraction::{ClassInfo, FunctionExtractor, FunctionInfo};
 pub use language_metrics::{LanguageMetrics, LanguageSpecificComplexity};
-pub use symbol_analysis::{SymbolAnalyzer, SymbolType, SymbolUsage};
 
 use scribe_core::Result;
 use std::collections::HashMap;
@@ -46,8 +43,6 @@ pub struct LanguageSupport {
     function_extractors: HashMap<AstLanguage, FunctionExtractor>,
     /// Documentation analyzers by language
     doc_analyzers: HashMap<AstLanguage, DocumentationAnalyzer>,
-    /// Symbol analyzers by language
-    symbol_analyzers: HashMap<AstLanguage, SymbolAnalyzer>,
 }
 
 impl LanguageSupport {
@@ -56,7 +51,6 @@ impl LanguageSupport {
         let mut support = Self {
             function_extractors: HashMap::new(),
             doc_analyzers: HashMap::new(),
-            symbol_analyzers: HashMap::new(),
         };
 
         // Initialize extractors for all supported languages
@@ -72,8 +66,6 @@ impl LanguageSupport {
                 .insert(language, FunctionExtractor::new(language)?);
             self.doc_analyzers
                 .insert(language, DocumentationAnalyzer::new(language)?);
-            self.symbol_analyzers
-                .insert(language, SymbolAnalyzer::new(language)?);
         }
         Ok(())
     }
@@ -106,19 +98,6 @@ impl LanguageSupport {
             analyzer.analyze_coverage(content)
         } else {
             Ok(DocumentationCoverage::default())
-        }
-    }
-
-    /// Analyze symbol usage patterns
-    pub fn analyze_symbols(
-        &self,
-        content: &str,
-        language: AstLanguage,
-    ) -> Result<Vec<SymbolUsage>> {
-        if let Some(analyzer) = self.symbol_analyzers.get(&language) {
-            analyzer.analyze_symbols(content)
-        } else {
-            Ok(Vec::new())
         }
     }
 
@@ -159,8 +138,6 @@ pub struct LanguageAnalysisResult {
     pub functions: Vec<FunctionInfo>,
     /// Documentation coverage analysis
     pub documentation: DocumentationCoverage,
-    /// Symbol usage patterns
-    pub symbols: Vec<SymbolUsage>,
     /// Language-specific metrics
     pub metrics: LanguageMetrics,
 }
@@ -182,7 +159,6 @@ pub fn analyze_file_language(
 
     let functions = language_support.extract_functions(content, language)?;
     let documentation = language_support.analyze_documentation(content, language)?;
-    let symbols = language_support.analyze_symbols(content, language)?;
     let metrics = language_support.calculate_language_metrics(content, language)?;
 
     Ok(Some(LanguageAnalysisResult {
@@ -190,7 +166,6 @@ pub fn analyze_file_language(
         tier: language.tier(),
         functions,
         documentation,
-        symbols,
         metrics,
     }))
 }
@@ -223,17 +198,17 @@ mod tests {
     fn test_python_function_extraction() {
         let mut support = LanguageSupport::new().unwrap();
         let python_code = r#"
-def hello_world():
-    """A simple function."""
-    print("Hello, World!")
+        def hello_world():
+            """A simple function."""
+            print("Hello, World!")
 
-class Calculator:
-    """A simple calculator class."""
-    
-    def add(self, a, b):
-        """Add two numbers."""
-        return a + b
-"#;
+        class Calculator:
+            """A simple calculator class."""
+            
+            def add(self, a, b):
+                """Add two numbers."""
+                return a + b
+        "#;
 
         let functions = support.extract_functions(python_code, AstLanguage::Python);
         assert!(functions.is_ok());

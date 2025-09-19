@@ -1,33 +1,41 @@
-//! Code selector module - stub implementation
-//! This module provides the CodeSelector for intelligent file selection
+//! Code selector module that wraps the token budget selection pipeline.
+//! The selector consumes `FileInfo` records produced by the scanner and applies
+//! the multi-tier token budget logic from the legacy CLI.
 
-use scribe_analysis::AnalysisResult;
-use scribe_core::Result;
-use scribe_graph::CodeGraph;
-use serde::{Deserialize, Serialize};
+use crate::token_budget::apply_token_budget_selection;
+use scribe_core::{Config, FileInfo, Result};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SelectionCriteria {
-    pub max_files: Option<usize>,
-    pub include_patterns: Vec<String>,
-    pub exclude_patterns: Vec<String>,
+/// Input parameters for running the selector.
+#[derive(Debug, Clone)]
+pub struct SelectionCriteria<'a> {
+    /// Files produced by the scanner that are eligible for selection.
+    pub files: Vec<FileInfo>,
+    /// Maximum number of tokens that may be emitted across the selected files.
+    pub token_budget: usize,
+    /// Analyzer configuration that influences downstream decisions (e.g. demotion options).
+    pub config: &'a Config,
 }
 
-impl Default for SelectionCriteria {
-    fn default() -> Self {
-        Self {
-            max_files: None,
-            include_patterns: vec![],
-            exclude_patterns: vec![],
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Result returned by the selector.
+#[derive(Debug, Clone)]
 pub struct SelectionResult {
-    pub selected_files: Vec<String>,
-    pub scores: Vec<f64>,
+    /// Files selected within the provided budget (with content/token metadata loaded).
+    pub files: Vec<FileInfo>,
+    /// Total tokens consumed by the selected files.
+    pub total_tokens_used: usize,
+    /// Budget that was provided to the selector.
+    pub budget: usize,
+    /// Tokens left unused after selection completed.
+    pub unused_tokens: usize,
+    /// Total number of files that were considered when running selection.
     pub total_files_considered: usize,
+}
+
+impl SelectionResult {
+    /// Convenience helper returning the relative paths of all selected files.
+    pub fn file_paths(&self) -> Vec<String> {
+        self.files.iter().map(|f| f.relative_path.clone()).collect()
+    }
 }
 
 pub struct CodeSelector;
@@ -37,17 +45,23 @@ impl CodeSelector {
         Self
     }
 
-    pub async fn select(
-        &self,
-        _analysis: &AnalysisResult,
-        _graph: &CodeGraph,
-        _criteria: &SelectionCriteria,
-    ) -> Result<SelectionResult> {
-        // Stub implementation
+    pub async fn select(&self, criteria: SelectionCriteria<'_>) -> Result<SelectionResult> {
+        let total_files_considered = criteria.files.len();
+        let budget = criteria.token_budget;
+
+        let files =
+            apply_token_budget_selection(criteria.files, criteria.token_budget, criteria.config)
+                .await?;
+
+        let total_tokens_used: usize = files.iter().filter_map(|f| f.token_estimate).sum();
+        let unused_tokens = budget.saturating_sub(total_tokens_used);
+
         Ok(SelectionResult {
-            selected_files: vec![],
-            scores: vec![],
-            total_files_considered: 0,
+            files,
+            total_tokens_used,
+            budget,
+            unused_tokens,
+            total_files_considered,
         })
     }
 }

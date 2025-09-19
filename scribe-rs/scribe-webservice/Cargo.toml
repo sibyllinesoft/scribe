@@ -14,17 +14,19 @@ include = ["src/**/*", "templates/**/*"]
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.4.0", path = "../scribe-core" }
-scribe-scaling = { version = "0.4.0", path = "../scribe-scaling" }
-scribe-selection = { version = "0.4.0", path = "../scribe-selection" }
-scribe-scanner = { version = "0.4.0", path = "../scribe-scanner" }
-scribe-analysis = { version = "0.4.0", path = "../scribe-analysis" }
+scribe-core = { version = "0.5.0", path = "../scribe-core" }
+scribe-scaling = { version = "0.5.0", path = "../scribe-scaling" }
+scribe-selection = { version = "0.5.0", path = "../scribe-selection" }
+scribe-scanner = { version = "0.5.0", path = "../scribe-scanner" }
+scribe-analysis = { version = "0.5.0", path = "../scribe-analysis" }
+scribe-analyzer = { version = "0.5.0", path = ".." }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }
 tokio = { workspace = true, features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+once_cell = { workspace = true }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }

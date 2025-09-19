@@ -2,18 +2,23 @@
 
 use crate::{ApiResponse, AppState, BundleState, Result, WebServiceError};
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
+    extract::State,
     response::{Html, IntoResponse, Json},
 };
-use handlebars::Handlebars;
+use handlebars::{Context as HbContext, Handlebars, Helper, HelperResult, Output, RenderContext};
+use once_cell::sync::Lazy;
+use scribe_analyzer::{analyze_and_select, ReportFile, SelectionMetrics, SelectionOptions};
 use scribe_core::{Config, FileInfo};
-use scribe_scanner::{ScanOptions, Scanner};
-// Simple file selection for web interface (will be enhanced later)
+use scribe_selection::{
+    BundleOptions, CodeBundler, ContextExtractor, ContextOptions, SelectionResult,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::Path;
-use tracing::{debug, error, info, warn};
+use std::fs;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use tracing::{debug, error, info};
 
 /// Health check endpoint
 pub async fn status() -> Json<ApiResponse<StatusInfo>> {
@@ -37,10 +42,11 @@ pub async fn ping(State(state): State<AppState>) -> Json<ApiResponse<PingRespons
 
     debug!("Received ping, updated last activity");
 
+    let config = state.config.read().await.clone();
     let response = PingResponse {
         timestamp: chrono::Utc::now(),
-        auto_shutdown_enabled: state.config.auto_shutdown,
-        timeout_seconds: state.config.auto_shutdown_timeout,
+        auto_shutdown_enabled: config.auto_shutdown,
+        timeout_seconds: config.auto_shutdown_timeout,
     };
 
     Json(ApiResponse::success(response))
@@ -122,164 +128,82 @@ pub async fn index() -> Html<String> {
 
 /// Bundle editor interface
 pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
-    info!("Starting repository analysis for web editor");
-
-    // For now, use mock data to test template rendering
-    // TODO: Re-enable actual scanning once we confirm template rendering works
-    let selection_start = std::time::Instant::now();
-
-    // Create mock FileInfo data for testing
-    use std::path::PathBuf;
-    let selected_files = vec![
-        FileInfo {
-            path: PathBuf::from("src/lib.rs"),
-            relative_path: "src/lib.rs".to_string(),
-            size: 1024,
-            modified: Some(std::time::SystemTime::now()),
-            decision: scribe_core::RenderDecision::include("mock file"),
-            file_type: scribe_core::FileType::Source { language: scribe_core::Language::Rust },
-            language: scribe_core::Language::Rust,
-            content: Some("// Mock content for src/lib.rs\nfn main() {\n    println!(\"Hello, world!\");\n}".to_string()),
-            token_estimate: Some(250),
-            line_count: Some(4),
-            char_count: Some(85),
-            is_binary: false,
-            git_status: None,
-            centrality_score: Some(0.85),
-        },
-        FileInfo {
-            path: PathBuf::from("src/main.rs"),
-            relative_path: "src/main.rs".to_string(),
-            size: 512,
-            modified: Some(std::time::SystemTime::now()),
-            decision: scribe_core::RenderDecision::include("mock file"),
-            file_type: scribe_core::FileType::Source { language: scribe_core::Language::Rust },
-            language: scribe_core::Language::Rust,
-            content: Some("// Mock content for src/main.rs\nuse crate::lib;\n\nfn main() {\n    lib::run();\n}".to_string()),
-            token_estimate: Some(120),
-            line_count: Some(6),
-            char_count: Some(75),
-            is_binary: false,
-            git_status: None,
-            centrality_score: Some(0.60),
-        },
-    ];
-
-    let selection_time = selection_start.elapsed();
+    let repo_path = {
+        let cfg = state.config.read().await;
+        cfg.repo_path.clone()
+    };
     info!(
-        "Using mock data: {} files in {}ms",
-        selected_files.len(),
-        selection_time.as_millis()
+        "Starting repository analysis for web editor: {}",
+        repo_path.display()
     );
 
-    // Calculate statistics
-    let total_files = selected_files.len();
-    let total_tokens: usize = selected_files
-        .iter()
-        .map(|f| f.token_estimate.unwrap_or(0))
-        .sum();
-    let total_size: u64 = selected_files.iter().map(|f| f.size).sum();
+    match get_or_compute_analysis(&state).await {
+        Ok(cached) => {
+            update_bundle_state(&state, &cached.analysis).await;
 
-    // Prepare template data
-    let template_data = prepare_template_data(
-        &state.config.repo_path,
-        &selected_files,
-        total_files,
-        total_tokens,
-        total_size,
-        selection_time.as_millis() as u64,
-        state.config.token_budget,
-    );
-
-    // For debugging - return simple HTML to test if handler runs
-    let simple_html = format!(
-        r#"
-    <!DOCTYPE html>
-    <html>
-    <head><title>Test - {}</title></head>
-    <body>
-        <h1>Scribe Bundle Editor - {}</h1>
-        <p>Repository: {}</p>
-        <p>Token Budget: {}</p>
-        <p>Files: {}</p>
-        <p>Total tokens: {}</p>
-        <p>Template rendering test successful!</p>
-    </body>
-    </html>
-    "#,
-        template_data.repository_name,
-        template_data.repository_name,
-        state.config.repo_path.display(),
-        state.config.token_budget,
-        template_data.total_files,
-        template_data.total_tokens
-    );
-
-    Html(simple_html).into_response()
+            if let Some(html) = cached
+                .rendered_html
+                .clone()
+                .or_else(|| render_template(&cached.template_data).ok())
+            {
+                Html(html).into_response()
+            } else {
+                Html(
+                    r#"
+        <!DOCTYPE html>
+        <html>
+        <head><title>Scribe Bundle Editor - Error</title></head>
+        <body>
+            <h1>Unable to render bundle editor</h1>
+            <p>Error: rendering pipeline failed.</p>
+        </body>
+        </html>
+        "#
+                    .to_string(),
+                )
+                .into_response()
+            }
+        }
+        Err(err) => {
+            error!("Bundle editor failed: {}", err);
+            Html(format!(
+                r#"
+        <!DOCTYPE html>
+        <html>
+        <head><title>Scribe Bundle Editor - Error</title></head>
+        <body>
+            <h1>Unable to generate bundle</h1>
+            <p>Error: {}</p>
+        </body>
+        </html>
+        "#,
+                err
+            ))
+            .into_response()
+        }
+    }
 }
 
 /// Scan repository and return file information
 pub async fn scan_repository(State(state): State<AppState>) -> impl IntoResponse {
-    info!("Scanning repository: {}", state.config.repo_path.display());
-
-    // For now, create a mock scan result
-    // TODO: Integrate with actual scribe-scaling once interfaces are aligned
-    let mut bundle_state = state.bundle_state.write().await;
-    bundle_state.included_files = vec!["src/lib.rs".to_string(), "src/main.rs".to_string()];
-    bundle_state.token_estimate = state.config.token_budget / 2; // Mock estimate
-    bundle_state.total_size = 1024 * 1024; // 1MB mock
-    bundle_state.last_updated = chrono::Utc::now();
-
-    let mock_files = vec![
-        FileEntry {
-            path: "src/lib.rs".to_string(),
-            size: 2048,
-            tokens: 500,
-            file_type: "rust".to_string(),
-            included: true,
-        },
-        FileEntry {
-            path: "src/main.rs".to_string(),
-            size: 1024,
-            tokens: 250,
-            file_type: "rust".to_string(),
-            included: true,
-        },
-        FileEntry {
-            path: "tests/test_lib.rs".to_string(),
-            size: 512,
-            tokens: 100,
-            file_type: "rust".to_string(),
-            included: false,
-        },
-    ];
-
-    let mut categories = HashMap::new();
-    for file in &mock_files {
-        let category = if file.included {
-            "included"
-        } else {
-            "excluded"
-        };
-        categories
-            .entry(category.to_string())
-            .or_insert_with(Vec::new)
-            .push(file.clone());
-    }
-
-    let result = ScanResult {
-        total_files: mock_files.len(),
-        selected_files: mock_files.iter().filter(|f| f.included).count(),
-        excluded_files: mock_files.iter().filter(|f| !f.included).count(),
-        token_estimate: bundle_state.token_estimate,
-        total_size: bundle_state.total_size,
-        categories,
+    let repo_path = {
+        let cfg = state.config.read().await;
+        cfg.repo_path.clone()
     };
-
-    Json(ApiResponse::success(result))
+    info!("Scanning repository: {}", repo_path.display());
+    match get_or_compute_analysis(&state).await {
+        Ok(cached) => {
+            update_bundle_state(&state, &cached.analysis).await;
+            Json(ApiResponse::success(cached.scan_result.clone()))
+        }
+        Err(err) => {
+            error!("Scan failed: {}", err);
+            Json(ApiResponse::error(err.to_string()))
+        }
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScanResult {
     pub total_files: usize,
     pub selected_files: usize,
@@ -287,6 +211,7 @@ pub struct ScanResult {
     pub token_estimate: usize,
     pub total_size: usize,
     pub categories: HashMap<String, Vec<FileEntry>>,
+    pub rendered_html: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,11 +227,32 @@ pub struct FileEntry {
 pub async fn list_files(State(state): State<AppState>) -> impl IntoResponse {
     debug!("Listing files for repository");
 
-    // For now, return the current bundle state
-    let _bundle_state = state.bundle_state.read().await;
-    let files: Vec<FileEntry> = vec![]; // TODO: Implement actual file listing
+    match get_or_compute_analysis(&state).await {
+        Ok(cached) => {
+            let selected_paths: HashSet<&str> = cached
+                .analysis
+                .selected_files
+                .iter()
+                .map(|file| file.relative_path.as_str())
+                .collect();
 
-    Json(ApiResponse::success(files))
+            let entries: Vec<FileEntry> = cached
+                .analysis
+                .repository_files
+                .iter()
+                .map(|file| {
+                    let included = selected_paths.contains(file.relative_path.as_str());
+                    file_entry_from_fileinfo(file, included)
+                })
+                .collect();
+
+            Json(ApiResponse::success(entries))
+        }
+        Err(err) => {
+            error!("File listing failed: {}", err);
+            Json(ApiResponse::error(err.to_string()))
+        }
+    }
 }
 
 /// Toggle file inclusion in bundle
@@ -344,8 +290,67 @@ pub async fn toggle_directory(
 ) -> impl IntoResponse {
     debug!("Toggling directory: {}", request.path);
 
-    // TODO: Implement directory toggle logic
-    let bundle_state = state.bundle_state.read().await;
+    let cached = match get_or_compute_analysis(&state).await {
+        Ok(cached) => cached,
+        Err(err) => {
+            error!("Directory toggle failed: {}", err);
+            return Json(ApiResponse::error(err.to_string()));
+        }
+    };
+
+    let mut prefix = request.path.trim().to_string();
+    if prefix.is_empty() {
+        prefix = ".".to_string();
+    }
+    if !prefix.ends_with('/') {
+        prefix.push('/');
+    }
+
+    let mut directory_files: Vec<String> = cached
+        .analysis
+        .repository_files
+        .iter()
+        .filter_map(|file| {
+            if file.relative_path.starts_with(&prefix) {
+                Some(file.relative_path.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if directory_files.is_empty() {
+        return Json(ApiResponse::error(format!(
+            "No files found under directory {}",
+            request.path
+        )));
+    }
+
+    directory_files.sort();
+    directory_files.dedup();
+
+    let mut bundle_state = state.bundle_state.write().await;
+    let included_set: HashSet<_> = bundle_state.included_files.iter().cloned().collect();
+    let currently_selected = directory_files
+        .iter()
+        .all(|path| included_set.contains(path));
+
+    if currently_selected {
+        bundle_state
+            .included_files
+            .retain(|path| !path.starts_with(&prefix));
+        info!("Removed directory {} from bundle", request.path);
+    } else {
+        for path in directory_files {
+            if !bundle_state.included_files.iter().any(|p| p == &path) {
+                bundle_state.included_files.push(path);
+            }
+        }
+        info!("Added directory {} to bundle", request.path);
+    }
+
+    recompute_bundle_summary(&mut bundle_state, &cached.analysis);
+
     Json(ApiResponse::success(bundle_state.clone()))
 }
 
@@ -356,33 +361,88 @@ pub async fn generate_bundle(
 ) -> impl IntoResponse {
     info!("Generating bundle in {} format", request.format);
 
-    let bundle_state = state.bundle_state.read().await;
+    match get_or_compute_analysis(&state).await {
+        Ok(cached) => {
+            update_bundle_state(&state, &cached.analysis).await;
 
-    // TODO: Use scribe-output crate to generate actual bundle
-    let content = format!(
-        "# Generated Bundle\n\nFormat: {}\nFiles: {}\nToken estimate: {}\n\nFiles included:\n{}",
-        request.format,
-        bundle_state.included_files.len(),
-        bundle_state.token_estimate,
-        bundle_state.included_files.join("\n- ")
-    );
+            if request.format.eq_ignore_ascii_case("html") {
+                let html = cached
+                    .rendered_html
+                    .clone()
+                    .or_else(|| render_template(&cached.template_data).ok());
 
-    let bundle = GeneratedBundle {
-        format: request.format.clone(),
-        content,
-        filename: format!(
-            "scribe-bundle.{}",
-            match request.format.as_str() {
-                "html" => "html",
-                "markdown" => "md",
-                "json" => "json",
-                _ => "txt",
+                return match html {
+                    Some(content) => {
+                        let bundle = GeneratedBundle {
+                            format: request.format.clone(),
+                            filename: "scribe-bundle.html".to_string(),
+                            size: content.len(),
+                            content,
+                        };
+                        Json(ApiResponse::success(bundle))
+                    }
+                    None => {
+                        error!("Bundle generation failed: template rendering unavailable");
+                        Json(ApiResponse::error(
+                            "Unable to render HTML bundle".to_string(),
+                        ))
+                    }
+                };
             }
-        ),
-        size: 0, // TODO: Calculate actual size
-    };
 
-    Json(ApiResponse::success(bundle))
+            let context_extractor = ContextExtractor::new();
+            let selection_result = build_selection_result(&cached.analysis);
+            let context = match context_extractor
+                .extract(&selection_result, &ContextOptions::default())
+                .await
+            {
+                Ok(context) => context,
+                Err(err) => {
+                    error!("Context extraction failed: {}", err);
+                    return Json(ApiResponse::error(err.to_string()));
+                }
+            };
+
+            let bundler = CodeBundler::new();
+            let bundle_options = BundleOptions {
+                format: request.format.clone(),
+                include_metadata: true,
+            };
+
+            match bundler.bundle(&context, &bundle_options).await {
+                Ok(code_bundle) => {
+                    let filename = format!(
+                        "scribe-bundle.{}",
+                        match request.format.as_str() {
+                            "markdown" => "md",
+                            "json" => "json",
+                            "plain" => "txt",
+                            _ => "txt",
+                        }
+                    );
+
+                    let content = code_bundle.content;
+                    let size = content.len();
+                    let bundle = GeneratedBundle {
+                        format: request.format.clone(),
+                        content,
+                        filename,
+                        size,
+                    };
+
+                    Json(ApiResponse::success(bundle))
+                }
+                Err(err) => {
+                    error!("Bundle generation failed: {}", err);
+                    Json(ApiResponse::error(err.to_string()))
+                }
+            }
+        }
+        Err(err) => {
+            error!("Bundle generation scan failed: {}", err);
+            Json(ApiResponse::error(err.to_string()))
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -406,11 +466,97 @@ pub async fn save_bundle(
 ) -> impl IntoResponse {
     info!("Saving bundle to: {}", request.path);
 
-    // For now, just return success without actually saving
-    // TODO: Implement actual file saving
+    let cached = match get_or_compute_analysis(&state).await {
+        Ok(cached) => cached,
+        Err(err) => {
+            error!("Bundle save failed during analysis: {}", err);
+            return Json(ApiResponse::error(err.to_string()));
+        }
+    };
+
+    update_bundle_state(&state, &cached.analysis).await;
+
+    let repo_root = {
+        let cfg = state.config.read().await;
+        cfg.repo_path.clone()
+    };
+
+    let content = if request.format.eq_ignore_ascii_case("html") {
+        match cached
+            .rendered_html
+            .clone()
+            .or_else(|| render_template(&cached.template_data).ok())
+        {
+            Some(html) => html,
+            None => {
+                return Json(ApiResponse::error(
+                    "Unable to render HTML bundle".to_string(),
+                ));
+            }
+        }
+    } else {
+        let context_extractor = ContextExtractor::new();
+        let selection_result = build_selection_result(&cached.analysis);
+        let context = match context_extractor
+            .extract(&selection_result, &ContextOptions::default())
+            .await
+        {
+            Ok(context) => context,
+            Err(err) => {
+                error!("Context extraction failed: {}", err);
+                return Json(ApiResponse::error(err.to_string()));
+            }
+        };
+
+        let bundler = CodeBundler::new();
+        let options = BundleOptions {
+            format: request.format.clone(),
+            include_metadata: true,
+        };
+
+        match bundler.bundle(&context, &options).await {
+            Ok(bundle) => bundle.content,
+            Err(err) => {
+                error!("Bundle generation failed: {}", err);
+                return Json(ApiResponse::error(err.to_string()));
+            }
+        }
+    };
+
+    let mut target_path = PathBuf::from(&request.path);
+    if target_path.is_relative() {
+        target_path = repo_root.join(&target_path);
+    }
+
+    if let Some(parent) = target_path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            error!(
+                "Failed to create directories for {}: {}",
+                target_path.display(),
+                err
+            );
+            return Json(ApiResponse::error(err.to_string()));
+        }
+    }
+
+    let size = content.len();
+    if let Err(err) = fs::write(&target_path, content) {
+        error!(
+            "Failed to write bundle to {}: {}",
+            target_path.display(),
+            err
+        );
+        return Json(ApiResponse::error(err.to_string()));
+    }
+
+    {
+        let mut bundle_state = state.bundle_state.write().await;
+        bundle_state.last_updated = chrono::Utc::now();
+    }
+
     let result = SaveResult {
-        path: request.path.clone(),
-        size: 1024, // Mock size
+        path: target_path.to_string_lossy().to_string(),
+        size,
         format: request.format.clone(),
     };
 
@@ -444,7 +590,8 @@ pub async fn export_bundle(
 pub async fn get_config(
     State(state): State<AppState>,
 ) -> Json<ApiResponse<crate::WebServiceConfig>> {
-    Json(ApiResponse::success(state.config.clone()))
+    let config = state.config.read().await.clone();
+    Json(ApiResponse::success(config))
 }
 
 /// Update configuration
@@ -454,13 +601,159 @@ pub async fn update_config(
 ) -> impl IntoResponse {
     info!("Updating configuration");
 
-    // TODO: Update the actual state configuration
-    // For now, just return the new config
+    if !new_config.repo_path.exists() {
+        return Json(ApiResponse::error(format!(
+            "Repository not found: {}",
+            new_config.repo_path.display()
+        )));
+    }
+
+    {
+        let mut config = state.config.write().await;
+        *config = new_config.clone();
+    }
+
+    {
+        let mut bundle_state = state.bundle_state.write().await;
+        *bundle_state = BundleState::default();
+    }
+
+    {
+        let mut cache = ANALYSIS_CACHE.lock().unwrap();
+        cache.clear();
+    }
+
     Json(ApiResponse::success(new_config))
 }
 
+#[derive(Clone)]
+struct AnalysisOutput {
+    selected_files: Vec<ReportFile>,
+    selected_file_infos: Vec<FileInfo>,
+    metrics: SelectionMetrics,
+    repository_files: Vec<FileInfo>,
+    token_budget: usize,
+}
+
+async fn analyze_repository_for_web(
+    config: &crate::WebServiceConfig,
+) -> std::result::Result<AnalysisOutput, WebServiceError> {
+    let mut scribe_config = Config::default();
+    scribe_config.filtering.max_file_size = config.max_file_size as u64;
+    scribe_config.features.auto_exclude_tests = config.auto_exclude_tests;
+    scribe_config.analysis.token_budget = None;
+    scribe_config.general.working_dir = Some(config.repo_path.clone());
+
+    let selection_options = SelectionOptions {
+        token_target: config.token_budget,
+        force_traditional: config.token_budget == 0,
+        algorithm_name: Some("web-service".to_string()),
+        include_directory_map: true,
+    };
+
+    let outcome = analyze_and_select(&config.repo_path, &scribe_config, &selection_options)
+        .await
+        .map_err(|err| WebServiceError::ScribeCore(err.to_string()))?;
+
+    Ok(AnalysisOutput {
+        selected_files: outcome.selection.selected_files,
+        selected_file_infos: outcome.selection.selected_file_infos,
+        metrics: outcome.selection.metrics,
+        repository_files: outcome.analysis.files,
+        token_budget: config.token_budget,
+    })
+}
+
+fn recompute_bundle_summary(bundle_state: &mut BundleState, analysis: &AnalysisOutput) {
+    let selected_paths: HashSet<&str> = analysis
+        .selected_files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect();
+
+    let mut excluded = Vec::new();
+    for file in &analysis.repository_files {
+        if !selected_paths.contains(file.relative_path.as_str()) {
+            excluded.push(file.relative_path.clone());
+        }
+    }
+
+    let total_size: u64 = analysis.selected_files.iter().map(|file| file.size).sum();
+
+    bundle_state.total_size = file_size_to_usize(total_size);
+    bundle_state.token_estimate = analysis.metrics.total_tokens_estimated;
+    bundle_state.excluded_files = HashMap::from([("excluded".to_string(), excluded)]);
+    bundle_state.last_updated = chrono::Utc::now();
+}
+
+async fn update_bundle_state(state: &AppState, analysis: &AnalysisOutput) {
+    let mut bundle_state = state.bundle_state.write().await;
+    bundle_state.included_files = analysis
+        .selected_files
+        .iter()
+        .map(|file| file.relative_path.clone())
+        .collect();
+    recompute_bundle_summary(&mut bundle_state, analysis);
+}
+
+fn file_entry_from_fileinfo(file: &FileInfo, included: bool) -> FileEntry {
+    FileEntry {
+        path: file.relative_path.clone(),
+        size: file_size_to_usize(file.size),
+        tokens: file.token_estimate.unwrap_or(0),
+        file_type: format!("{:?}", file.language),
+        included,
+    }
+}
+
+fn file_entry_from_report_file(file: &ReportFile, matching_info: Option<&FileInfo>) -> FileEntry {
+    let file_type = matching_info
+        .map(|info| format!("{:?}", info.language))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    FileEntry {
+        path: file.relative_path.clone(),
+        size: file_size_to_usize(file.size),
+        tokens: file.estimated_tokens,
+        file_type,
+        included: true,
+    }
+}
+
+fn file_size_to_usize(value: u64) -> usize {
+    if value > usize::MAX as u64 {
+        usize::MAX
+    } else {
+        value as usize
+    }
+}
+
+fn build_selection_result(analysis: &AnalysisOutput) -> SelectionResult {
+    let budget = if analysis.token_budget == 0 {
+        analysis.metrics.total_tokens_estimated
+    } else {
+        analysis.token_budget
+    };
+
+    let unused_tokens = if analysis.token_budget == 0 {
+        0
+    } else {
+        analysis
+            .token_budget
+            .saturating_sub(analysis.metrics.total_tokens_estimated)
+    };
+
+    SelectionResult {
+        files: analysis.selected_file_infos.clone(),
+        total_tokens_used: analysis.metrics.total_tokens_estimated,
+        budget,
+        unused_tokens,
+        total_files_considered: analysis.metrics.total_files_discovered,
+    }
+}
+
 /// Template data structure for Handlebars rendering
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct TemplateData {
     repository_name: String,
     algorithm: String,
@@ -473,7 +766,7 @@ struct TemplateData {
     files: Vec<TemplateFile>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct TemplateFile {
     relative_path: String,
     icon: String,
@@ -485,12 +778,8 @@ struct TemplateFile {
 
 fn prepare_template_data(
     repo_path: &Path,
-    selected_files: &[FileInfo],
-    total_files: usize,
-    total_tokens: usize,
-    total_size: u64,
-    selection_time_ms: u64,
-    token_budget: usize,
+    selected_files: &[ReportFile],
+    metrics: &SelectionMetrics,
 ) -> TemplateData {
     let repo_name = repo_path
         .file_name()
@@ -498,55 +787,42 @@ fn prepare_template_data(
         .to_string_lossy()
         .to_string();
 
-    // Format file size
+    let total_size: u64 = selected_files.iter().map(|file| file.size).sum();
     let formatted_size = format_file_size(total_size);
 
-    // Calculate coverage percentage
-    let coverage_percentage = if token_budget > 0 {
-        ((total_tokens as f64 / token_budget as f64) * 100.0).min(100.0) as u32
-    } else {
-        0
-    };
+    let coverage_percentage = (metrics.coverage_score * 100.0).min(100.0) as u32;
 
-    // Convert FileInfo to TemplateFile
     let template_files: Vec<TemplateFile> = selected_files
         .iter()
         .map(|file| {
-            let relative_path = file
-                .path
-                .strip_prefix(repo_path)
-                .unwrap_or(&file.path)
-                .to_string_lossy()
-                .to_string();
-
-            let file_extension = file
-                .path
+            let icon = Path::new(&file.relative_path)
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .unwrap_or("");
-
-            let icon = get_file_icon(file_extension);
+                .map(get_file_icon)
+                .unwrap_or_else(|| get_file_icon(""));
 
             TemplateFile {
-                relative_path,
+                relative_path: file.relative_path.clone(),
                 icon,
                 size: format_file_size(file.size),
-                estimated_tokens: file.token_estimate.unwrap_or(0).to_string(),
-                importance_score: format!("{:.2}", file.centrality_score.unwrap_or(0.0)),
-                content: file.content.clone().unwrap_or_default(),
+                estimated_tokens: file.estimated_tokens.to_string(),
+                importance_score: format!("{:.2}", file.importance_score),
+                content: file.content.clone(),
             }
         })
         .collect();
 
+    let selection_time_ms = metrics.selection_time_ms as u64;
+
     TemplateData {
         repository_name: format!("Scribe Analysis - {}", repo_name),
-        algorithm: "Two-Pass File Selection".to_string(),
+        algorithm: metrics.algorithm_used.clone(),
         generated_time: chrono::Utc::now()
             .format("%Y-%m-%d %H:%M:%S UTC")
             .to_string(),
         selection_time_ms,
-        total_files,
-        total_tokens: total_tokens.to_string(),
+        total_files: metrics.total_files_discovered,
+        total_tokens: metrics.total_tokens_estimated.to_string(),
         total_size: formatted_size,
         coverage_percentage,
         files: template_files,
@@ -556,9 +832,32 @@ fn prepare_template_data(
 fn render_template(
     template_data: &TemplateData,
 ) -> std::result::Result<String, Box<dyn std::error::Error>> {
-    let template_content = include_str!("../../templates/report_bundled.html");
+    let template_content = include_str!("../templates/report_bundled.html");
 
     let mut handlebars = Handlebars::new();
+    handlebars.register_helper(
+        "add",
+        Box::new(
+            |helper: &Helper<'_, '_>,
+             _hb: &Handlebars<'_>,
+             _ctx: &HbContext,
+             _rc: &mut RenderContext<'_, '_>,
+             out: &mut dyn Output|
+             -> HelperResult {
+                let lhs = helper
+                    .param(0)
+                    .and_then(|v| v.value().as_i64())
+                    .unwrap_or(0);
+                let rhs = helper
+                    .param(1)
+                    .and_then(|v| v.value().as_i64())
+                    .unwrap_or(0);
+                let sum = lhs + rhs;
+                out.write(sum.to_string().as_ref())?;
+                Ok(())
+            },
+        ),
+    );
     handlebars.register_template_string("report", template_content)?;
 
     let mut rendered = handlebars.render("report", template_data)?;
@@ -570,6 +869,126 @@ fn render_template(
     );
 
     Ok(rendered)
+}
+
+const ANALYSIS_CACHE_TTL: Duration = Duration::from_secs(5);
+
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct CacheKey {
+    repo_path: String,
+    token_budget: usize,
+    max_file_size: usize,
+    auto_exclude_tests: bool,
+}
+
+#[derive(Clone)]
+struct CachedAnalysis {
+    generated_at: Instant,
+    analysis: AnalysisOutput,
+    scan_result: ScanResult,
+    template_data: TemplateData,
+    rendered_html: Option<String>,
+}
+
+static ANALYSIS_CACHE: Lazy<Mutex<HashMap<CacheKey, CachedAnalysis>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn build_cache_key(config: &crate::WebServiceConfig) -> CacheKey {
+    CacheKey {
+        repo_path: config.repo_path.to_string_lossy().into_owned(),
+        token_budget: config.token_budget,
+        max_file_size: config.max_file_size,
+        auto_exclude_tests: config.auto_exclude_tests,
+    }
+}
+
+fn build_render_data(
+    analysis: &AnalysisOutput,
+    config: &crate::WebServiceConfig,
+) -> (ScanResult, TemplateData, Option<String>) {
+    let selected_paths: HashSet<&str> = analysis
+        .selected_files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect();
+
+    let included_entries: Vec<FileEntry> = analysis
+        .selected_files
+        .iter()
+        .map(|file| {
+            let matching_info = analysis
+                .repository_files
+                .iter()
+                .find(|info| info.relative_path == file.relative_path);
+            file_entry_from_report_file(file, matching_info)
+        })
+        .collect();
+
+    let excluded_entries: Vec<FileEntry> = analysis
+        .repository_files
+        .iter()
+        .filter(|file| !selected_paths.contains(file.relative_path.as_str()))
+        .map(|file| file_entry_from_fileinfo(file, false))
+        .collect();
+
+    let mut categories = HashMap::new();
+    categories.insert("included".to_string(), included_entries.clone());
+    categories.insert("excluded".to_string(), excluded_entries.clone());
+
+    let total_size: usize = included_entries.iter().map(|entry| entry.size).sum();
+
+    let template_data = prepare_template_data(
+        &config.repo_path,
+        &analysis.selected_files,
+        &analysis.metrics,
+    );
+
+    let rendered_html = render_template(&template_data).ok();
+
+    (
+        ScanResult {
+            total_files: analysis.repository_files.len(),
+            selected_files: included_entries.len(),
+            excluded_files: excluded_entries.len(),
+            token_estimate: analysis.metrics.total_tokens_estimated,
+            total_size,
+            categories,
+            rendered_html: rendered_html.clone(),
+        },
+        template_data,
+        rendered_html,
+    )
+}
+
+async fn get_or_compute_analysis(state: &AppState) -> crate::Result<CachedAnalysis> {
+    let config_snapshot = { state.config.read().await.clone() };
+    let key = build_cache_key(&config_snapshot);
+
+    if let Some(entry) = {
+        let cache = ANALYSIS_CACHE.lock().unwrap();
+        cache.get(&key).cloned()
+    } {
+        if entry.generated_at.elapsed() < ANALYSIS_CACHE_TTL {
+            return Ok(entry);
+        }
+    }
+
+    let analysis = analyze_repository_for_web(&config_snapshot).await?;
+    let (scan_result, template_data, rendered_html) =
+        build_render_data(&analysis, &config_snapshot);
+
+    let cached = CachedAnalysis {
+        generated_at: Instant::now(),
+        analysis: analysis.clone(),
+        scan_result: scan_result.clone(),
+        template_data: template_data.clone(),
+        rendered_html: rendered_html.clone(),
+    };
+
+    let mut cache = ANALYSIS_CACHE.lock().unwrap();
+    cache.insert(key, cached.clone());
+
+    Ok(cached)
 }
 
 fn format_file_size(bytes: u64) -> String {
@@ -634,7 +1053,7 @@ mod tests {
         };
 
         AppState {
-            config,
+            config: Arc::new(RwLock::new(config)),
             bundle_state: Arc::new(RwLock::new(BundleState::default())),
             last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
             shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),

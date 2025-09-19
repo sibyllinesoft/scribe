@@ -26,8 +26,10 @@ impl WebService {
             });
         }
 
+        let config_lock = Arc::new(RwLock::new(config.clone()));
+
         let app_state = AppState {
-            config: config.clone(),
+            config: config_lock.clone(),
             bundle_state: Arc::new(RwLock::new(Default::default())),
             last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
             shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
@@ -309,18 +311,13 @@ mod tests {
         let service = WebService::new(config.clone()).unwrap();
 
         // Test that app_state has the correct config
-        assert_eq!(service.app_state.config.port, config.port);
-        assert_eq!(service.app_state.config.host, config.host);
-        assert_eq!(service.app_state.config.token_budget, config.token_budget);
-        assert_eq!(
-            service.app_state.config.auto_open_browser,
-            config.auto_open_browser
-        );
-        assert_eq!(service.app_state.config.max_file_size, config.max_file_size);
-        assert_eq!(
-            service.app_state.config.auto_exclude_tests,
-            config.auto_exclude_tests
-        );
+        let cfg_guard = service.app_state.config.blocking_read();
+        assert_eq!(cfg_guard.port, config.port);
+        assert_eq!(cfg_guard.host, config.host);
+        assert_eq!(cfg_guard.token_budget, config.token_budget);
+        assert_eq!(cfg_guard.auto_open_browser, config.auto_open_browser);
+        assert_eq!(cfg_guard.max_file_size, config.max_file_size);
+        assert_eq!(cfg_guard.auto_exclude_tests, config.auto_exclude_tests);
 
         // Test that bundle_state is initialized
         let bundle_state = service.app_state.bundle_state.try_read().unwrap();

@@ -12,7 +12,7 @@
 //! - **Convergence detection** with configurable precision
 //! - **Multi-language import detection** (Python, JavaScript, TypeScript, Rust, Go, Java)
 //!
-//! ### Graph Construction and Analysis  
+//! ### Graph Construction and Analysis
 //! - **Efficient dependency graph** representation with adjacency lists
 //! - **Comprehensive statistics** (degree distribution, connectivity, structural patterns)
 //! - **Performance optimized** for large codebases (10k+ files)
@@ -83,7 +83,7 @@
 //! ## Performance Characteristics
 //!
 //! - **Memory usage**: ~2MB for 1000-file codebases, ~20MB for 10k+ files
-//! - **Computation time**: ~10ms for small projects, ~100ms for large codebases  
+//! - **Computation time**: ~10ms for small projects, ~100ms for large codebases
 //! - **Convergence**: Typically 8-15 iterations for most dependency graphs
 //! - **Parallel efficiency**: Near-linear speedup on multi-core systems
 
@@ -92,12 +92,6 @@ pub mod centrality;
 pub mod graph;
 pub mod pagerank;
 pub mod statistics;
-
-// Legacy modules (maintained for compatibility)
-pub mod algorithms;
-pub mod builder;
-pub mod traversal;
-pub mod visualization;
 
 // Primary API exports - PageRank centrality system
 pub use centrality::{
@@ -118,13 +112,10 @@ pub use statistics::{
     ImportInsights, PerformanceProfile, StatisticsConfig, StructuralPatterns,
 };
 
-// Legacy exports (for backward compatibility)
-pub use algorithms::{GraphAlgorithms, PathFinder};
-pub use builder::{BuildOptions, GraphBuilder};
-pub use graph::DependencyGraph as CodeGraph; // Alias for compatibility
-pub use traversal::{GraphTraversal, TraversalOrder};
+// Maintain compatibility alias for existing integrations
+pub use graph::DependencyGraph as CodeGraph;
 
-use scribe_analysis::{heuristics::ScanResult, AnalysisResult};
+use scribe_analysis::heuristics::ScanResult;
 use scribe_core::Result;
 use std::collections::HashMap;
 
@@ -132,54 +123,6 @@ use std::collections::HashMap;
 ///
 /// This is the primary interface for computing PageRank centrality scores
 /// and integrating them with the FastPath heuristic system.
-///
-/// # Examples
-///
-/// ```ignore
-/// use scribe_graph::PageRankAnalysis;
-/// # use scribe_analysis::heuristics::ScanResult;
-/// #
-/// # // Mock implementation for documentation
-/// # #[derive(Debug)]
-/// # struct MockScanResult {
-/// #     path: String,
-/// #     relative_path: String,
-/// # }
-/// #
-/// # impl ScanResult for MockScanResult {
-/// #     fn path(&self) -> &str { &self.path }
-/// #     fn relative_path(&self) -> &str { &self.relative_path }
-/// #     fn depth(&self) -> usize { 1 }
-/// #     fn is_docs(&self) -> bool { false }
-/// #     fn is_readme(&self) -> bool { false }
-/// #     fn is_entrypoint(&self) -> bool { false }
-/// #     fn is_examples(&self) -> bool { false }
-/// #     fn is_tests(&self) -> bool { false }
-/// #     fn priority_boost(&self) -> f64 { 0.0 }
-/// #     fn get_documentation_score(&self) -> f64 { 0.0 }
-/// #     fn get_file_size(&self) -> usize { 1000 }
-/// #     fn get_imports(&self) -> Vec<String> { vec![] }
-/// #     fn get_git_churn(&self) -> usize { 0 }
-/// # }
-/// #
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let analysis = PageRankAnalysis::new()?;
-/// let scan_results = vec![
-///     MockScanResult { path: "main.rs".to_string(), relative_path: "main.rs".to_string() },
-///     MockScanResult { path: "lib.rs".to_string(), relative_path: "lib.rs".to_string() },
-/// ];
-/// let centrality_results = analysis.compute_centrality(&scan_results)?;
-///
-/// // Get files ranked by importance
-/// let top_files = centrality_results.top_files_by_centrality(10);
-///
-/// println!("Top 10 most important files:");
-/// for (file, score) in top_files {
-///     println!("  {}: {:.4}", file, score);
-/// }
-/// # Ok(())
-/// # }
-/// ```
 pub struct PageRankAnalysis {
     calculator: CentralityCalculator,
 }
@@ -247,41 +190,6 @@ impl Default for PageRankAnalysis {
     }
 }
 
-/// Legacy GraphAnalysis maintained for backward compatibility
-///
-/// **Note**: For new projects, use `PageRankAnalysis` instead, which provides
-/// the complete PageRank centrality system with performance optimizations.
-pub struct GraphAnalysis {
-    builder: GraphBuilder,
-    algorithms: GraphAlgorithms,
-}
-
-impl GraphAnalysis {
-    /// Create a new graph analysis instance
-    pub fn new() -> Self {
-        Self {
-            builder: GraphBuilder::new(),
-            algorithms: GraphAlgorithms::new(),
-        }
-    }
-
-    /// Build a code graph from analysis results
-    pub async fn build_graph(&self, analysis: &AnalysisResult) -> Result<CodeGraph> {
-        self.builder.build_from_analysis(analysis).await
-    }
-
-    /// Analyze relationships in a code graph
-    pub fn analyze_relationships(&self, graph: &CodeGraph) -> Result<Vec<String>> {
-        self.algorithms.find_dependencies(graph)
-    }
-}
-
-impl Default for GraphAnalysis {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Utility functions for PageRank analysis
 pub mod utils {
     use super::*;
@@ -331,9 +239,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_graph_analysis_creation() {
-        let graph_analysis = GraphAnalysis::new();
-        // Basic smoke test
-        assert!(true);
+    fn test_pagerank_analysis_creation() {
+        let analysis = PageRankAnalysis::new();
+        assert!(analysis.is_ok());
     }
 }

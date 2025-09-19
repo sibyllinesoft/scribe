@@ -119,6 +119,26 @@
 //! ```
 
 // Re-export core functionality (always available when scribe is used)
+
+pub mod configuration;
+pub mod pipeline;
+pub mod report;
+pub use configuration::{
+    default_include_patterns, load_ignore_patterns, load_scribe_config, normalize_patterns,
+    parse_pattern_list, should_ignore_file, ScribeConfig,
+};
+
+pub use pipeline::{
+    analyze_and_select, select_from_analysis, AnalysisOutcome, SelectionOptions, SelectionOutcome,
+};
+
+pub use report::{
+    format_bytes, format_number, format_timestamp, generate_cxml_output, generate_html_output,
+    generate_json_output, generate_markdown_output, generate_repomix_output, generate_report,
+    generate_text_output, generate_xml_output, get_file_icon, ReportFile, ReportFormat,
+    SelectionMetrics,
+};
+
 #[cfg(feature = "core")]
 pub use scribe_core as core;
 
@@ -145,8 +165,8 @@ pub use scribe_analysis as analysis;
 
 #[cfg(feature = "analysis")]
 pub use scribe_analysis::{
-    Analysis, AnalysisResult, DocumentAnalysis, HeuristicScorer, HeuristicSystem, ImportGraph,
-    ImportGraphBuilder, TemplateDetector,
+    DocumentAnalysis, HeuristicScorer, HeuristicSystem, ImportGraph, ImportGraphBuilder,
+    TemplateDetector,
 };
 
 // Graph analysis functionality
@@ -189,8 +209,8 @@ pub use scribe_selection as selection;
 
 #[cfg(feature = "selection")]
 pub use scribe_selection::{
-    CodeBundle, CodeBundler, CodeContext, CodeSelector, ContextExtractor, QuotaManager,
-    SelectionEngine, TwoPassSelector,
+    apply_token_budget_selection, CodeBundle, CodeBundler, CodeContext, CodeSelector,
+    ContextExtractor, ContextFile, QuotaManager, SelectionEngine, TwoPassSelector,
 };
 
 /// Current version of the main Scribe library
@@ -392,582 +412,6 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
     fallback_scan(path, &optimized_config).await
 }
 
-/// Apply the library's tiered token budget selection to a set of files.
-/// Exposed for reuse by the CLI so both paths share the same behaviour.
-pub async fn apply_token_budget_selection(
-    files: Vec<FileInfo>,
-    token_budget: usize,
-    config: &Config,
-) -> Result<Vec<FileInfo>> {
-    use scribe_core::tokenization::{TokenBudget, TokenCounter};
-    use scribe_graph::{CentralityCalculator, PageRankAnalysis};
-    use std::collections::HashMap;
-
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!(
-            "🎯 Intelligent token budget selection: {} tokens across {} files",
-            token_budget,
-            files.len()
-        );
-    }
-
-    let counter = TokenCounter::global();
-    let mut selected_files = Vec::new();
-
-    // Split files into categories for prioritized selection
-    let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files.clone());
-
-    // Keep a reference to all files for final optimization pass
-    let all_files = files;
-
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!(
-            "📊 File categories: {} mandatory, {} source, {} docs, {} other",
-            mandatory_files.len(),
-            source_files.len(),
-            doc_files.len(),
-            other_files.len()
-        );
-    }
-
-    let mut budget_tracker = TokenBudget::new(token_budget);
-
-    // Tier 1: Mandatory files (README, project config, main/index files)
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!("📌 Tier 1: Processing mandatory files");
-    }
-    for file in mandatory_files {
-        if budget_tracker.available() < 1 {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("🛑 Budget exhausted, stopping mandatory file selection");
-            }
-            break;
-        }
-        if let Some(selected_file) =
-            try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
-        {
-            selected_files.push(selected_file);
-        }
-    }
-
-    // Tier 2: Source files (prioritized by centrality)
-    if !source_files.is_empty() && budget_tracker.available() > 0 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!("🧠 Tier 2: Processing source files with centrality analysis");
-        }
-
-        // Calculate centrality scores for source files
-        #[cfg(feature = "graph")]
-        let centrality_results = {
-            let calculator = CentralityCalculator::new()?;
-            // Convert FileInfo to mock scan results for centrality calculation
-            let mock_scan_results: Vec<_> = source_files
-                .iter()
-                .map(|f| MockScanResult::from_file_info(f))
-                .collect();
-            calculator.calculate_centrality(&mock_scan_results)?
-        };
-
-        #[cfg(feature = "graph")]
-        let mut source_with_centrality: Vec<_> = source_files
-            .into_iter()
-            .map(|mut file| {
-                let centrality_score = centrality_results
-                    .pagerank_scores
-                    .get(&file.relative_path)
-                    .copied()
-                    .unwrap_or(0.0);
-                file.centrality_score = Some(centrality_score);
-                (file, centrality_score)
-            })
-            .collect();
-
-        #[cfg(not(feature = "graph"))]
-        let mut source_with_centrality: Vec<_> = source_files
-            .into_iter()
-            .map(|mut file| {
-                // No artificial centrality - preserve natural file order
-                file.centrality_score = None;
-                (file, 0.0)
-            })
-            .collect();
-
-        // Sort by centrality score (highest first)
-        source_with_centrality
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        if std::env::var("SCRIBE_DEBUG").is_ok() && !source_with_centrality.is_empty() {
-            eprintln!("🔍 Top 10 source files by centrality:");
-            for (i, (file, score)) in source_with_centrality.iter().enumerate().take(10) {
-                eprintln!("  {}. {} (score: {:.6})", i + 1, file.relative_path, score);
-            }
-        }
-
-        for (file, centrality_score) in source_with_centrality {
-            if budget_tracker.available() < 1 {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("🛑 Budget exhausted, stopping source selection");
-                }
-                break;
-            }
-
-            if let Some(selected_file) = try_include_file_with_budget_and_demotion(
-                file,
-                &counter,
-                &mut budget_tracker,
-                centrality_score,
-            )
-            .await?
-            {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "✅ Selected {} (centrality: {:.4})",
-                        selected_file.relative_path, centrality_score
-                    );
-                }
-                selected_files.push(selected_file);
-            }
-        }
-    }
-
-    // Tier 3: Documentation files
-    if !doc_files.is_empty() && budget_tracker.available() > 0 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!("📚 Tier 3: Processing documentation files");
-        }
-
-        // Sort docs by importance - prioritize architecture/design docs
-        let mut critical_docs = Vec::new();
-        let mut other_docs = Vec::new();
-
-        for file in doc_files {
-            let path_lower = file.relative_path.to_lowercase();
-            if path_lower.contains("architecture")
-                || path_lower.contains("design")
-                || path_lower.contains("api")
-                || path_lower.contains("spec")
-                || path_lower.ends_with("changelog.md")
-                || path_lower.ends_with("contributing.md")
-            {
-                critical_docs.push(file);
-            } else {
-                other_docs.push(file);
-            }
-        }
-
-        // Process critical docs first, then others
-        for file in critical_docs.into_iter().chain(other_docs.into_iter()) {
-            if budget_tracker.available() < 1 {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("🛑 Budget exhausted, stopping documentation selection");
-                }
-                break;
-            }
-
-            if let Some(selected_file) =
-                try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
-            {
-                selected_files.push(selected_file);
-            }
-        }
-    }
-
-    // Tier 4: Other files (if budget remains)
-    if !other_files.is_empty() && budget_tracker.available() > 0 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!("📄 Tier 4: Processing other files");
-        }
-
-        for file in other_files {
-            if budget_tracker.available() < 1 {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("🛑 Budget exhausted, stopping other file selection");
-                }
-                break;
-            }
-
-            if let Some(selected_file) =
-                try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
-            {
-                selected_files.push(selected_file);
-            }
-        }
-    }
-
-    // Final optimization pass: try to fill remaining budget with smaller files
-    if budget_tracker.available() > 1 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!(
-                "🔧 Final optimization pass: {} tokens remaining, searching for small files",
-                budget_tracker.available()
-            );
-        }
-
-        // Collect files that weren't included yet and could fit in remaining budget
-        let included_paths: std::collections::HashSet<String> = selected_files
-            .iter()
-            .map(|f| f.relative_path.clone())
-            .collect();
-
-        // Try to find any remaining files that could fit
-        for file in &all_files {
-            if budget_tracker.available() < 1 {
-                break;
-            }
-
-            if included_paths.contains(&file.relative_path) || !file.decision.should_include() {
-                continue;
-            }
-
-            // Quick estimate - try small files that might fit
-            if file.size <= (budget_tracker.available() * 4) as u64 {
-                // Rough tokens = chars/4
-                if let Some(selected_file) =
-                    try_include_file_with_budget(file.clone(), &counter, &mut budget_tracker)
-                        .await?
-                {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "🎯 Final pass: included {} ({} tokens)",
-                            selected_file.relative_path,
-                            selected_file.token_estimate.unwrap_or(0)
-                        );
-                    }
-                    selected_files.push(selected_file);
-                }
-            }
-        }
-    }
-
-    let tokens_used = token_budget - budget_tracker.available();
-    let utilization = (tokens_used as f64 / token_budget as f64) * 100.0;
-
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!(
-            "✅ Selected {} files ({} tokens / {} budget, {:.1}% utilized)",
-            selected_files.len(),
-            tokens_used,
-            token_budget,
-            utilization
-        );
-
-        if utilization < 90.0 {
-            eprintln!(
-                "⚠️  Budget utilization below 90% - {} tokens unused",
-                budget_tracker.available()
-            );
-        }
-    }
-
-    Ok(selected_files)
-}
-
-fn categorize_files(
-    files: Vec<FileInfo>,
-) -> (Vec<FileInfo>, Vec<FileInfo>, Vec<FileInfo>, Vec<FileInfo>) {
-    let mut mandatory = Vec::new();
-    let mut source = Vec::new();
-    let mut docs = Vec::new();
-    let mut other = Vec::new();
-
-    for file in files {
-        if !file.decision.should_include() {
-            continue;
-        }
-
-        if is_mandatory_file(&file) {
-            mandatory.push(file);
-        } else if matches!(file.file_type, FileType::Source { .. }) {
-            source.push(file);
-        } else if matches!(file.file_type, FileType::Documentation { .. }) {
-            docs.push(file);
-        } else {
-            other.push(file);
-        }
-    }
-
-    (mandatory, source, docs, other)
-}
-
-fn is_mandatory_file(file: &FileInfo) -> bool {
-    let path = file.relative_path.to_lowercase();
-
-    // Skip files in dependency/build directories
-    if path.contains("node_modules/")
-        || path.contains("target/")
-        || path.contains("vendor/")
-        || path.contains(".git/")
-        || path.contains("__pycache__/")
-        || path.contains("build/")
-        || path.contains("dist/")
-        || path.contains(".cache/")
-    {
-        return false;
-    }
-
-    // README files (only in project root and first-level directories)
-    if path.contains("readme") {
-        let depth = path.matches('/').count();
-        // Only include README files at root level or one directory deep
-        // This excludes deep nested dependency README files
-        return depth <= 1;
-    }
-
-    // Project configuration files (only at root level)
-    if !path.contains('/')
-        && matches!(
-            path.as_str(),
-            "package.json"
-                | "cargo.toml"
-                | "pyproject.toml"
-                | "requirements.txt"
-                | "go.mod"
-                | "pom.xml"
-                | "build.gradle"
-                | "composer.json"
-                | "tsconfig.json"
-                | ".gitignore"
-                | "dockerfile"
-                | "docker-compose.yml"
-        )
-    {
-        return true;
-    }
-
-    // Main/index files in root or src
-    if (path.starts_with("src/") || path.starts_with("lib/") || !path.contains('/'))
-        && (path.contains("main") || path.contains("index"))
-    {
-        return true;
-    }
-
-    false
-}
-
-async fn try_include_file_with_budget(
-    mut file: FileInfo,
-    counter: &scribe_core::tokenization::TokenCounter,
-    budget_tracker: &mut scribe_core::tokenization::TokenBudget,
-) -> Result<Option<FileInfo>> {
-    match load_file_content_safe(&file.path) {
-        Ok(content) => match counter.estimate_file_tokens(&content, &file.path) {
-            Ok(token_count) => {
-                if budget_tracker.can_allocate(token_count) {
-                    budget_tracker.allocate(token_count);
-                    file.content = Some(content);
-                    file.token_estimate = Some(token_count);
-                    file.char_count = Some(file.content.as_ref().unwrap().chars().count());
-                    file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-                    Ok(Some(file))
-                } else {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "⚠️  Skipping {} ({} tokens) - would exceed budget",
-                            file.relative_path, token_count
-                        );
-                    }
-                    Ok(None)
-                }
-            }
-            Err(e) => {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "⚠️  Failed to estimate tokens for {}: {}",
-                        file.relative_path, e
-                    );
-                }
-                Ok(None)
-            }
-        },
-        Err(e) => {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
-            }
-            Ok(None)
-        }
-    }
-}
-
-async fn try_include_file_with_budget_and_demotion(
-    mut file: FileInfo,
-    counter: &scribe_core::tokenization::TokenCounter,
-    budget_tracker: &mut scribe_core::tokenization::TokenBudget,
-    centrality_score: f64,
-) -> Result<Option<FileInfo>> {
-    use scribe_selection::demotion::{DemotionEngine, FidelityMode};
-
-    match load_file_content_safe(&file.path) {
-        Ok(content) => {
-            match counter.estimate_file_tokens(&content, &file.path) {
-                Ok(full_tokens) => {
-                    // Try full content first
-                    if budget_tracker.can_allocate(full_tokens) {
-                        budget_tracker.allocate(full_tokens);
-                        file.content = Some(content);
-                        file.token_estimate = Some(full_tokens);
-                        file.char_count = Some(file.content.as_ref().unwrap().chars().count());
-                        file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-                        return Ok(Some(file));
-                    }
-
-                    // Full content doesn't fit - try demotion for source files
-                    if matches!(file.file_type, FileType::Source { .. }) {
-                        if std::env::var("SCRIBE_DEBUG").is_ok() {
-                            eprintln!(
-                                "🔧 Trying demotion for {} ({} tokens → chunks/signatures)",
-                                file.relative_path, full_tokens
-                            );
-                        }
-
-                        // Try chunk mode first
-                        if let Ok(mut demotion_engine) = DemotionEngine::new() {
-                            if let Ok(chunk_result) = demotion_engine.demote_content(
-                                &content,
-                                &file.relative_path,
-                                FidelityMode::Chunk,
-                                Some(budget_tracker.available()),
-                            ) {
-                                if budget_tracker.can_allocate(chunk_result.demoted_tokens) {
-                                    budget_tracker.allocate(chunk_result.demoted_tokens);
-                                    file.content = Some(chunk_result.content);
-                                    file.token_estimate = Some(chunk_result.demoted_tokens);
-                                    file.char_count =
-                                        Some(file.content.as_ref().unwrap().chars().count());
-                                    file.line_count =
-                                        Some(file.content.as_ref().unwrap().lines().count());
-                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                        eprintln!("✅ Demoted {} to chunks ({} → {} tokens, {:.1}% compression, centrality: {:.4})",
-                                            file.relative_path, full_tokens, chunk_result.demoted_tokens,
-                                            chunk_result.compression_ratio * 100.0, centrality_score);
-                                    }
-                                    return Ok(Some(file));
-                                }
-                            }
-
-                            // Try signature mode as last resort
-                            if let Ok(sig_result) = demotion_engine.demote_content(
-                                &content,
-                                &file.relative_path,
-                                FidelityMode::Signature,
-                                None, // No budget limit for signatures
-                            ) {
-                                if budget_tracker.can_allocate(sig_result.demoted_tokens) {
-                                    budget_tracker.allocate(sig_result.demoted_tokens);
-                                    file.content = Some(sig_result.content);
-                                    file.token_estimate = Some(sig_result.demoted_tokens);
-                                    file.char_count =
-                                        Some(file.content.as_ref().unwrap().chars().count());
-                                    file.line_count =
-                                        Some(file.content.as_ref().unwrap().lines().count());
-                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                        eprintln!("✅ Demoted {} to signatures ({} → {} tokens, {:.1}% compression, centrality: {:.4})",
-                                            file.relative_path, full_tokens, sig_result.demoted_tokens,
-                                            sig_result.compression_ratio * 100.0, centrality_score);
-                                    }
-                                    return Ok(Some(file));
-                                }
-                            }
-                        }
-                    }
-
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "⚠️  Skipping {} ({} tokens) - no demotion method fits budget",
-                            file.relative_path, full_tokens
-                        );
-                    }
-                    Ok(None)
-                }
-                Err(e) => {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "⚠️  Failed to estimate tokens for {}: {}",
-                            file.relative_path, e
-                        );
-                    }
-                    Ok(None)
-                }
-            }
-        }
-        Err(e) => {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
-            }
-            Ok(None)
-        }
-    }
-}
-
-// Mock ScanResult for centrality calculation
-#[cfg(feature = "graph")]
-struct MockScanResult {
-    path: String,
-    relative_path: String,
-    centrality_score: Option<f64>,
-}
-
-#[cfg(feature = "graph")]
-impl MockScanResult {
-    fn from_file_info(file: &FileInfo) -> Self {
-        Self {
-            path: file.path.to_string_lossy().to_string(),
-            relative_path: file.relative_path.clone(),
-            centrality_score: file.centrality_score,
-        }
-    }
-}
-
-#[cfg(feature = "graph")]
-impl scribe_analysis::heuristics::ScanResult for MockScanResult {
-    fn path(&self) -> &str {
-        &self.path
-    }
-    fn relative_path(&self) -> &str {
-        &self.relative_path
-    }
-    fn depth(&self) -> usize {
-        self.relative_path.matches('/').count()
-    }
-    fn is_docs(&self) -> bool {
-        false
-    }
-    fn is_readme(&self) -> bool {
-        self.relative_path.to_lowercase().contains("readme")
-    }
-    fn is_entrypoint(&self) -> bool {
-        self.relative_path.contains("main") || self.relative_path.contains("index")
-    }
-    fn has_examples(&self) -> bool {
-        self.relative_path.contains("example")
-    }
-    fn is_test(&self) -> bool {
-        self.relative_path.contains("test")
-    }
-    fn priority_boost(&self) -> f64 {
-        0.0
-    }
-    fn churn_score(&self) -> f64 {
-        0.0
-    }
-    fn centrality_in(&self) -> f64 {
-        self.centrality_score.unwrap_or(0.0)
-    }
-    fn imports(&self) -> Option<&[String]> {
-        None
-    }
-    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> {
-        None
-    }
-}
-
-fn load_file_content_safe(path: &std::path::Path) -> Result<String> {
-    use crate::ScribeError;
-    use std::fs;
-
-    fs::read_to_string(path)
-        .map_err(|e| ScribeError::io(format!("Failed to read file {}: {}", path.display(), e), e))
-}
-
 async fn fallback_scan<P: AsRef<std::path::Path>>(
     path: P,
     config: &Config,
@@ -1062,7 +506,7 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
                 // Convert FileInfo to mock scan results for centrality calculation
                 let mock_scan_results: Vec<_> = files
                     .iter()
-                    .map(|f| MockScanResult::from_file_info(f))
+                    .map(|f| AnalyzerCentralityAdapter::from_file_info(f))
                     .collect();
 
                 match calculator.calculate_centrality(&mock_scan_results) {
@@ -1185,6 +629,79 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
         final_scores,
         metadata,
     })
+}
+
+#[cfg(feature = "graph")]
+struct AnalyzerCentralityAdapter {
+    path: String,
+    relative_path: String,
+    centrality_score: Option<f64>,
+}
+
+#[cfg(feature = "graph")]
+impl AnalyzerCentralityAdapter {
+    fn from_file_info(file: &FileInfo) -> Self {
+        Self {
+            path: file.path.to_string_lossy().to_string(),
+            relative_path: file.relative_path.clone(),
+            centrality_score: file.centrality_score,
+        }
+    }
+}
+
+#[cfg(feature = "graph")]
+impl scribe_analysis::heuristics::ScanResult for AnalyzerCentralityAdapter {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+
+    fn depth(&self) -> usize {
+        self.relative_path.matches('/').count()
+    }
+
+    fn is_docs(&self) -> bool {
+        false
+    }
+
+    fn is_readme(&self) -> bool {
+        self.relative_path.to_lowercase().contains("readme")
+    }
+
+    fn is_entrypoint(&self) -> bool {
+        self.relative_path.contains("main") || self.relative_path.contains("index")
+    }
+
+    fn has_examples(&self) -> bool {
+        self.relative_path.contains("example")
+    }
+
+    fn is_test(&self) -> bool {
+        self.relative_path.contains("test")
+    }
+
+    fn priority_boost(&self) -> f64 {
+        0.0
+    }
+
+    fn churn_score(&self) -> f64 {
+        0.0
+    }
+
+    fn centrality_in(&self) -> f64 {
+        self.centrality_score.unwrap_or(0.0)
+    }
+
+    fn imports(&self) -> Option<&[String]> {
+        None
+    }
+
+    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> {
+        None
+    }
 }
 
 /// Check if a file is a test file based on path patterns
@@ -1367,7 +884,7 @@ pub mod prelude {
     };
 
     #[cfg(feature = "analysis")]
-    pub use crate::analysis::{Analysis, AnalysisResult, HeuristicScorer, HeuristicSystem};
+    pub use crate::analysis::{HeuristicScorer, HeuristicSystem};
 
     #[cfg(feature = "scanner")]
     pub use crate::scanner::{FileScanner, ScanOptions, Scanner};

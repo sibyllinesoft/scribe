@@ -9,15 +9,7 @@ pub mod complexity;
 pub mod heuristics;
 pub mod language_support;
 
-// Legacy modules (kept for compatibility)
-pub mod analyzer;
-pub mod ast;
-pub mod dependencies;
-pub mod metrics;
-pub mod parser;
-pub mod symbols;
-
-// Re-export main heuristics types
+// Re-export main heuristic types
 pub use heuristics::{
     get_template_score_boost, import_matches_file, is_template_file, DocumentAnalysis,
     HeuristicScorer, HeuristicSystem, HeuristicWeights, ImportGraph, ImportGraphBuilder,
@@ -34,57 +26,5 @@ pub use complexity::{
 pub use language_support::{
     analyze_file_language, AstLanguage, ClassInfo, DocumentationAnalyzer, DocumentationCoverage,
     FunctionExtractor, FunctionInfo, LanguageAnalysisResult, LanguageFeatures, LanguageMetrics,
-    LanguageSpecificComplexity, LanguageSupport, LanguageTier, SymbolAnalyzer, SymbolType,
-    SymbolUsage,
+    LanguageSpecificComplexity, LanguageSupport, LanguageTier,
 };
-
-// Legacy re-exports
-pub use analyzer::{AnalysisResult, CodeAnalyzer};
-pub use ast::{AstNode, AstWalker};
-pub use metrics::{ComplexityMetrics as LegacyComplexityMetrics, Metrics};
-pub use parser::{ParseResult, Parser};
-pub use symbols::{Symbol, SymbolTable};
-
-use scribe_core::Result;
-
-// Import the types module
-pub use ast::types;
-
-/// Main entry point for code analysis
-pub struct Analysis {
-    parser: Parser,
-    analyzer: CodeAnalyzer,
-}
-
-impl Analysis {
-    /// Create a new analysis instance
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            parser: Parser::new()?,
-            analyzer: CodeAnalyzer::new(),
-        })
-    }
-
-    /// Analyze a piece of code
-    pub async fn analyze(&self, code: &str, language: &str) -> Result<AnalysisResult> {
-        let ast = self.parser.parse(code, language)?;
-        self.analyzer.analyze(&ast).await
-    }
-}
-
-impl Default for Analysis {
-    fn default() -> Self {
-        Self::new().expect("Failed to create Analysis")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_analysis_creation() {
-        let analysis = Analysis::new();
-        assert!(analysis.is_ok());
-    }
-}

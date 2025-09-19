@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
+
 //! # Scribe Scaling
 //!
 //! Advanced scaling optimizations for handling large repositories (10k-100k+ files) efficiently.
