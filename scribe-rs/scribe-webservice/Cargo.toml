@@ -19,7 +19,6 @@ scribe-scaling = { version = "0.5.0", path = "../scribe-scaling" }
 scribe-selection = { version = "0.5.0", path = "../scribe-selection" }
 scribe-scanner = { version = "0.5.0", path = "../scribe-scanner" }
 scribe-analysis = { version = "0.5.0", path = "../scribe-analysis" }
-scribe-analyzer = { version = "0.5.0", path = ".." }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }
@@ -27,6 +26,7 @@ tokio = { workspace = true, features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 once_cell = { workspace = true }
+async-trait = { workspace = true }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
@@ -41,8 +41,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # File system
-walkdir = "2.4"
-tempfile = "3.8"
+walkdir = { workspace = true }
+tempfile = { workspace = true }
 
 # Browser opening
 open = "5.0"
@@ -58,7 +58,7 @@ handlebars = "4.5"
 
 [dev-dependencies]
 criterion = { workspace = true }
-tempfile = "3.8"
+tempfile = { workspace = true }
 # Testing framework
 tokio-test = "0.4"
 # HTTP testing

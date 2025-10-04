@@ -5,7 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TOOLS_DIR="$PROJECT_ROOT/tools"
+PY_SUPPORT_DIR="$TOOLS_DIR/scripts/support"
 ARTIFACTS_DIR="$PROJECT_ROOT/artifacts"
 
 # Colors
@@ -30,15 +32,15 @@ log_info "Artifacts: $ARTIFACTS_DIR"
 # 1. Static Analysis
 log_info "Running static analysis..."
 if command -v ruff &> /dev/null; then
-    ruff check . --output-format=json > "$ARTIFACTS_DIR/ruff_results.json" || true
-    ruff format --check . || log_warning "Code formatting issues detected"
+    (cd "$PROJECT_ROOT" && ruff check . --output-format=json > "$ARTIFACTS_DIR/ruff_results.json" || true)
+    (cd "$PROJECT_ROOT" && ruff format --check .) || log_warning "Code formatting issues detected"
     log_success "Ruff analysis completed"
 else
     log_warning "Ruff not available"
 fi
 
 if command -v mypy &> /dev/null; then
-    mypy scripts/support/ --json-report "$ARTIFACTS_DIR/mypy_report" || log_warning "Type checking issues detected"
+    mypy "$PY_SUPPORT_DIR" --json-report "$ARTIFACTS_DIR/mypy_report" || log_warning "Type checking issues detected"
     log_success "MyPy analysis completed"
 else
     log_warning "MyPy not available"
@@ -47,7 +49,7 @@ fi
 # 2. Security Scanning
 log_info "Running security scans..."
 if command -v bandit &> /dev/null; then
-    bandit -r scripts/support/ -f json -o "$ARTIFACTS_DIR/bandit_results.json" || log_warning "Security issues detected"
+    bandit -r "$PY_SUPPORT_DIR" -f json -o "$ARTIFACTS_DIR/bandit_results.json" || log_warning "Security issues detected"
     log_success "Bandit security scan completed"
 else
     log_warning "Bandit not available"
@@ -63,7 +65,7 @@ fi
 # 3. Unit Tests
 log_info "Running unit tests..."
 if command -v pytest &> /dev/null; then
-    pytest tests/ --json-report --json-report-file="$ARTIFACTS_DIR/pytest_results.json" || log_warning "Unit test failures detected"
+    pytest "$PROJECT_ROOT/tests" --json-report --json-report-file="$ARTIFACTS_DIR/pytest_results.json" || log_warning "Unit test failures detected"
     log_success "Unit tests completed"
 else
     log_warning "Pytest not available"
@@ -84,6 +86,7 @@ log_info "Testing core imports..."
 python -c "
 import sys
 sys.path.insert(0, '$PROJECT_ROOT')
+sys.path.insert(0, '$TOOLS_DIR')
 try:
     import scripts.support
     print('✓ Python support package import successful')

@@ -445,7 +445,6 @@ pub trait PluginRegistry: Send + Sync {
 mod tests {
     use super::*;
 
-    #[allow(dead_code)]
     struct MockAnalyzer;
 
     #[async_trait]
@@ -465,6 +464,13 @@ mod tests {
         fn version(&self) -> &'static str {
             "1.0.0"
         }
+    }
+
+    #[test]
+    fn mock_analyzer_metadata() {
+        let analyzer = MockAnalyzer;
+        assert_eq!(analyzer.name(), "mock");
+        assert_eq!(analyzer.version(), "1.0.0");
     }
 
     #[test]

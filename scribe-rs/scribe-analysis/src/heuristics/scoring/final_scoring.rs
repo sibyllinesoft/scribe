@@ -147,7 +147,6 @@ impl ScoreComponents {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heuristics::scoring::types::{RawScoreComponents, ScoringFeatures};
 
     #[test]
     fn test_final_score_calculation() {
@@ -190,18 +189,6 @@ mod tests {
             examples_score: 0.4,
             priority_boost: 0.5,
             template_boost: 0.2,
-            raw_scores: RawScoreComponents {
-                doc_raw: 1.0,
-                readme_raw: 0.8,
-                import_degree_in: 5,
-                import_degree_out: 3,
-                path_depth: 2,
-                test_links_found: 0,
-                churn_commits: 2,
-                centrality_raw: 0.9,
-                is_entrypoint: true,
-                examples_count: 3,
-            },
             weights: HeuristicWeights::default(),
         };
 

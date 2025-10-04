@@ -493,8 +493,7 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Refresh the display
-                    await refreshFiles();
+                    displayScanResults(data.data);
                     setStatusMessage(`Toggled ${filePath}`, 'success');
                 } else {
                     throw new Error(data.error || 'Toggle failed');

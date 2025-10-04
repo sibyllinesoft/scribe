@@ -20,7 +20,7 @@
 
 use rayon::prelude::*;
 use scribe_analysis::heuristics::ScanResult;
-use scribe_core::Result;
+use scribe_core::{file, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -679,37 +679,8 @@ impl CentralityCalculator {
     /// Check if a file is an entrypoint
     fn is_entrypoint_file(&self, file_path: &str) -> bool {
         let path = Path::new(file_path);
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        matches!(
-            file_name.as_str(),
-            "main.py"
-                | "main.rs"
-                | "main.go"
-                | "main.js"
-                | "main.ts"
-                | "index.py"
-                | "index.rs"
-                | "index.go"
-                | "index.js"
-                | "index.ts"
-                | "app.py"
-                | "app.rs"
-                | "app.go"
-                | "app.js"
-                | "app.ts"
-                | "server.py"
-                | "server.rs"
-                | "server.go"
-                | "server.js"
-                | "server.ts"
-                | "lib.rs"
-                | "__init__.py"
-        )
+        let language = file::detect_language_from_path(path);
+        file::is_entrypoint_path(path, &language)
     }
 }
 

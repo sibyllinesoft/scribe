@@ -1,11 +1,11 @@
 //! Web server implementation for Scribe web service
 
-use crate::{handlers, AppState, Result, WebServiceConfig, WebServiceError};
+use crate::{handlers, AnalysisProvider, AppState, Result, WebServiceConfig, WebServiceError};
 use axum::{
     routing::{get, post},
     Router,
 };
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::SystemTime};
 use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing::{info, warn};
@@ -17,9 +17,8 @@ pub struct WebService {
 }
 
 impl WebService {
-    /// Create a new web service with the given configuration
-    pub fn new(config: WebServiceConfig) -> Result<Self> {
-        // Validate repository path
+    /// Create a new web service with the given configuration and analysis provider
+    pub fn new(config: WebServiceConfig, provider: Arc<dyn AnalysisProvider>) -> Result<Self> {
         if !config.repo_path.exists() {
             return Err(WebServiceError::RepositoryNotFound {
                 path: config.repo_path.clone(),
@@ -33,6 +32,7 @@ impl WebService {
             bundle_state: Arc::new(RwLock::new(Default::default())),
             last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
             shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
+            analysis_provider: provider,
         };
 
         Ok(Self { config, app_state })
@@ -176,12 +176,87 @@ impl WebService {
     }
 }
 
+fn format_modified(time: Option<SystemTime>) -> String {
+    match time {
+        Some(ts) => {
+            let datetime: chrono::DateTime<chrono::Local> = ts.into();
+            datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        None => "N/A".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AnalysisOutput, WebReportFile, WebSelectionMetrics};
+    use async_trait::async_trait;
     use axum_test::TestServer;
+    use scribe_core::file::{FileType, Language};
+    use scribe_core::{FileInfo, RenderDecision};
+    use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
+
+    struct TestProvider;
+
+    #[async_trait]
+    impl AnalysisProvider for TestProvider {
+        async fn analyze(&self, config: &WebServiceConfig) -> Result<AnalysisOutput> {
+            let dummy_file = FileInfo {
+                path: config.repo_path.join("dummy.rs"),
+                relative_path: "dummy.rs".to_string(),
+                size: 0,
+                modified: None,
+                decision: RenderDecision::include("test"),
+                file_type: FileType::Source {
+                    language: Language::Rust,
+                },
+                language: Language::Rust,
+                content: Some("fn main() {}".to_string()),
+                token_estimate: Some(42),
+                line_count: Some(1),
+                char_count: Some(12),
+                is_binary: false,
+                git_status: None,
+                centrality_score: Some(0.5),
+            };
+
+            Ok(AnalysisOutput {
+                selected_files: vec![WebReportFile {
+                    path: dummy_file.path.clone(),
+                    relative_path: dummy_file.relative_path.clone(),
+                    content: "fn main() {}".into(),
+                    size: dummy_file.size,
+                    estimated_tokens: 42,
+                    importance_score: 0.8,
+                    centrality_score: 0.5,
+                    query_relevance_score: 0.4,
+                    entry_point_proximity: 0.9,
+                    content_quality_score: 0.7,
+                    repository_role_score: 0.6,
+                    recency_score: 0.3,
+                    modified: format_modified(dummy_file.modified),
+                }],
+                selected_file_infos: vec![dummy_file.clone()],
+                metrics: WebSelectionMetrics {
+                    total_files_discovered: 1,
+                    files_selected: 1,
+                    total_tokens_estimated: 42,
+                    selection_time_ms: 1,
+                    algorithm_used: "test".to_string(),
+                    coverage_score: 0.5,
+                    relevance_score: 0.6,
+                },
+                repository_files: vec![dummy_file],
+                token_budget: config.token_budget,
+            })
+        }
+    }
+
+    fn new_service(config: WebServiceConfig) -> WebService {
+        WebService::new(config, Arc::new(TestProvider)).unwrap()
+    }
 
     #[tokio::test]
     async fn test_webservice_creation() {
@@ -192,7 +267,7 @@ mod tests {
             ..Default::default()
         };
 
-        let service = WebService::new(config);
+        let service = WebService::new(config, Arc::new(TestProvider));
         assert!(service.is_ok());
     }
 
@@ -203,7 +278,7 @@ mod tests {
             ..Default::default()
         };
 
-        let service = WebService::new(config);
+        let service = WebService::new(config, Arc::new(TestProvider));
         assert!(service.is_err());
 
         if let Err(WebServiceError::RepositoryNotFound { path }) = service {
@@ -230,7 +305,7 @@ mod tests {
             auto_shutdown_timeout: 60,
         };
 
-        let service = WebService::new(valid_config);
+        let service = WebService::new(valid_config, Arc::new(TestProvider));
         assert!(service.is_ok());
 
         let service = service.unwrap();
@@ -249,7 +324,7 @@ mod tests {
             ..Default::default()
         };
 
-        let service = WebService::new(config).unwrap();
+        let service = new_service(config);
         let router = service.create_router();
 
         // Test that the router was created (it's hard to test routes directly without starting the server)
@@ -267,7 +342,7 @@ mod tests {
             ..Default::default()
         };
 
-        let service = WebService::new(config).unwrap();
+        let service = new_service(config);
         let static_dir = service.get_static_dir();
 
         // Should return some path
@@ -284,7 +359,7 @@ mod tests {
             ..Default::default()
         };
 
-        let service = WebService::new(config).unwrap();
+        let service = new_service(config);
         let embedded_dir = service.create_embedded_static_dir();
 
         // Should return a path in temp directory
@@ -308,7 +383,7 @@ mod tests {
             auto_shutdown_timeout: 60,
         };
 
-        let service = WebService::new(config.clone()).unwrap();
+        let service = new_service(config.clone());
 
         // Test that app_state has the correct config
         let cfg_guard = service.app_state.config.blocking_read();
@@ -342,7 +417,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let service = WebService::new(config);
+            let service = WebService::new(config, Arc::new(TestProvider));
             assert!(
                 service.is_ok(),
                 "Failed to create service with host: {}",
@@ -369,7 +444,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let service = WebService::new(config);
+            let service = WebService::new(config, Arc::new(TestProvider));
             assert!(
                 service.is_ok(),
                 "Failed to create service with port: {}",
@@ -396,7 +471,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let service = WebService::new(config);
+            let service = WebService::new(config, Arc::new(TestProvider));
             assert!(
                 service.is_ok(),
                 "Failed to create service with budget: {}",
@@ -423,7 +498,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let service = WebService::new(config);
+            let service = WebService::new(config, Arc::new(TestProvider));
             assert!(
                 service.is_ok(),
                 "Failed to create service with max_file_size: {}",

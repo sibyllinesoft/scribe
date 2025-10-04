@@ -7,6 +7,7 @@
 use fxhash::FxHashSet;
 use memchr::memmem;
 use once_cell::sync::Lazy;
+use scribe_core::FileInfo;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -349,6 +350,12 @@ impl FileFilter {
                     Ok(bytes_read) => {
                         self.stats.bytes_read_for_detection += bytes_read as u64;
                         buffer.truncate(bytes_read);
+
+                        let extension = path.extension().and_then(|ext| ext.to_str());
+
+                        if FileInfo::detect_binary_from_bytes(&buffer, extension) {
+                            return true;
+                        }
 
                         self.detect_binary_content(&buffer)
                     }

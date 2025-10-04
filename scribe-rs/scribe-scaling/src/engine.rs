@@ -13,13 +13,14 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::adaptive::AdaptiveConfig;
-use crate::caching::CacheConfig;
+use crate::caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
 use crate::error::{ScalingError, ScalingResult};
 use crate::memory::MemoryConfig;
 use crate::metrics::{BenchmarkResult, ScalingMetrics};
 use crate::parallel::ParallelConfig;
 use crate::signatures::SignatureConfig;
 use crate::streaming::{FileMetadata, StreamingConfig};
+use scribe_core::{file, FileInfo, FileType};
 
 /// Complete scaling configuration combining all subsystems
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +160,7 @@ pub struct ProcessingResult {
 pub struct ScalingEngine {
     config: ScalingConfig,
     started_at: Option<Instant>,
+    cache: Option<ProcessingCache>,
 }
 
 impl ScalingEngine {
@@ -169,9 +171,16 @@ impl ScalingEngine {
             config
         );
 
+        let cache = if config.caching.memory_cache_size > 0 {
+            Some(ProcessingCache::new(config.caching.clone()))
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             started_at: None,
+            cache,
         })
     }
 
@@ -182,9 +191,16 @@ impl ScalingEngine {
 
     /// Create a scaling engine with the given configuration
     pub fn with_config(config: ScalingConfig) -> Self {
+        let cache = if config.caching.memory_cache_size > 0 {
+            Some(ProcessingCache::new(config.caching.clone()))
+        } else {
+            None
+        };
+
         Self {
             config,
             started_at: None,
+            cache,
         }
     }
 
@@ -206,9 +222,51 @@ impl ScalingEngine {
             ));
         }
 
+        let config_hash = compute_config_hash(&self.config);
+        let mut repo_hash_for_cache = None;
+
+        if let Some(cache) = self.cache.as_mut() {
+            match compute_repository_hash(path) {
+                Ok(repo_hash) => {
+                    if let Some(mut cached) = cache.get(repo_hash, &config_hash) {
+                        if std::env::var("SCRIBE_DEBUG").is_ok() {
+                            eprintln!("✅ Using cached scaling result for {}", path.display());
+                        }
+
+                        cached.processing_time = Duration::from_millis(0);
+                        cached.cache_hits = cached.total_files as u64;
+                        cached.cache_misses = 0;
+                        cached.metrics.cache_hits = cached.cache_hits;
+                        cached.metrics.cache_misses = cached.cache_misses;
+
+                        return Ok(cached);
+                    }
+
+                    repo_hash_for_cache = Some(repo_hash);
+                }
+                Err(err) => {
+                    if std::env::var("SCRIBE_DEBUG").is_ok() {
+                        eprintln!("⚠️  Failed to compute repository hash: {}", err);
+                    }
+                }
+            }
+        }
+
         // Check if intelligent selection is enabled
         if self.config.enable_intelligent_selection && self.config.token_budget.is_some() {
-            return self.process_with_intelligent_selection(path).await;
+            let mut result = self.process_with_intelligent_selection(path).await?;
+
+            result.cache_hits = 0;
+            result.cache_misses = result.total_files as u64;
+            result.metrics.cache_hits = result.cache_hits;
+            result.metrics.cache_misses = result.cache_misses;
+
+            if let (Some(repo_hash), Some(cache)) = (repo_hash_for_cache, self.cache.as_mut()) {
+                cache.insert(repo_hash, &config_hash, result.clone());
+                cache.flush();
+            }
+
+            return Ok(result);
         }
 
         // Use optimized streaming file discovery
@@ -247,23 +305,30 @@ impl ScalingEngine {
 
         info!("Processed {} files in {:?}", files.len(), processing_time);
 
-        Ok(ProcessingResult {
+        let mut result = ProcessingResult {
             total_files: files.len(),
             processing_time,
             memory_peak: estimate_memory_usage(files.len()),
-            cache_hits: 0,                    // Placeholder
-            cache_misses: files.len() as u64, // All cache misses for now
+            cache_hits: 0,
+            cache_misses: files.len() as u64,
             metrics: ScalingMetrics {
                 files_processed: files.len() as u64,
                 total_processing_time: processing_time,
                 memory_peak: estimate_memory_usage(files.len()),
                 cache_hits: 0,
                 cache_misses: files.len() as u64,
-                parallel_efficiency: 1.0, // No parallelism yet
+                parallel_efficiency: 1.0,
                 streaming_overhead: Duration::from_millis(0),
             },
             files,
-        })
+        };
+
+        if let (Some(repo_hash), Some(cache)) = (repo_hash_for_cache, self.cache.as_mut()) {
+            cache.insert(repo_hash, &config_hash, result.clone());
+            cache.flush();
+        }
+
+        Ok(result)
     }
 
     /// Run performance benchmarks
@@ -332,35 +397,56 @@ impl ScalingEngine {
 
 /// Simple language detection based on file extension
 fn detect_language(path: &Path) -> String {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("rs") => "Rust".to_string(),
-        Some("py") => "Python".to_string(),
-        Some("js") => "JavaScript".to_string(),
-        Some("ts") => "TypeScript".to_string(),
-        Some("go") => "Go".to_string(),
-        Some("java") => "Java".to_string(),
-        Some("cpp" | "cc" | "cxx") => "C++".to_string(),
-        Some("c") => "C".to_string(),
-        Some("h") => "Header".to_string(),
-        Some("md") => "Markdown".to_string(),
-        Some("json") => "JSON".to_string(),
-        Some("yaml" | "yml") => "YAML".to_string(),
-        Some("toml") => "TOML".to_string(),
-        _ => "Unknown".to_string(),
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase());
+
+    if matches!(extension.as_deref(), Some("h" | "hpp" | "hxx")) {
+        return "Header".to_string();
     }
+
+    if path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("dockerfile"))
+        .unwrap_or(false)
+    {
+        return "Dockerfile".to_string();
+    }
+
+    let language = file::detect_language_from_path(path);
+    file::language_display_name(&language).to_string()
 }
 
 /// Simple file type classification
 fn classify_file_type(path: &Path) -> String {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("rs" | "py" | "js" | "ts" | "go" | "java" | "cpp" | "cc" | "cxx" | "c") => {
-            "Source".to_string()
-        }
-        Some("h" | "hpp" | "hxx") => "Header".to_string(),
-        Some("md" | "txt" | "rst") => "Documentation".to_string(),
-        Some("json" | "yaml" | "yml" | "toml" | "ini" | "cfg") => "Configuration".to_string(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "svg") => "Image".to_string(),
-        _ => "Other".to_string(),
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    let language = file::detect_language_from_path(path);
+    let file_type =
+        FileInfo::classify_file_type(path.to_string_lossy().as_ref(), &language, &extension);
+
+    match file_type {
+        FileType::Test { .. } => "Test".to_string(),
+        FileType::Documentation { .. } => "Documentation".to_string(),
+        FileType::Configuration { .. } => "Configuration".to_string(),
+        FileType::Binary => "Binary".to_string(),
+        FileType::Generated => "Generated".to_string(),
+        FileType::Source { .. } => match extension.as_str() {
+            "h" | "hpp" | "hxx" => "Header".to_string(),
+            _ => "Source".to_string(),
+        },
+        FileType::Unknown => match extension.as_str() {
+            "md" | "txt" | "rst" | "adoc" => "Documentation".to_string(),
+            "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" => "Configuration".to_string(),
+            "png" | "jpg" | "jpeg" | "gif" | "svg" => "Image".to_string(),
+            _ => "Other".to_string(),
+        },
     }
 }
 

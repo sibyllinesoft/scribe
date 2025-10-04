@@ -120,13 +120,8 @@
 
 // Re-export core functionality (always available when scribe is used)
 
-pub mod configuration;
 pub mod pipeline;
 pub mod report;
-pub use configuration::{
-    default_include_patterns, load_ignore_patterns, load_scribe_config, normalize_patterns,
-    parse_pattern_list, should_ignore_file, ScribeConfig,
-};
 
 pub use pipeline::{
     analyze_and_select, select_from_analysis, AnalysisOutcome, SelectionOptions, SelectionOutcome,
@@ -190,7 +185,7 @@ pub use scribe_scanner as scanner;
 
 #[cfg(feature = "scanner")]
 pub use scribe_scanner::{
-    ContentAnalyzer, FileScanner, LanguageDetector, ScanOptions, ScanResult, Scanner, ScannerStats,
+    FileScanner, LanguageDetector, ScanOptions, ScanResult, Scanner, ScannerStats,
 };
 
 // Pattern matching functionality
@@ -321,9 +316,8 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
     optimized_config.performance.use_mmap = true; // Memory mapping for large files
     optimized_config.performance.io_buffer_size = 512 * 1024; // 512KB buffers
 
-    // Enable caching and advanced features
+    // Enable caching and tuned scoring defaults
     optimized_config.analysis.enable_caching = true;
-    optimized_config.scoring.enable_advanced = true;
 
     // When available, leverage the scaling engine for large repositories
     #[cfg(feature = "scaling")]
@@ -371,6 +365,7 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
                                     return convert_scaling_result_to_analysis(
                                         processing_result,
                                         optimized_config,
+                                        path.as_ref(),
                                     )
                                     .await;
                                 }
@@ -416,38 +411,32 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
     path: P,
     config: &Config,
 ) -> Result<RepositoryAnalysis> {
-    use std::collections::HashMap;
-
+    let repo_path = path.as_ref();
     let start_time = std::time::Instant::now();
+
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         eprintln!("🔄 Using fallback scanner with optimized config");
     }
+
     let scanner = Scanner::new();
     let scan_options = ScanOptions::default()
         .with_git_integration(true)
-        .with_content_analysis(true)
         .with_parallel_processing(true);
 
-    let mut files = scanner.scan(path, scan_options).await?;
+    let mut files = scanner.scan(repo_path, scan_options).await?;
 
-    // Apply auto-exclude tests if enabled
     if config.features.auto_exclude_tests {
         let original_count = files.len();
-        files.retain(|file| !is_test_file(&file.path));
-        let filtered_count = files.len();
-
-        if original_count != filtered_count {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!(
-                    "Auto-excluded {} test files, {} files remaining",
-                    original_count - filtered_count,
-                    filtered_count
-                );
-            }
+        files.retain(|file| !scribe_core::file::is_test_path(&file.path));
+        if std::env::var("SCRIBE_DEBUG").is_ok() && files.len() != original_count {
+            eprintln!(
+                "Auto-excluded {} test files, {} files remaining",
+                original_count - files.len(),
+                files.len()
+            );
         }
     }
 
-    // Apply token budget if specified
     if let Some(token_budget) = config.analysis.token_budget {
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("🎯 Applying token budget: {} tokens", token_budget);
@@ -458,199 +447,80 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
         }
     }
 
-    // Real heuristic scoring instead of placeholder
-    let mut heuristic_system = HeuristicSystem::new()?;
-    let mut heuristic_scores = HashMap::new();
+    let analysis = build_repository_analysis(files, config, &["optimized_scanner"])?;
 
-    for file in &files {
-        let file_name = file.path.to_string_lossy().to_string();
-
-        // Real scoring based on file characteristics
-        let score = match &file.file_type {
-            FileType::Source { language: _ } => {
-                let content_score = 0.5; // Simplified since we don't have lines field
-
-                let size_score = (file.size as f64 / (5 * 1024) as f64).min(1.0) * 0.3;
-
-                let extension_score = match file.path.extension().and_then(|s| s.to_str()) {
-                    Some("rs") | Some("py") | Some("js") | Some("ts") => 0.2,
-                    _ => 0.1,
-                };
-
-                content_score + size_score + extension_score
-            }
-            FileType::Configuration { format: _ } => 0.6,
-            FileType::Documentation { format: _ } => 0.3,
-            FileType::Test { language: _ } => 0.2,
-            _ => 0.05,
-        };
-
-        heuristic_scores.insert(file_name, score);
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!(
+            "📊 Completed fallback analysis in {:?} ({} files)",
+            start_time.elapsed(),
+            analysis.files.len()
+        );
     }
 
-    // Real PageRank centrality calculation
-    #[cfg(feature = "graph")]
-    let centrality_scores = {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!(
-                "🧠 Calculating PageRank centrality for {} files",
-                files.len()
-            );
-        }
-
-        use scribe_graph::CentralityCalculator;
-
-        // Try to use real PageRank calculation if possible
-        match CentralityCalculator::new() {
-            Ok(calculator) => {
-                // Convert FileInfo to mock scan results for centrality calculation
-                let mock_scan_results: Vec<_> = files
-                    .iter()
-                    .map(|f| AnalyzerCentralityAdapter::from_file_info(f))
-                    .collect();
-
-                match calculator.calculate_centrality(&mock_scan_results) {
-                    Ok(centrality_results) => {
-                        if std::env::var("SCRIBE_DEBUG").is_ok() {
-                            eprintln!("✅ PageRank calculation successful");
-                        }
-                        let mut scores = HashMap::new();
-
-                        for file in &files {
-                            let file_path = file.path.to_string_lossy().to_string();
-                            let centrality_score = centrality_results
-                                .pagerank_scores
-                                .get(&file.relative_path)
-                                .copied()
-                                .unwrap_or_else(|| {
-                                    // Fallback heuristic for files not found in PageRank results
-                                    match &file.file_type {
-                                        FileType::Source { language: _ } => 0.15,
-                                        FileType::Configuration { format: _ } => 0.25,
-                                        _ => 0.05,
-                                    }
-                                });
-                            scores.insert(file_path, centrality_score);
-                        }
-
-                        Some(scores)
-                    }
-                    Err(e) => {
-                        if std::env::var("SCRIBE_DEBUG").is_ok() {
-                            eprintln!(
-                                "⚠️  PageRank calculation failed: {}, using heuristic fallback",
-                                e
-                            );
-                        }
-                        // Fallback to simple heuristic centrality
-                        let mut scores = HashMap::new();
-                        for file in &files {
-                            let file_name = file.path.to_string_lossy().to_string();
-                            let centrality = match &file.file_type {
-                                FileType::Source { language: _ } => 0.15,
-                                FileType::Configuration { format: _ } => 0.25,
-                                _ => 0.05,
-                            };
-                            scores.insert(file_name, centrality);
-                        }
-                        Some(scores)
-                    }
-                }
-            }
-            Err(e) => {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "⚠️  CentralityCalculator creation failed: {}, using heuristic fallback",
-                        e
-                    );
-                }
-                // Fallback to simple heuristic centrality
-                let mut scores = HashMap::new();
-                for file in &files {
-                    let file_name = file.path.to_string_lossy().to_string();
-                    let centrality = match &file.file_type {
-                        FileType::Source { language: _ } => 0.15,
-                        FileType::Configuration { format: _ } => 0.25,
-                        _ => 0.05,
-                    };
-                    scores.insert(file_name, centrality);
-                }
-                Some(scores)
-            }
-        }
-    };
-
-    #[cfg(not(feature = "graph"))]
-    let centrality_scores = None;
-
-    // 🔧 FIX: Update FileInfo.centrality_score fields with calculated values
-    #[cfg(feature = "graph")]
-    if let Some(ref centrality) = centrality_scores {
-        for file in &mut files {
-            let file_path = file.path.to_string_lossy().to_string();
-            if let Some(&centrality_score) = centrality.get(&file_path) {
-                file.centrality_score = Some(centrality_score);
-            }
-        }
-    }
-
-    // Combine scores
-    let mut final_scores = heuristic_scores.clone();
-
-    #[cfg(feature = "graph")]
-    if let Some(ref centrality) = centrality_scores {
-        for (path, heuristic_score) in &heuristic_scores {
-            if let Some(centrality_score) = centrality.get(path as &str) {
-                // Weighted combination: 85% heuristic, 15% centrality
-                let combined = heuristic_score * 0.85 + centrality_score * 0.15;
-                final_scores.insert(path.clone(), combined);
-            }
-        }
-    }
-
-    let processing_time = start_time.elapsed();
-
-    let metadata = AnalysisMetadata {
-        timestamp: std::time::SystemTime::now(),
-        scribe_version: VERSION.to_string(),
-        config_hash: Some(config.compute_hash()),
-        features_enabled: vec![
-            "heuristic_scoring".to_string(),
-            #[cfg(feature = "graph")]
-            "centrality_analysis".to_string(),
-        ],
-    };
-
-    Ok(RepositoryAnalysis {
-        files,
-        heuristic_scores,
-        #[cfg(feature = "graph")]
-        centrality_scores,
-        final_scores,
-        metadata,
-    })
+    Ok(analysis)
 }
 
-#[cfg(feature = "graph")]
-struct AnalyzerCentralityAdapter {
+#[derive(Debug, Clone)]
+struct AnalyzerContext {
+    imports: Vec<String>,
+    doc_analysis: Option<DocumentAnalysis>,
+    has_examples: bool,
+    is_entrypoint: bool,
+    priority_boost: f64,
+    content: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AnalyzerFile {
     path: String,
     relative_path: String,
-    centrality_score: Option<f64>,
+    depth: usize,
+    is_docs: bool,
+    is_readme: bool,
+    is_test: bool,
+    is_entrypoint: bool,
+    has_examples: bool,
+    priority_boost: f64,
+    churn_score: f64,
+    centrality_score: f64,
+    imports: Vec<String>,
+    doc_analysis: Option<DocumentAnalysis>,
 }
 
-#[cfg(feature = "graph")]
-impl AnalyzerCentralityAdapter {
-    fn from_file_info(file: &FileInfo) -> Self {
+impl AnalyzerFile {
+    fn from_file_info(file: &FileInfo, context: &AnalyzerContext) -> Self {
+        let path_string = file.path.to_string_lossy().to_string();
+        let relative = if file.relative_path.is_empty() {
+            path_string.clone()
+        } else {
+            file.relative_path.clone()
+        };
+        let normalized_path = relative.replace('\\', "/");
+        let depth = normalized_path.matches('/').count();
+        let is_docs = matches!(file.file_type, FileType::Documentation { .. });
+        let is_readme = normalized_path.to_lowercase().contains("readme");
+        let is_test = matches!(file.file_type, FileType::Test { .. })
+            || scribe_core::file::is_test_path(&file.path);
+
         Self {
-            path: file.path.to_string_lossy().to_string(),
-            relative_path: file.relative_path.clone(),
-            centrality_score: file.centrality_score,
+            path: path_string,
+            relative_path: normalized_path,
+            depth,
+            is_docs,
+            is_readme,
+            is_test,
+            is_entrypoint: context.is_entrypoint,
+            has_examples: context.has_examples,
+            priority_boost: context.priority_boost.min(1.0),
+            churn_score: compute_churn_score(file),
+            centrality_score: 0.0,
+            imports: context.imports.clone(),
+            doc_analysis: context.doc_analysis.clone(),
         }
     }
 }
 
-#[cfg(feature = "graph")]
-impl scribe_analysis::heuristics::ScanResult for AnalyzerCentralityAdapter {
+impl scribe_analysis::heuristics::ScanResult for AnalyzerFile {
     fn path(&self) -> &str {
         &self.path
     }
@@ -660,166 +530,122 @@ impl scribe_analysis::heuristics::ScanResult for AnalyzerCentralityAdapter {
     }
 
     fn depth(&self) -> usize {
-        self.relative_path.matches('/').count()
+        self.depth
     }
 
     fn is_docs(&self) -> bool {
-        false
+        self.is_docs
     }
 
     fn is_readme(&self) -> bool {
-        self.relative_path.to_lowercase().contains("readme")
-    }
-
-    fn is_entrypoint(&self) -> bool {
-        self.relative_path.contains("main") || self.relative_path.contains("index")
-    }
-
-    fn has_examples(&self) -> bool {
-        self.relative_path.contains("example")
+        self.is_readme
     }
 
     fn is_test(&self) -> bool {
-        self.relative_path.contains("test")
+        self.is_test
+    }
+
+    fn is_entrypoint(&self) -> bool {
+        self.is_entrypoint
+    }
+
+    fn has_examples(&self) -> bool {
+        self.has_examples
     }
 
     fn priority_boost(&self) -> f64 {
-        0.0
+        self.priority_boost
     }
 
     fn churn_score(&self) -> f64 {
-        0.0
+        self.churn_score
     }
 
     fn centrality_in(&self) -> f64 {
-        self.centrality_score.unwrap_or(0.0)
+        self.centrality_score
     }
 
     fn imports(&self) -> Option<&[String]> {
-        None
+        if self.imports.is_empty() {
+            None
+        } else {
+            Some(&self.imports)
+        }
     }
 
-    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> {
-        None
-    }
-}
-
-/// Check if a file is a test file based on path patterns
-fn is_test_file(path: &std::path::Path) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-    let file_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-
-    // Exclude output files that might contain test-related content
-    if file_name == "output.md" || file_name.starts_with("output.") {
-        return true;
-    }
-
-    // Test directory patterns
-    if path_str.contains("/test/")
-        || path_str.contains("/tests/")
-        || path_str.contains("\\test\\")
-        || path_str.contains("\\tests\\")
-        || path_str.contains("/__tests__/")
-        || path_str.contains("\\__tests__\\")
-    {
-        return true;
-    }
-
-    // Test file name patterns
-    if file_name.starts_with("test_")
-        || file_name.ends_with("_test.rs")
-        || file_name.ends_with("_test.py")
-        || file_name.ends_with("_test.js")
-        || file_name.ends_with("_test.ts")
-        || file_name.ends_with(".test.js")
-        || file_name.ends_with(".test.ts")
-        || file_name.ends_with(".test.jsx")
-        || file_name.ends_with(".test.tsx")
-        || file_name.ends_with(".spec.js")
-        || file_name.ends_with(".spec.ts")
-        || file_name.ends_with(".spec.jsx")
-        || file_name.ends_with(".spec.tsx")
-        || file_name.ends_with("_spec.py")
-        || file_name.ends_with("_spec.rb")
-    {
-        return true;
-    }
-
-    // Language-specific test patterns
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("rs") => {
-            // Rust: mod tests, #[cfg(test)]
-            file_name.contains("test")
-                && (file_name.starts_with("test_")
-                    || file_name.ends_with("_test.rs")
-                    || path_str.contains("/tests/"))
-        }
-        Some("py") => {
-            // Python: test_*.py, *_test.py, pytest patterns
-            file_name.starts_with("test_")
-                || file_name.ends_with("_test.py")
-                || file_name.contains("test_")
-        }
-        Some("go") => {
-            // Go: *_test.go
-            file_name.ends_with("_test.go")
-        }
-        Some("java") | Some("kt") => {
-            // Java/Kotlin: *Test.java, *Tests.java
-            file_name.ends_with("test.java")
-                || file_name.ends_with("tests.java")
-                || file_name.ends_with("test.kt")
-                || file_name.ends_with("tests.kt")
-        }
-        Some("php") => {
-            // PHP: *Test.php
-            file_name.ends_with("test.php")
-        }
-        Some("rb") => {
-            // Ruby: *_spec.rb, *_test.rb
-            file_name.ends_with("_spec.rb") || file_name.ends_with("_test.rb")
-        }
-        _ => false,
+    fn doc_analysis(&self) -> Option<&DocumentAnalysis> {
+        self.doc_analysis.as_ref()
     }
 }
 
-#[cfg(feature = "scaling")]
-async fn convert_scaling_result_to_analysis(
-    processing_result: scribe_scaling::ProcessingResult,
-    config: Config,
+fn build_repository_analysis(
+    mut files: Vec<FileInfo>,
+    config: &Config,
+    additional_features: &[&str],
 ) -> Result<RepositoryAnalysis> {
-    use scribe_core::FileInfo;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!("🔄 Converting scaling result to repository analysis format");
-    }
+    let contexts: Vec<AnalyzerContext> = files
+        .iter()
+        .map(|file| derive_file_context(file, config))
+        .collect();
 
-    // Convert the ProcessingResult to our analysis format
-    // For now, create dummy FileInfo entries based on the result
-    // TODO: The scaling engine should return actual file metadata
-    let files: Vec<FileInfo> = vec![]; // This needs to be filled from the actual result
-
-    // Create heuristic scores based on scaling results
-    let heuristic_scores = HashMap::new();
+    let mut analyzer_files: Vec<AnalyzerFile> = files
+        .iter()
+        .zip(contexts.iter())
+        .map(|(file, context)| AnalyzerFile::from_file_info(file, context))
+        .collect();
 
     #[cfg(feature = "graph")]
-    let centrality_scores = None;
+    let mut centrality_scores = compute_centrality_scores(&analyzer_files);
 
-    let final_scores = HashMap::new();
+    #[cfg(not(feature = "graph"))]
+    let mut centrality_scores: Option<HashMap<String, f64>> = None;
+
+    #[cfg(feature = "graph")]
+    if let Some(ref centrality) = centrality_scores {
+        for analyzer in analyzer_files.iter_mut() {
+            if let Some(score) = centrality.get(&analyzer.path) {
+                analyzer.centrality_score = *score;
+            }
+        }
+
+        for file in files.iter_mut() {
+            let key = file.path.to_string_lossy().to_string();
+            if let Some(score) = centrality.get(&key) {
+                file.centrality_score = Some(*score);
+            }
+        }
+    }
+
+    let mut heuristic_scores = HashMap::with_capacity(analyzer_files.len());
+    let mut scoring_system = HeuristicSystem::with_v2_features()?;
+    let scored_files = scoring_system.score_all_files(&analyzer_files)?;
+    for (idx, components) in scored_files {
+        let key = analyzer_files[idx].path.clone();
+        heuristic_scores.insert(key, components.final_score);
+    }
+
+    let final_scores = heuristic_scores.clone();
+
+    let mut features: HashSet<String> = HashSet::new();
+    features.insert("heuristic_scoring".to_string());
+    #[cfg(feature = "graph")]
+    if centrality_scores.is_some() {
+        features.insert("centrality_analysis".to_string());
+    }
+    for feature in additional_features {
+        features.insert((*feature).to_string());
+    }
+
+    let mut features_enabled: Vec<String> = features.into_iter().collect();
+    features_enabled.sort();
 
     let metadata = AnalysisMetadata {
         timestamp: std::time::SystemTime::now(),
         scribe_version: VERSION.to_string(),
         config_hash: Some(config.compute_hash()),
-        features_enabled: vec![
-            "scaling_engine".to_string(),
-            "progressive_loading".to_string(),
-            "optimized_processing".to_string(),
-        ],
+        features_enabled,
     };
 
     Ok(RepositoryAnalysis {
@@ -830,6 +656,384 @@ async fn convert_scaling_result_to_analysis(
         final_scores,
         metadata,
     })
+}
+
+fn derive_file_context(file: &FileInfo, config: &Config) -> AnalyzerContext {
+    let mut imports = Vec::new();
+    let mut doc_analysis = None;
+    let mut has_examples = file.relative_path.to_lowercase().contains("example");
+    let mut is_entrypoint = scribe_core::file::is_entrypoint_path(&file.path, &file.language);
+    let mut priority_boost = compute_priority_boost(file);
+    let mut cached_content: Option<String> = None;
+
+    if should_load_content(file, config) {
+        if let Ok(content) = std::fs::read_to_string(&file.path) {
+            if matches!(file.file_type, FileType::Documentation { .. }) {
+                doc_analysis = Some(analyze_document_content(&content));
+            }
+
+            if !has_examples {
+                has_examples = content.contains("Example") || content.contains("example");
+            }
+
+            if matches!(
+                file.language,
+                Language::Rust
+                    | Language::Python
+                    | Language::JavaScript
+                    | Language::TypeScript
+                    | Language::Go
+            ) {
+                imports = extract_imports(&content, &file.language);
+            }
+
+            if !is_entrypoint {
+                is_entrypoint = detect_entrypoint_from_content(&content, &file.language);
+            }
+
+            cached_content = Some(content);
+        }
+    }
+
+    AnalyzerContext {
+        imports,
+        doc_analysis,
+        has_examples,
+        is_entrypoint,
+        priority_boost,
+        content: cached_content,
+    }
+}
+
+fn should_load_content(file: &FileInfo, config: &Config) -> bool {
+    if !config.analysis.analyze_content || file.is_binary {
+        return false;
+    }
+
+    let size_limit = std::cmp::max(config.performance.io_buffer_size as u64, 256 * 1024);
+    file.size <= size_limit
+}
+
+fn compute_priority_boost(file: &FileInfo) -> f64 {
+    let path_lower = file.relative_path.to_lowercase();
+    let mut boost: f64 = 0.0;
+
+    if path_lower.ends_with("readme.md") || path_lower.ends_with("readme") {
+        boost += 0.4;
+    }
+    if path_lower.ends_with("cargo.toml")
+        || path_lower.ends_with("package.json")
+        || path_lower.ends_with("requirements.txt")
+        || path_lower.ends_with("pyproject.toml")
+    {
+        boost += 0.25;
+    }
+    if path_lower.ends_with("main.rs")
+        || path_lower.ends_with("main.py")
+        || path_lower.ends_with("main.go")
+        || path_lower.ends_with("index.js")
+        || path_lower.ends_with("index.ts")
+    {
+        boost += 0.3;
+    }
+    if path_lower.ends_with("lib.rs") {
+        boost += 0.2;
+    }
+    if path_lower.ends_with("build.rs") || path_lower.ends_with("setup.py") {
+        boost += 0.15;
+    }
+
+    boost.min(1.0)
+}
+
+fn detect_entrypoint_from_content(content: &str, language: &Language) -> bool {
+    match language {
+        Language::Rust => content.contains("fn main("),
+        Language::Python => content.contains("__name__ == \"__main__\""),
+        Language::JavaScript | Language::TypeScript => {
+            content.contains("module.exports") || content.contains("export default")
+        }
+        Language::Go => content.contains("func main("),
+        Language::Java => content.contains("public static void main("),
+        _ => false,
+    }
+}
+
+fn extract_imports(content: &str, language: &Language) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut imports = HashSet::new();
+
+    match language {
+        Language::Rust => {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("use ") {
+                    let statement = trimmed
+                        .trim_start_matches("use ")
+                        .trim_end_matches(';')
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .trim_end_matches("::");
+                    if !statement.is_empty() {
+                        imports.insert(statement.to_string());
+                    }
+                } else if trimmed.starts_with("mod ") {
+                    let module = trimmed
+                        .trim_start_matches("mod ")
+                        .trim_end_matches(';')
+                        .trim();
+                    if !module.is_empty() {
+                        imports.insert(module.to_string());
+                    }
+                }
+            }
+        }
+        Language::Python => {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("import ") {
+                    for module in trimmed.trim_start_matches("import ").split(',') {
+                        let module = module.trim().split_whitespace().next().unwrap_or("");
+                        if !module.is_empty() {
+                            imports.insert(module.to_string());
+                        }
+                    }
+                } else if trimmed.starts_with("from ") && trimmed.contains(" import ") {
+                    let module = trimmed
+                        .trim_start_matches("from ")
+                        .split(" import ")
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if !module.is_empty() {
+                        imports.insert(module.to_string());
+                    }
+                }
+            }
+        }
+        Language::JavaScript | Language::TypeScript => {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("import ") {
+                    if let Some(start) = trimmed.find("\"") {
+                        if let Some(end) = trimmed[start + 1..].find('"') {
+                            imports.insert(trimmed[start + 1..start + 1 + end].to_string());
+                        }
+                    } else if let Some(start) = trimmed.find('\'') {
+                        if let Some(end) = trimmed[start + 1..].find('\'') {
+                            imports.insert(trimmed[start + 1..start + 1 + end].to_string());
+                        }
+                    }
+                } else if trimmed.contains("require(") {
+                    if let Some(start) = trimmed.find("require(") {
+                        let start = start + "require(".len();
+                        let slice = &trimmed[start..];
+                        if let Some(end_idx) = slice.find(')') {
+                            let inner = &slice[..end_idx];
+                            let inner = inner.trim_matches(&['\'', '"'][..]);
+                            if !inner.is_empty() {
+                                imports.insert(inner.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Language::Go => {
+            let mut in_block = false;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed == "import (" {
+                    in_block = true;
+                    continue;
+                }
+                if in_block {
+                    if trimmed == ")" {
+                        in_block = false;
+                        continue;
+                    }
+                    let import_path = trimmed.trim_matches(&['"', '`'][..]);
+                    if !import_path.is_empty() {
+                        imports.insert(import_path.to_string());
+                    }
+                } else if trimmed.starts_with("import ") {
+                    let import_path = trimmed
+                        .trim_start_matches("import ")
+                        .trim_matches(&['"', '`'][..]);
+                    if !import_path.is_empty() {
+                        imports.insert(import_path.to_string());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut ordered: Vec<String> = imports.into_iter().collect();
+    ordered.sort();
+    ordered.truncate(64);
+    ordered
+}
+
+fn analyze_document_content(content: &str) -> DocumentAnalysis {
+    let mut analysis = DocumentAnalysis::new();
+    let mut in_code_block = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("```") {
+            if !in_code_block {
+                analysis.code_block_count += 1;
+            }
+            in_code_block = !in_code_block;
+            continue;
+        }
+
+        if trimmed.starts_with('#') {
+            analysis.heading_count += 1;
+            if trimmed.to_lowercase().contains("table of contents") {
+                analysis.toc_indicators += 1;
+            }
+        }
+
+        if trimmed.contains("](") {
+            analysis.link_count += trimmed.matches("](").count();
+        }
+    }
+
+    analysis.is_well_structured = analysis.heading_count > 0 && analysis.link_count > 0;
+    analysis
+}
+
+fn compute_churn_score(file: &FileInfo) -> f64 {
+    use scribe_core::GitFileStatus;
+
+    match &file.git_status {
+        Some(status) => match status.working_tree {
+            GitFileStatus::Modified => 0.6,
+            GitFileStatus::Added => 0.8,
+            GitFileStatus::Deleted => 0.4,
+            GitFileStatus::Renamed => 0.5,
+            GitFileStatus::Copied => 0.45,
+            GitFileStatus::Unmerged => 0.9,
+            GitFileStatus::Untracked => 0.3,
+            _ => 0.1,
+        },
+        None => 0.0,
+    }
+}
+
+fn language_from_identifier(language: &str, path: &std::path::Path) -> Language {
+    if !language.is_empty() {
+        match language.to_lowercase().as_str() {
+            "rust" => return Language::Rust,
+            "python" => return Language::Python,
+            "javascript" => return Language::JavaScript,
+            "typescript" => return Language::TypeScript,
+            "go" => return Language::Go,
+            "java" => return Language::Java,
+            "c" => return Language::C,
+            "cpp" | "c++" => return Language::Cpp,
+            "kotlin" => return Language::Kotlin,
+            "swift" => return Language::Swift,
+            "php" => return Language::PHP,
+            "ruby" => return Language::Ruby,
+            _ => {}
+        }
+    }
+
+    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    Language::from_extension(extension)
+}
+
+#[cfg(feature = "graph")]
+fn compute_centrality_scores(
+    analyzer_files: &[AnalyzerFile],
+) -> Option<std::collections::HashMap<String, f64>> {
+    use scribe_graph::CentralityCalculator;
+
+    if analyzer_files.is_empty() {
+        return Some(std::collections::HashMap::new());
+    }
+
+    let calculator = CentralityCalculator::new().ok()?;
+    let results = calculator.calculate_centrality(analyzer_files).ok()?;
+    Some(results.pagerank_scores.into_iter().collect())
+}
+
+#[cfg(feature = "scaling")]
+async fn convert_scaling_result_to_analysis(
+    processing_result: scribe_scaling::ProcessingResult,
+    config: Config,
+    repo_root: &std::path::Path,
+) -> Result<RepositoryAnalysis> {
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("🔄 Converting scaling result to repository analysis format");
+    }
+
+    let mut files: Vec<FileInfo> = Vec::with_capacity(processing_result.files.len());
+
+    for file_meta in processing_result.files {
+        let mut absolute_path = file_meta.path.clone();
+        if !absolute_path.is_absolute() {
+            absolute_path = repo_root.join(absolute_path);
+        }
+
+        let relative_path = absolute_path
+            .strip_prefix(repo_root)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| absolute_path.to_string_lossy().replace('\\', "/"));
+
+        let extension = absolute_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+
+        let language = language_from_identifier(&file_meta.language, &absolute_path);
+        let file_type = FileInfo::classify_file_type(&relative_path, &language, extension);
+
+        files.push(FileInfo {
+            path: absolute_path,
+            relative_path,
+            size: file_meta.size,
+            modified: Some(file_meta.modified),
+            decision: scribe_core::RenderDecision::include("scaling_engine"),
+            file_type,
+            language,
+            content: None,
+            token_estimate: None,
+            line_count: None,
+            char_count: None,
+            is_binary: false,
+            git_status: None,
+            centrality_score: None,
+        });
+    }
+
+    let analysis = build_repository_analysis(
+        files,
+        &config,
+        &[
+            "scaling_engine",
+            "progressive_loading",
+            "optimized_processing",
+        ],
+    )?;
+
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!(
+            "📈 Scaling analysis processed {} files in {:?} (cache hits {}, misses {})",
+            analysis.files.len(),
+            processing_result.processing_time,
+            processing_result.cache_hits,
+            processing_result.cache_misses
+        );
+    }
+
+    Ok(analysis)
 }
 
 /// Convenience function for fast file scanning without deep analysis

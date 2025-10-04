@@ -6,6 +6,7 @@
 //! - Automatic browser opening
 //! - Interactive file selection interface
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -63,6 +64,7 @@ pub struct AppState {
     pub bundle_state: Arc<RwLock<BundleState>>,
     pub last_ping: Arc<tokio::sync::RwLock<tokio::time::Instant>>,
     pub shutdown_sender: Arc<tokio::sync::RwLock<Option<tokio::sync::oneshot::Sender<()>>>>,
+    pub analysis_provider: Arc<dyn AnalysisProvider>,
 }
 
 /// Current bundle state
@@ -85,6 +87,11 @@ impl Default for BundleState {
             last_updated: chrono::Utc::now(),
         }
     }
+}
+
+#[async_trait]
+pub trait AnalysisProvider: Send + Sync {
+    async fn analyze(&self, config: &WebServiceConfig) -> Result<AnalysisOutput>;
 }
 
 /// API response wrapper
@@ -146,8 +153,34 @@ pub type Result<T> = std::result::Result<T, WebServiceError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use tempfile::TempDir;
+    use tokio::sync::RwLock;
+
+    struct DummyProvider;
+
+    #[async_trait]
+    impl AnalysisProvider for DummyProvider {
+        async fn analyze(&self, config: &WebServiceConfig) -> Result<AnalysisOutput> {
+            Ok(AnalysisOutput {
+                selected_files: Vec::new(),
+                selected_file_infos: Vec::new(),
+                metrics: WebSelectionMetrics {
+                    total_files_discovered: 0,
+                    files_selected: 0,
+                    total_tokens_estimated: 0,
+                    selection_time_ms: 0,
+                    algorithm_used: "test".to_string(),
+                    coverage_score: 0.0,
+                    relevance_score: 0.0,
+                },
+                repository_files: Vec::new(),
+                token_budget: config.token_budget,
+            })
+        }
+    }
 
     #[test]
     fn test_webservice_config_default() {
@@ -249,6 +282,7 @@ mod tests {
             bundle_state: Arc::new(RwLock::new(BundleState::default())),
             last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
             shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
+            analysis_provider: Arc::new(DummyProvider),
         };
 
         let cfg_guard = state.config.blocking_read();

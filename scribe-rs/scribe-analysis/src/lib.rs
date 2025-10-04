@@ -5,7 +5,6 @@
 //! heuristic scoring, template detection, and import graph analysis.
 
 pub mod ast_import_parser;
-pub mod complexity;
 pub mod heuristics;
 pub mod language_support;
 
@@ -14,12 +13,6 @@ pub use heuristics::{
     get_template_score_boost, import_matches_file, is_template_file, DocumentAnalysis,
     HeuristicScorer, HeuristicSystem, HeuristicWeights, ImportGraph, ImportGraphBuilder,
     ScoreComponents, ScoringFeatures, TemplateDetector, TemplateEngine,
-};
-
-// Re-export complexity analysis types
-pub use complexity::{
-    ComplexityAnalyzer, ComplexityConfig, ComplexityMetrics as ComplexityAnalysisMetrics,
-    ComplexityThresholds, LanguageSpecificMetrics,
 };
 
 // Re-export language support types

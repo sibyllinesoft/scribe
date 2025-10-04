@@ -21,9 +21,6 @@ pub struct ScoreComponents {
     pub priority_boost: f64,
     pub template_boost: f64,
 
-    /// Raw component scores before normalization
-    pub raw_scores: RawScoreComponents,
-
     /// Applied weights
     pub weights: HeuristicWeights,
 }
@@ -46,21 +43,6 @@ impl ScoreComponents {
         map.insert("template_boost".to_string(), self.template_boost);
         map
     }
-}
-
-/// Raw score components before normalization
-#[derive(Debug, Clone)]
-pub struct RawScoreComponents {
-    pub doc_raw: f64,
-    pub readme_raw: f64,
-    pub import_degree_in: usize,
-    pub import_degree_out: usize,
-    pub path_depth: usize,
-    pub test_links_found: usize,
-    pub churn_commits: usize,
-    pub centrality_raw: f64,
-    pub is_entrypoint: bool,
-    pub examples_count: usize,
 }
 
 /// Configurable weights for the scoring formula

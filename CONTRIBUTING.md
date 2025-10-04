@@ -7,18 +7,18 @@ Thanks for your interest in improving Scribe! We welcome fixes, features, and do
 1. **Fork and clone** the repository.
 2. **Install toolchains**:
    - Rust (stable) with `rustup`.
-   - Python 3.9+ if you plan to work on the helpers under `scripts/support/` or the wrapper scripts.
+   - Python 3.9+ if you plan to work on the helpers under `tools/scripts/support/` or the wrapper scripts.
 3. **Install dependencies**:
    ```bash
    cargo fetch
-   pip install -e .[dev]
+   pip install -e tools
    ```
 4. **Run the checks** to ensure the workspace builds on your machine:
    ```bash
    cargo fmt --all
    cargo clippy --workspace --all-targets
    cargo test --workspace
-   scripts/ci_full_test.sh
+   tools/scripts/ci_full_test.sh
    ```
 
 ## Contribution Workflow
@@ -32,7 +32,7 @@ Thanks for your interest in improving Scribe! We welcome fixes, features, and do
 ## Coding Standards
 
 - **Rust**: Follow `rustfmt` and address warnings from `clippy`. Prefer clear, well-commented algorithms over magical constants or unexplained heuristics.
-- **Python**: Use type hints where practical and keep modules small. `ruff` and `mypy` should pass when run against `scripts/support/`.
+- **Python**: Use type hints where practical and keep modules small. `ruff` and `mypy` should pass when run against `tools/scripts/support/`.
 - **Tests**: New functionality should have corresponding tests. For larger behavioural changes, update existing fixtures or add integration coverage.
 
 ## Design Principles

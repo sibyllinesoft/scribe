@@ -539,7 +539,7 @@ impl OptimizedScanner {
             .unwrap_or("")
             .to_string();
 
-        if FileInfo::detect_binary_by_extension(&extension) {
+        if FileInfo::detect_binary_with_hint(&path, extension.as_str()) {
             return Err(format!("Skipping binary file {}", path.display()));
         }
 
@@ -547,7 +547,7 @@ impl OptimizedScanner {
             .await
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-        if raw_bytes.iter().take(1024).any(|b| *b == 0) {
+        if FileInfo::detect_binary_from_bytes(&raw_bytes, Some(extension.as_str())) {
             return Err(format!("Skipping binary file {}", path.display()));
         }
 

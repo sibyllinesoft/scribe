@@ -3,7 +3,7 @@
 All notable changes to Scribe will be documented in this file.
 
 ## Unreleased
-- Consolidated Python utilities under `scripts/support/` and removed the legacy research harness.
+- Consolidated Python utilities under `tools/scripts/support/` and removed the legacy research harness.
 - Deleted fake benchmarking scripts, research artefacts, and stale generated data.
 - Updated documentation to reflect the Rust-first implementation and the simplified bundle editor workflow.
 - Removed support for `repomix.config.json`; Scribe now reads `scribe.config.json` exclusively.

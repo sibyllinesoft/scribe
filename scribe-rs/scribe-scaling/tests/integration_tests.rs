@@ -249,6 +249,7 @@ async fn test_caching_effectiveness() {
             memory_cache_size: 100,
             compression_enabled: true,
             cache_dir: Some(temp_dir.path().join("cache")),
+            cache_ttl: 3600,
         },
         ..ScalingConfig::default()
     };

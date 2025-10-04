@@ -67,7 +67,7 @@ install-dev: build ## Setup Python environment with local wheel
 	fi
 	@. $(VENV_DIR)/bin/activate && cd $(SCRIBE_RS_DIR) && $(MATURIN) develop --release
 	@echo "📦 Installing Python research framework..."
-	@. $(VENV_DIR)/bin/activate && $(PIP) install -e .
+	@. $(VENV_DIR)/bin/activate && $(PIP) install -e tools
 	@echo "✅ Local wheel installed successfully!"
 
 # Testing

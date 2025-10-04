@@ -17,6 +17,7 @@ use tokio::fs;
 use tracing::{debug, info, warn};
 
 use crate::error::{ScalingError, ScalingResult};
+use scribe_core::{file, FileInfo, FileType};
 
 /// File metadata for streaming operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -321,52 +322,62 @@ impl StreamingSelector {
 
 /// Fast language detection based on file extension
 fn detect_language(path: &Path) -> String {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("rs") => "Rust".to_string(),
-        Some("py") => "Python".to_string(),
-        Some("js") => "JavaScript".to_string(),
-        Some("ts") => "TypeScript".to_string(),
-        Some("go") => "Go".to_string(),
-        Some("java") => "Java".to_string(),
-        Some("cpp" | "cc" | "cxx") => "C++".to_string(),
-        Some("c") => "C".to_string(),
-        Some("h" | "hpp" | "hxx") => "Header".to_string(),
-        Some("md") => "Markdown".to_string(),
-        Some("json") => "JSON".to_string(),
-        Some("yaml" | "yml") => "YAML".to_string(),
-        Some("toml") => "TOML".to_string(),
-        Some("html" | "htm") => "HTML".to_string(),
-        Some("css") => "CSS".to_string(),
-        Some("jsx") => "JSX".to_string(),
-        Some("tsx") => "TSX".to_string(),
-        Some("php") => "PHP".to_string(),
-        Some("rb") => "Ruby".to_string(),
-        Some("sh" | "bash") => "Shell".to_string(),
-        Some("sql") => "SQL".to_string(),
-        Some("xml") => "XML".to_string(),
-        _ => "Unknown".to_string(),
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase());
+
+    if matches!(extension.as_deref(), Some("h" | "hpp" | "hxx")) {
+        return "Header".to_string();
     }
+
+    if path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("dockerfile"))
+        .unwrap_or(false)
+    {
+        return "Dockerfile".to_string();
+    }
+
+    let language = file::detect_language_from_path(path);
+    file::language_display_name(&language).to_string()
 }
 
 /// Fast file type classification
 fn classify_file_type(path: &Path) -> String {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some(
-            "rs" | "py" | "js" | "ts" | "go" | "java" | "cpp" | "cc" | "cxx" | "c" | "php" | "rb",
-        ) => "Source".to_string(),
-        Some("h" | "hpp" | "hxx") => "Header".to_string(),
-        Some("md" | "txt" | "rst" | "adoc") => "Documentation".to_string(),
-        Some("json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf") => {
-            "Configuration".to_string()
-        }
-        Some("html" | "htm" | "css" | "scss" | "sass" | "less") => "Web".to_string(),
-        Some("jsx" | "tsx" | "vue" | "svelte") => "Frontend".to_string(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "ico") => "Image".to_string(),
-        Some("pdf" | "doc" | "docx" | "ppt" | "pptx") => "Document".to_string(),
-        Some("sh" | "bash" | "bat" | "ps1") => "Script".to_string(),
-        Some("sql") => "Database".to_string(),
-        Some("xml" | "xsd" | "xsl") => "Markup".to_string(),
-        _ => "Other".to_string(),
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    let language = file::detect_language_from_path(path);
+    let file_type =
+        FileInfo::classify_file_type(path.to_string_lossy().as_ref(), &language, &extension);
+
+    match file_type {
+        FileType::Test { .. } => "Test".to_string(),
+        FileType::Documentation { .. } => "Documentation".to_string(),
+        FileType::Configuration { .. } => "Configuration".to_string(),
+        FileType::Binary => "Binary".to_string(),
+        FileType::Generated => "Generated".to_string(),
+        FileType::Source { .. } => match extension.as_str() {
+            "jsx" | "tsx" | "vue" | "svelte" => "Frontend".to_string(),
+            "html" | "htm" | "css" | "scss" | "sass" | "less" => "Web".to_string(),
+            "sh" | "bash" | "bat" | "ps1" => "Script".to_string(),
+            _ => "Source".to_string(),
+        },
+        FileType::Unknown => match extension.as_str() {
+            "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" => "Image".to_string(),
+            "pdf" | "doc" | "docx" | "ppt" | "pptx" => "Document".to_string(),
+            "sql" => "Database".to_string(),
+            "xml" | "xsd" | "xsl" => "Markup".to_string(),
+            "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" => {
+                "Configuration".to_string()
+            }
+            _ => "Other".to_string(),
+        },
     }
 }
 

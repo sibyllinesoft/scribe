@@ -14,6 +14,7 @@ use crate::engine::{ProcessingResult, ScalingConfig};
 use crate::error::{ScalingError, ScalingResult};
 use crate::positioning::{ContextPositioner, ContextPositioningConfig, PositionedSelection};
 use crate::streaming::{FileMetadata, ScoredFile, StreamingSelector};
+use scribe_core::{file, FileInfo, FileType};
 
 /// File category classification for quota allocation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -328,35 +329,56 @@ impl ScalingSelector {
 
     /// Simple language detection based on file extension
     fn detect_language(&self, path: &Path) -> String {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("rs") => "Rust".to_string(),
-            Some("py") => "Python".to_string(),
-            Some("js") => "JavaScript".to_string(),
-            Some("ts") => "TypeScript".to_string(),
-            Some("go") => "Go".to_string(),
-            Some("java") => "Java".to_string(),
-            Some("cpp" | "cc" | "cxx") => "C++".to_string(),
-            Some("c") => "C".to_string(),
-            Some("h") => "Header".to_string(),
-            Some("md") => "Markdown".to_string(),
-            Some("json") => "JSON".to_string(),
-            Some("yaml" | "yml") => "YAML".to_string(),
-            Some("toml") => "TOML".to_string(),
-            _ => "Unknown".to_string(),
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase());
+
+        if matches!(ext.as_deref(), Some("h" | "hpp" | "hxx")) {
+            return "Header".to_string();
         }
+
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.eq_ignore_ascii_case("dockerfile"))
+            .unwrap_or(false)
+        {
+            return "Dockerfile".to_string();
+        }
+
+        let language = file::detect_language_from_path(path);
+        file::language_display_name(&language).to_string()
     }
 
     /// Simple file type classification
     fn classify_file_type(&self, path: &Path) -> String {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("rs" | "py" | "js" | "ts" | "go" | "java" | "cpp" | "cc" | "cxx" | "c") => {
-                "Source".to_string()
-            }
-            Some("h" | "hpp" | "hxx") => "Header".to_string(),
-            Some("md" | "txt" | "rst") => "Documentation".to_string(),
-            Some("json" | "yaml" | "yml" | "toml" | "ini" | "cfg") => "Configuration".to_string(),
-            Some("png" | "jpg" | "jpeg" | "gif" | "svg") => "Image".to_string(),
-            _ => "Other".to_string(),
+        let extension = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        let language = file::detect_language_from_path(path);
+        let file_type =
+            FileInfo::classify_file_type(path.to_string_lossy().as_ref(), &language, &extension);
+
+        match file_type {
+            FileType::Test { .. } => "Test".to_string(),
+            FileType::Documentation { .. } => "Documentation".to_string(),
+            FileType::Configuration { .. } => "Configuration".to_string(),
+            FileType::Binary => "Binary".to_string(),
+            FileType::Generated => "Generated".to_string(),
+            FileType::Source { .. } => match extension.as_str() {
+                "h" | "hpp" | "hxx" => "Header".to_string(),
+                _ => "Source".to_string(),
+            },
+            FileType::Unknown => match extension.as_str() {
+                "md" | "txt" | "rst" => "Documentation".to_string(),
+                "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" => "Configuration".to_string(),
+                "png" | "jpg" | "jpeg" | "gif" | "svg" => "Image".to_string(),
+                _ => "Other".to_string(),
+            },
         }
     }
 

@@ -4,17 +4,17 @@
 //! persistent manifest of file metadata to avoid re-scanning unchanged files,
 //! dramatically improving performance for large repositories on subsequent runs.
 
-use std::path::{Path, PathBuf};
-use std::collections::{HashMap, HashSet};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
-use std::fs::Metadata;
-use fxhash::{FxHashMap, FxHashSet};
-use xxhash_rust::xxh3::xxh3_64;
-use serde::{Serialize, Deserialize};
-use tokio::fs;
+use crate::compact_data::{CompactFileCollection, PackedFileType, PackedLanguage};
 use bincode;
-use scribe_core::{Result, ScribeError};
-use crate::compact_data::{CompactFileCollection, CompactFileInfo};
+use fxhash::{FxHashMap, FxHashSet};
+use scribe_core::{FileInfo, Language, RenderDecision, Result, ScribeError};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::fs::Metadata;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::fs;
+use xxhash_rust::xxh3::xxh3_64;
 
 /// File manifest for incremental scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +194,7 @@ impl IncrementalScanner {
     /// Perform incremental scan of the repository
     pub async fn scan_incremental(&mut self) -> Result<CompactFileCollection> {
         let start_time = std::time::Instant::now();
-        
+
         log::info!("Starting incremental scan of {}", self.repo_root.display());
 
         // Initialize or validate manifest
@@ -235,28 +235,30 @@ impl IncrementalScanner {
                     // Use cached data
                     if let Some(entry) = manifest.entries.get(path) {
                         if let Some(cached) = &entry.cached_results {
-                            let compact_info = self.create_compact_from_cache(entry, cached)?;
-                            collection.files_mut().push(compact_info);
+                            let cached_info = self.file_info_from_cache(entry, cached)?;
+                            collection.add_file(&cached_info);
                             self.metrics.files_cached += 1;
                         }
                     }
                 }
-                
+
                 FileChange::NewFile | FileChange::ContentChanged | FileChange::MetadataChanged => {
                     // Scan the file
                     let file_path = self.repo_root.join(path);
-                    let scan_result = self.scan_single_file(&file_path).await?;
-                    
-                    // Add to collection and update manifest
-                    collection.files_mut().push(scan_result.compact_info.clone());
-                    new_manifest.entries.insert(path.clone(), scan_result.manifest_entry);
-                    
+                    let SingleFileScanResult {
+                        manifest_entry,
+                        file_info,
+                    } = self.scan_single_file(&file_path).await?;
+
+                    collection.add_file(&file_info);
+                    new_manifest.entries.insert(path.clone(), manifest_entry);
+
                     match change {
                         FileChange::NewFile => self.metrics.files_scanned += 1,
                         _ => self.metrics.files_updated += 1,
                     }
                 }
-                
+
                 FileChange::Moved(old_path) => {
                     // Handle moved file
                     if let Some(old_entry) = new_manifest.entries.remove(old_path) {
@@ -266,7 +268,7 @@ impl IncrementalScanner {
                             .duration_since(UNIX_EPOCH)
                             .unwrap()
                             .as_secs();
-                        
+
                         new_manifest.entries.insert(path.clone(), new_entry);
                         self.metrics.files_updated += 1;
                     }
@@ -275,10 +277,11 @@ impl IncrementalScanner {
         }
 
         // Remove deleted files from manifest
-        let current_paths: FxHashSet<_> = current_files.iter()
+        let current_paths: FxHashSet<_> = current_files
+            .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        
+
         new_manifest.entries.retain(|path, _| {
             if current_paths.contains(path) {
                 true
@@ -296,9 +299,11 @@ impl IncrementalScanner {
         self.manifest = Some(new_manifest);
 
         // Calculate session metrics
-        let total_files = self.metrics.files_cached + self.metrics.files_scanned + self.metrics.files_updated;
+        let total_files =
+            self.metrics.files_cached + self.metrics.files_scanned + self.metrics.files_updated;
         if total_files > 0 {
-            self.metrics.session_cache_hit_rate = self.metrics.files_cached as f64 / total_files as f64;
+            self.metrics.session_cache_hit_rate =
+                self.metrics.files_cached as f64 / total_files as f64;
         }
 
         log::info!(
@@ -338,7 +343,7 @@ impl IncrementalScanner {
                 log::warn!("Failed to read manifest: {}", e);
             }
         }
-        
+
         Ok(())
     }
 
@@ -349,10 +354,12 @@ impl IncrementalScanner {
 
         // Write atomically using temporary file
         let temp_path = self.manifest_path.with_extension("tmp");
-        fs::write(&temp_path, &data).await
+        fs::write(&temp_path, &data)
+            .await
             .map_err(|e| ScribeError::io(format!("Failed to write manifest: {}", e)))?;
 
-        fs::rename(&temp_path, &self.manifest_path).await
+        fs::rename(&temp_path, &self.manifest_path)
+            .await
             .map_err(|e| ScribeError::io(format!("Failed to finalize manifest: {}", e)))?;
 
         log::debug!("Saved manifest with {} bytes", data.len());
@@ -362,16 +369,21 @@ impl IncrementalScanner {
     /// Check if a full rescan is needed
     async fn should_full_rescan(&self, manifest: &FileManifest) -> Result<bool> {
         // Check manifest age
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let age_hours = (now - manifest.updated_at) / 3600;
-        
+
         if age_hours > self.config.max_manifest_age_hours {
             return Ok(true);
         }
 
         // Check analysis version
         if manifest.entries.values().any(|entry| {
-            entry.cached_results.as_ref()
+            entry
+                .cached_results
+                .as_ref()
                 .map(|r| r.analysis_version != self.config.analysis_version)
                 .unwrap_or(true)
         }) {
@@ -393,7 +405,10 @@ impl IncrementalScanner {
 
     /// Create a new empty manifest
     async fn create_new_manifest(&self) -> Result<FileManifest> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let git_commit = if self.config.git_integration {
             self.get_current_git_commit().await.ok()
         } else {
@@ -421,7 +436,7 @@ impl IncrementalScanner {
     /// Discover all files in the repository
     async fn discover_files(&self) -> Result<Vec<PathBuf>> {
         // Use ignore crate for efficient traversal
-        use ignore::{WalkBuilder, WalkState, DirEntry};
+        use ignore::{DirEntry, WalkBuilder, WalkState};
 
         let mut builder = WalkBuilder::new(&self.repo_root);
         builder
@@ -431,19 +446,17 @@ impl IncrementalScanner {
             .follow_links(false);
 
         let mut files = Vec::new();
-        
-        builder.build().for_each(|entry| {
-            match entry {
-                Ok(entry) => {
-                    if entry.file_type().map_or(false, |ft| ft.is_file()) {
-                        if let Ok(relative) = entry.path().strip_prefix(&self.repo_root) {
-                            files.push(relative.to_path_buf());
-                        }
+
+        builder.build().for_each(|entry| match entry {
+            Ok(entry) => {
+                if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                    if let Ok(relative) = entry.path().strip_prefix(&self.repo_root) {
+                        files.push(relative.to_path_buf());
                     }
                 }
-                Err(err) => {
-                    log::debug!("Walk error: {}", err);
-                }
+            }
+            Err(err) => {
+                log::debug!("Walk error: {}", err);
             }
         });
 
@@ -472,17 +485,19 @@ impl IncrementalScanner {
             };
 
             let change = if let Some(entry) = manifest.entries.get(&path_str) {
-                self.detect_file_change(entry, &metadata, &full_path).await?
+                self.detect_file_change(entry, &metadata, &full_path)
+                    .await?
             } else {
                 // Check if this might be a moved file
                 let inode = self.get_inode(&metadata);
                 let device = self.get_device(&metadata);
-                
-                if let Some(old_entry) = manifest.entries.values().find(|e| 
-                    e.inode == inode && e.device == device && 
-                    e.size == metadata.len() &&
-                    !processed_inodes.contains(&inode)
-                ) {
+
+                if let Some(old_entry) = manifest.entries.values().find(|e| {
+                    e.inode == inode
+                        && e.device == device
+                        && e.size == metadata.len()
+                        && !processed_inodes.contains(&inode)
+                }) {
                     processed_inodes.insert(inode);
                     FileChange::Moved(old_entry.path.clone())
                 } else {
@@ -503,7 +518,8 @@ impl IncrementalScanner {
         metadata: &Metadata,
         file_path: &Path,
     ) -> Result<FileChange> {
-        let modified = metadata.modified()
+        let modified = metadata
+            .modified()
             .unwrap_or(UNIX_EPOCH)
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -544,13 +560,13 @@ impl IncrementalScanner {
     /// Scan a single file and create manifest entry
     async fn scan_single_file(&mut self, file_path: &Path) -> Result<SingleFileScanResult> {
         use crate::language_detection::LanguageDetector;
-        use crate::content::ContentAnalyzer;
 
         let io_start = std::time::Instant::now();
         let metadata = fs::metadata(file_path).await?;
         self.metrics.io_time_us += io_start.elapsed().as_micros() as u64;
 
-        let relative_path = file_path.strip_prefix(&self.repo_root)
+        let relative_path = file_path
+            .strip_prefix(&self.repo_root)
             .unwrap()
             .to_string_lossy()
             .to_string();
@@ -567,24 +583,82 @@ impl IncrementalScanner {
         // Analyze file content
         let language_detector = LanguageDetector::new();
         let language = language_detector.detect_language(file_path);
-        
-        let content_analyzer = ContentAnalyzer::new();
-        let content_stats = content_analyzer.analyze_file(file_path).await?;
+
+        let raw_bytes = fs::read(file_path).await?;
+        let extension = file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_string();
+        let is_binary = FileInfo::detect_binary_from_bytes(&raw_bytes, Some(extension.as_str()));
+        let (line_count, char_count, token_estimate) = if is_binary {
+            (0u32, 0u32, 0u16)
+        } else {
+            let content = String::from_utf8_lossy(&raw_bytes);
+            let lines = content.lines().count() as u32;
+            let chars = content.chars().count() as u32;
+            let tokens = scribe_core::FileInfo::estimate_tokens_with_path(
+                content.as_ref(),
+                file_path,
+            );
+            let tokens_u32 = tokens.min(u32::MAX as usize) as u32;
+            (
+                lines,
+                chars,
+                tokens_u32.min(u16::MAX as u32) as u16,
+            )
+        };
+
+        let mut file_type = if is_binary {
+            scribe_core::FileType::Binary
+        } else {
+            scribe_core::FileInfo::classify_file_type_with_binary(
+                &relative_path,
+                &language,
+                extension.as_str(),
+                is_binary,
+            )
+        };
+
+        // If classification yielded generated for binary scenario adjust accordingly
+        if is_binary {
+            file_type = scribe_core::FileType::Binary;
+        }
+
+        let packed_file_type = PackedFileType::from_file_type(&file_type);
 
         let cached_results = CachedScanResults {
-            language: language as u8,
-            file_type: 1, // Default to source
-            line_count: content_stats.line_count,
-            char_count: content_stats.char_count,
-            token_estimate: content_stats.estimated_tokens as u16,
-            is_binary: false, // Would need binary detection
+            language: PackedLanguage::from(language.clone()).as_u8(),
+            file_type: packed_file_type.as_u8(),
+            line_count,
+            char_count,
+            token_estimate,
+            is_binary,
             analysis_version: self.config.analysis_version,
+        };
+
+        let file_info = FileInfo {
+            path: file_path.to_path_buf(),
+            relative_path: relative_path.clone(),
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+            decision: RenderDecision::include("scanned"),
+            file_type,
+            language: language.clone(),
+            content: None,
+            token_estimate: Some(token_estimate as usize),
+            line_count: Some(line_count as usize),
+            char_count: Some(char_count as usize),
+            is_binary,
+            git_status: None,
+            centrality_score: None,
         };
 
         let manifest_entry = ManifestEntry {
             path: relative_path.clone(),
             size: metadata.len(),
-            modified: metadata.modified()
+            modified: metadata
+                .modified()
                 .unwrap_or(UNIX_EPOCH)
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -597,51 +671,68 @@ impl IncrementalScanner {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            cached_results: Some(cached_results.clone()),
+            cached_results: Some(cached_results),
         };
-
-        // Create compact file info
-        let mut interner = string_interner::StringInterner::new();
-        let file_info = scribe_core::FileInfo {
-            path: file_path.to_path_buf(),
-            relative_path,
-            size: metadata.len(),
-            modified: Some(metadata.modified().unwrap_or(UNIX_EPOCH)),
-            decision: scribe_core::RenderDecision::Include("scanned".to_string()),
-            file_type: scribe_core::FileType::Source { language: language.clone() },
-            language,
-            content: None,
-            token_estimate: Some(cached_results.token_estimate),
-            line_count: Some(cached_results.line_count),
-            char_count: Some(cached_results.char_count),
-            is_binary: cached_results.is_binary,
-            git_status: None,
-            centrality_score: None,
-        };
-
-        let compact_info = CompactFileInfo::from_full_file_info(&file_info, &mut interner);
 
         Ok(SingleFileScanResult {
             manifest_entry,
-            compact_info,
+            file_info,
         })
     }
 
-    /// Create compact file info from cached data
-    fn create_compact_from_cache(
+    fn file_info_from_cache(
         &self,
         entry: &ManifestEntry,
         cached: &CachedScanResults,
-    ) -> Result<CompactFileInfo> {
-        // This would require rebuilding CompactFileInfo from cached data
-        // For now, return a simplified version
-        todo!("Implement cache -> CompactFileInfo conversion")
+    ) -> Result<FileInfo> {
+        let absolute_path = self.repo_root.join(&entry.path);
+        let packed_language = PackedLanguage::from_u8(cached.language);
+        let language = Language::from(packed_language);
+        let extension = std::path::Path::new(&entry.path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+
+        let packed_file_type = PackedFileType::from_u8(cached.file_type);
+        let cached_binary = cached.is_binary || matches!(packed_file_type, PackedFileType::Binary);
+
+        let file_type = FileInfo::classify_file_type_with_binary(
+            &entry.path,
+            &language,
+            extension,
+            cached_binary,
+        );
+
+        let is_binary = cached_binary || matches!(file_type, scribe_core::FileType::Binary);
+
+        let modified = if entry.modified > 0 {
+            Some(UNIX_EPOCH + Duration::from_secs(entry.modified))
+        } else {
+            None
+        };
+
+        Ok(FileInfo {
+            path: absolute_path,
+            relative_path: entry.path.clone(),
+            size: entry.size,
+            modified,
+            decision: RenderDecision::include("cached"),
+            file_type,
+            language,
+            content: None,
+            token_estimate: Some(cached.token_estimate as usize),
+            line_count: Some(cached.line_count as usize),
+            char_count: Some(cached.char_count as usize),
+            is_binary,
+            git_status: None,
+            centrality_score: None,
+        })
     }
 
     /// Calculate file hash for content change detection
     async fn calculate_file_hash(&self, file_path: &Path) -> Result<u64> {
         let metadata = fs::metadata(file_path).await?;
-        
+
         // Skip large files
         if metadata.len() > self.config.max_hash_file_size {
             return Ok(0); // Use 0 to indicate "not hashed"
@@ -652,7 +743,7 @@ impl IncrementalScanner {
         let mut buffer = vec![0u8; self.config.hash_chunk_size];
 
         use tokio::io::AsyncReadExt;
-        
+
         loop {
             let bytes_read = file.read(&mut buffer).await?;
             if bytes_read == 0 {
@@ -676,9 +767,7 @@ impl IncrementalScanner {
             .await?;
 
         if output.status.success() {
-            let commit = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
             Ok(commit)
         } else {
             Err(ScribeError::git("Failed to get git commit".to_string()))
@@ -724,16 +813,16 @@ impl IncrementalScanner {
     /// Update manifest statistics
     fn update_manifest_stats(&self, manifest: &mut FileManifest, scan_duration: Duration) {
         manifest.stats.total_files = manifest.entries.len() as u64;
-        manifest.stats.cached_files = manifest.entries.values()
+        manifest.stats.cached_files = manifest
+            .entries
+            .values()
             .filter(|e| e.cached_results.is_some())
             .count() as u64;
-        manifest.stats.total_bytes = manifest.entries.values()
-            .map(|e| e.size)
-            .sum();
+        manifest.stats.total_bytes = manifest.entries.values().map(|e| e.size).sum();
         manifest.stats.last_scan_duration_secs = scan_duration.as_secs_f64();
 
         if manifest.stats.total_files > 0 {
-            manifest.stats.cache_hit_rate = 
+            manifest.stats.cache_hit_rate =
                 manifest.stats.cached_files as f64 / manifest.stats.total_files as f64;
         }
     }
@@ -752,20 +841,7 @@ impl IncrementalScanner {
 /// Result of scanning a single file
 struct SingleFileScanResult {
     manifest_entry: ManifestEntry,
-    compact_info: CompactFileInfo,
-}
-
-/// Extension trait for CompactFileCollection to add mutable access
-trait CompactFileCollectionExt {
-    fn files_mut(&mut self) -> &mut Vec<CompactFileInfo>;
-}
-
-impl CompactFileCollectionExt for CompactFileCollection {
-    fn files_mut(&mut self) -> &mut Vec<CompactFileInfo> {
-        // This would require adding a method to CompactFileCollection
-        // For now, this is a placeholder
-        todo!("Add mutable access to CompactFileCollection")
-    }
+    file_info: scribe_core::FileInfo,
 }
 
 #[cfg(test)]
@@ -779,12 +855,18 @@ mod tests {
         let root = temp_dir.path();
 
         // Create some test files
-        fs::write(root.join("main.rs"), "fn main() {}").await.unwrap();
-        fs::write(root.join("lib.rs"), "pub fn hello() {}").await.unwrap();
-        
+        fs::write(root.join("main.rs"), "fn main() {}")
+            .await
+            .unwrap();
+        fs::write(root.join("lib.rs"), "pub fn hello() {}")
+            .await
+            .unwrap();
+
         // Create subdirectory
         fs::create_dir(root.join("src")).await.unwrap();
-        fs::write(root.join("src/module.rs"), "mod test;").await.unwrap();
+        fs::write(root.join("src/module.rs"), "mod test;")
+            .await
+            .unwrap();
 
         temp_dir
     }
@@ -793,7 +875,7 @@ mod tests {
     async fn test_incremental_scanner_creation() {
         let temp_dir = create_test_repo().await;
         let config = IncrementalConfig::default();
-        
+
         let scanner = IncrementalScanner::new(temp_dir.path(), config).await;
         assert!(scanner.is_ok());
     }
@@ -802,12 +884,15 @@ mod tests {
     async fn test_file_discovery() {
         let temp_dir = create_test_repo().await;
         let config = IncrementalConfig::default();
-        let scanner = IncrementalScanner::new(temp_dir.path(), config).await.unwrap();
-        
+        let scanner = IncrementalScanner::new(temp_dir.path(), config)
+            .await
+            .unwrap();
+
         let files = scanner.discover_files().await.unwrap();
         assert!(files.len() >= 3); // main.rs, lib.rs, src/module.rs
-        
-        let file_names: Vec<_> = files.iter()
+
+        let file_names: Vec<_> = files
+            .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())
             .collect();
         assert!(file_names.contains(&"main.rs"));
@@ -836,7 +921,7 @@ mod tests {
 
         let serialized = bincode::serialize(&manifest).unwrap();
         let deserialized: FileManifest = bincode::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(manifest.version, deserialized.version);
         assert_eq!(manifest.repo_root, deserialized.repo_root);
         assert_eq!(manifest.git_commit, deserialized.git_commit);
@@ -851,17 +936,21 @@ mod tests {
             hash_chunk_size: 256,
             ..Default::default()
         };
-        let mut scanner = IncrementalScanner::new(temp_dir.path(), config).await.unwrap();
-        
+        let mut scanner = IncrementalScanner::new(temp_dir.path(), config)
+            .await
+            .unwrap();
+
         let test_file = temp_dir.path().join("main.rs");
         let hash1 = scanner.calculate_file_hash(&test_file).await.unwrap();
-        
+
         // Hash should be consistent
         let hash2 = scanner.calculate_file_hash(&test_file).await.unwrap();
         assert_eq!(hash1, hash2);
-        
+
         // Modify file and check hash changes
-        fs::write(&test_file, "fn main() { println!(\"modified\"); }").await.unwrap();
+        fs::write(&test_file, "fn main() { println!(\"modified\"); }")
+            .await
+            .unwrap();
         let hash3 = scanner.calculate_file_hash(&test_file).await.unwrap();
         assert_ne!(hash1, hash3);
     }
@@ -869,19 +958,22 @@ mod tests {
     #[tokio::test]
     async fn test_file_change_detection() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let temp_dir = create_test_repo().await;
         let config = IncrementalConfig::default();
-        let scanner = IncrementalScanner::new(temp_dir.path(), config).await.unwrap();
-        
+        let scanner = IncrementalScanner::new(temp_dir.path(), config)
+            .await
+            .unwrap();
+
         let test_file = temp_dir.path().join("main.rs");
         let metadata = fs::metadata(&test_file).await.unwrap();
-        
+
         // Create manifest entry
         let entry = ManifestEntry {
             path: "main.rs".to_string(),
             size: metadata.len(),
-            modified: metadata.modified()
+            modified: metadata
+                .modified()
                 .unwrap_or(UNIX_EPOCH)
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -896,15 +988,23 @@ mod tests {
                 .as_secs(),
             cached_results: None,
         };
-        
+
         // Unchanged file
-        let change = scanner.detect_file_change(&entry, &metadata, &test_file).await.unwrap();
+        let change = scanner
+            .detect_file_change(&entry, &metadata, &test_file)
+            .await
+            .unwrap();
         assert_eq!(change, FileChange::Unchanged);
-        
+
         // Modify file
-        fs::write(&test_file, "fn main() { println!(\"changed\"); }").await.unwrap();
+        fs::write(&test_file, "fn main() { println!(\"changed\"); }")
+            .await
+            .unwrap();
         let new_metadata = fs::metadata(&test_file).await.unwrap();
-        let change = scanner.detect_file_change(&entry, &new_metadata, &test_file).await.unwrap();
+        let change = scanner
+            .detect_file_change(&entry, &new_metadata, &test_file)
+            .await
+            .unwrap();
         assert_eq!(change, FileChange::ContentChanged);
     }
 
@@ -912,16 +1012,20 @@ mod tests {
     async fn test_manifest_persistence() {
         let temp_dir = create_test_repo().await;
         let config = IncrementalConfig::default();
-        let mut scanner = IncrementalScanner::new(temp_dir.path(), config).await.unwrap();
-        
+        let mut scanner = IncrementalScanner::new(temp_dir.path(), config)
+            .await
+            .unwrap();
+
         // Create a manifest
         let manifest = scanner.create_new_manifest().await.unwrap();
         scanner.save_manifest(&manifest).await.unwrap();
-        
+
         // Load manifest in new scanner instance
         let config2 = IncrementalConfig::default();
-        let mut scanner2 = IncrementalScanner::new(temp_dir.path(), config2).await.unwrap();
-        
+        let mut scanner2 = IncrementalScanner::new(temp_dir.path(), config2)
+            .await
+            .unwrap();
+
         assert!(scanner2.manifest.is_some());
         let loaded_manifest = scanner2.manifest.unwrap();
         assert_eq!(loaded_manifest.repo_root, manifest.repo_root);

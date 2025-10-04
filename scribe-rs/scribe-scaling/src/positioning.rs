@@ -17,6 +17,7 @@ use tracing::{debug, info, warn};
 
 use crate::error::{ScalingError, ScalingResult};
 use crate::streaming::FileMetadata;
+use scribe_core::file;
 
 /// Configuration for context positioning optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -828,98 +829,7 @@ impl ContextPositioner {
 
     /// Smart test file detection based on common patterns
     fn is_test_file(&self, path: &Path) -> bool {
-        let path_str = path.to_string_lossy().to_lowercase();
-        let file_name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-
-        // Test directory patterns
-        if path_str.contains("/test/")
-            || path_str.contains("/tests/")
-            || path_str.contains("\\test\\")
-            || path_str.contains("\\tests\\")
-            || path_str.contains("/__tests__/")
-            || path_str.contains("\\__tests__\\")
-        {
-            return true;
-        }
-
-        // Test file name patterns
-        if file_name.starts_with("test_")
-            || file_name.ends_with("_test.rs")
-            || file_name.ends_with("_test.py")
-            || file_name.ends_with("_test.js")
-            || file_name.ends_with("_test.ts")
-            || file_name.ends_with(".test.js")
-            || file_name.ends_with(".test.ts")
-            || file_name.ends_with(".test.jsx")
-            || file_name.ends_with(".test.tsx")
-            || file_name.ends_with(".spec.js")
-            || file_name.ends_with(".spec.ts")
-            || file_name.ends_with(".spec.jsx")
-            || file_name.ends_with(".spec.tsx")
-            || file_name.ends_with("_spec.py")
-            || file_name.ends_with("_spec.rb")
-        {
-            return true;
-        }
-
-        // Language-specific test patterns
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("rs") => {
-                // Rust: mod tests, #[cfg(test)]
-                file_name.contains("test")
-                    && (file_name.starts_with("test_")
-                        || file_name.ends_with("_test.rs")
-                        || path_str.contains("/tests/"))
-            }
-            Some("py") => {
-                // Python: test_*.py, *_test.py, pytest patterns
-                file_name.starts_with("test_")
-                    || file_name.ends_with("_test.py")
-                    || file_name.contains("test_")
-            }
-            Some("go") => {
-                // Go: *_test.go
-                file_name.ends_with("_test.go")
-            }
-            Some("java") | Some("kt") => {
-                // Java/Kotlin: *Test.java, *Tests.java
-                file_name.ends_with("test.java")
-                    || file_name.ends_with("tests.java")
-                    || file_name.ends_with("test.kt")
-                    || file_name.ends_with("tests.kt")
-                    || path_str.contains("/test/")
-                    || path_str.contains("/tests/")
-            }
-            Some("js") | Some("ts") | Some("jsx") | Some("tsx") => {
-                // JavaScript/TypeScript: comprehensive test patterns
-                file_name.contains(".test.")
-                    || file_name.contains(".spec.")
-                    || file_name.ends_with(".test.js")
-                    || file_name.ends_with(".test.ts")
-                    || file_name.ends_with(".spec.js")
-                    || file_name.ends_with(".spec.ts")
-                    || path_str.contains("/__tests__/")
-                    || path_str.contains("/test/")
-                    || path_str.contains("/tests/")
-            }
-            Some("rb") => {
-                // Ruby: *_test.rb, *_spec.rb, spec/ and test/ directories
-                file_name.ends_with("_test.rb")
-                    || file_name.ends_with("_spec.rb")
-                    || path_str.contains("/spec/")
-                    || path_str.contains("/test/")
-            }
-            Some("php") => {
-                // PHP: *Test.php, *_test.php
-                file_name.ends_with("test.php")
-                    || file_name.ends_with("_test.php")
-                    || file_name.contains("test") && path_str.contains("/test")
-            }
-            _ => false,
-        }
+        file::is_test_path(path)
     }
 }
 

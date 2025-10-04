@@ -1,8 +1,8 @@
-use scribe_analyzer::prelude::*;
+use scribe::prelude::*;
 use std::path::Path;
 
 #[tokio::main]
-async fn main() -> scribe_analyzer::Result<()> {
+async fn main() -> scribe::Result<()> {
     // Enable debug output
     std::env::set_var("SCRIBE_DEBUG", "1");
 
@@ -16,7 +16,7 @@ async fn main() -> scribe_analyzer::Result<()> {
     let repo_path = Path::new(".");
 
     println!("Analyzing repository with 250k token budget...");
-    let analysis = scribe_analyzer::analyze_repository(repo_path, &config).await?;
+    let analysis = scribe::analyze_repository(repo_path, &config).await?;
 
     println!("\n=== Analysis Results ===");
     println!("Files analyzed: {}", analysis.file_count());

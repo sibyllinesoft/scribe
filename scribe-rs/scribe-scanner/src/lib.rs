@@ -9,9 +9,8 @@
 //! - **Fast Repository Traversal**: Efficient file discovery using `walkdir` and `ignore`
 //! - **Git Integration**: Prefer `git ls-files` when available, with fallback to filesystem walk
 //! - **Language Detection**: Automatic detection for 25+ programming languages
-//! - **Content Analysis**: Extract imports, documentation structure, and metadata
 //! - **Parallel Processing**: Memory-efficient parallel file processing using Rayon
-//! - **Binary Detection**: Smart binary file detection using content analysis
+//! - **Binary Detection**: Libmagic-compatible content detection to skip non-text files
 //!
 //! ## Usage
 //!
@@ -32,35 +31,27 @@
 //! ```
 
 // Core modules
-pub mod content;
 pub mod git_integration;
 pub mod language_detection;
 pub mod metadata;
 pub mod scanner;
 
 // Performance optimization modules
-pub mod filtering;
-// pub mod git_batch; // Temporarily disabled due to compilation issues
-pub mod parallel;
-// pub mod compact_data; // Temporarily disabled due to compilation issues
-// pub mod incremental; // Temporarily disabled due to compilation issues
 pub mod aho_corasick_reference_index;
+pub mod filtering;
+pub mod parallel;
 pub mod performance;
 
 // Re-export main types for convenience
-pub use content::{ContentAnalyzer, ContentStats, DocumentationInfo, ImportInfo};
 pub use git_integration::{GitCommitInfo, GitFileInfo, GitIntegrator};
 pub use language_detection::{DetectionStrategy, LanguageDetector, LanguageHints};
 pub use metadata::{FileMetadata, MetadataExtractor, SizeStats};
 pub use scanner::{ScanOptions, ScanProgress, ScanResult, Scanner};
 
 // Re-export performance optimization types
-pub use filtering::{DirectoryFilter, FileFilter, FilterReason, FilterResult};
-// pub use git_batch::{GitBatchProcessor, BulkStatusResult, CompactGitFileInfo}; // Temporarily disabled
-pub use parallel::{ParallelConfig, ParallelController, ParallelMetrics, WorkItem};
-// pub use compact_data::{CompactFileCollection, CompactFileInfo, CompactMetrics}; // Temporarily disabled
-// pub use incremental::{IncrementalScanner, IncrementalConfig, FileManifest}; // Temporarily disabled
 pub use aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};
+pub use filtering::{DirectoryFilter, FileFilter, FilterReason, FilterResult};
+pub use parallel::{ParallelConfig, ParallelController, ParallelMetrics, WorkItem};
 pub use performance::{
     ErrorType, PerfTimer, PerformanceMonitor, PerformanceReport, PerformanceSnapshot, PERF_MONITOR,
 };
@@ -75,7 +66,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct FileScanner {
     scanner: Scanner,
     metadata_extractor: MetadataExtractor,
-    content_analyzer: ContentAnalyzer,
     git_integrator: Option<GitIntegrator>,
     language_detector: LanguageDetector,
 }
@@ -86,7 +76,6 @@ impl FileScanner {
         Self {
             scanner: Scanner::new(),
             metadata_extractor: MetadataExtractor::new(),
-            content_analyzer: ContentAnalyzer::new(),
             git_integrator: None,
             language_detector: LanguageDetector::new(),
         }
@@ -102,7 +91,6 @@ impl FileScanner {
     pub async fn scan_comprehensive<P: AsRef<Path>>(&self, path: P) -> Result<Vec<FileInfo>> {
         let options = ScanOptions::default()
             .with_metadata_extraction(true)
-            .with_content_analysis(true)
             .with_git_integration(self.git_integrator.is_some())
             .with_parallel_processing(true);
 

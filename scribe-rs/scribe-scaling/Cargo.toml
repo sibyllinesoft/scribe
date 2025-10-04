@@ -25,6 +25,7 @@ once_cell.workspace = true
 
 # Internal dependencies - minimal to avoid circular dependencies
 # scribe-scaling is a foundational optimization layer that should be independent
+scribe-core = { path = "../scribe-core" }
 
 # Additional scaling-specific dependencies
 lru = "0.12"

@@ -429,9 +429,6 @@ pub struct ScoringConfig {
     /// Heuristic weights
     pub weights: HeuristicWeights,
 
-    /// Whether to enable advanced scoring features
-    pub enable_advanced: bool,
-
     /// Custom scoring rules
     pub custom_rules: Vec<CustomScoringRule>,
 
@@ -449,7 +446,6 @@ pub struct ScoringConfig {
 impl Hash for ScoringConfig {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.weights.hash(state);
-        self.enable_advanced.hash(state);
         self.custom_rules.hash(state);
         // Hash f64 as bits for consistent hashing
         self.min_score_threshold.to_bits().hash(state);
@@ -462,7 +458,6 @@ impl Default for ScoringConfig {
     fn default() -> Self {
         Self {
             weights: HeuristicWeights::default(),
-            enable_advanced: false,
             custom_rules: vec![],
             min_score_threshold: 0.0,
             max_results: 0, // Unlimited
@@ -761,6 +756,9 @@ pub struct OutputConfig {
 
     /// Custom output fields to include
     pub custom_fields: Vec<String>,
+
+    /// Optional default output path
+    pub file_path: Option<String>,
 }
 
 /// Output format options
@@ -783,6 +781,7 @@ impl Default for OutputConfig {
             sort_by_score: true,
             pretty_json: true,
             custom_fields: vec![],
+            file_path: None,
         }
     }
 }

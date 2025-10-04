@@ -1,111 +1,182 @@
 use clap::{Arg, ArgAction, Command, ValueEnum};
 use git2::Repository;
-use handlebars::Handlebars;
 use serde_json::{self, json};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use url::Url;
 
-// Import the main library functions
-use scribe_analyzer::{
-    analyze_and_select, default_include_patterns, format_bytes, format_timestamp, generate_report,
-    get_file_icon, load_ignore_patterns, load_scribe_config, normalize_patterns,
-    parse_pattern_list, Config, ReportFile, ReportFormat, SelectionMetrics, SelectionOptions,
+#[cfg(feature = "web")]
+use async_trait::async_trait;
+#[cfg(feature = "web")]
+use scribe_webservice::{
+    AnalysisOutput, AnalysisProvider, WebReportFile, WebSelectionMetrics, WebService,
+    WebServiceConfig, WebServiceError,
 };
 
-// HTML Editor mode generation
-#[allow(dead_code)]
-fn generate_interactive_editor(
-    files: &[ReportFile],
-    metrics: &SelectionMetrics,
-    output_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!(
-        "Starting interactive editor generation with {} files",
-        files.len()
-    );
-    let mut handlebars = Handlebars::new();
+// Import the main library functions
+use scribe::{
+    analyze_and_select, format_bytes, format_timestamp, generate_report, get_file_icon, Config,
+    ReportFile, ReportFormat, SelectionMetrics, SelectionOptions,
+};
 
-    // Use the bundled template with React tree and checkboxes
-    let template_path = Path::new("templates/report_bundled.html");
-    let template_content = if template_path.exists() {
-        info!(
-            "📄 Loading bundled template from: {}",
-            template_path.display()
-        );
-        fs::read_to_string(template_path)?
-    } else {
-        warn!(
-            "⚠️  Template file not found at: {}, using embedded template",
-            template_path.display()
-        );
-        // Fallback to embedded template content if file doesn't exist
-        include_str!("../../templates/report_bundled.html").to_string()
-    };
-
-    info!(
-        "📝 Template content length: {} characters",
-        template_content.len()
-    );
-    handlebars.register_template_string("editor", &template_content)?;
-
-    // Generate current timestamp
-    let generated_time = chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string();
-
-    let template_data = serde_json::json!({
-        "repository_name": "Scribe Analysis",
-        "algorithm": metrics.algorithm_used,
-        "generated_time": generated_time,
-        "selection_time_ms": 0, // We don't track this in editor mode
-        "total_files": files.len(),
-        "total_tokens": metrics.total_tokens_estimated,
-        "total_size": format_bytes(files.iter().map(|f| f.size).sum::<u64>()),
-        "coverage_percentage": (metrics.coverage_score * 100.0) as u32,
-        "files": files.iter().map(|f| serde_json::json!({
-            "relative_path": f.relative_path,
-            "content": f.content,
-            "size": format_bytes(f.size),
-            "estimated_tokens": f.estimated_tokens,
-            "importance_score": format!("{:.2}", f.importance_score),
-            "icon": get_file_icon(&f.relative_path)
-        })).collect::<Vec<_>>()
-    });
-
-    let rendered = handlebars.render("editor", &template_data)?;
-    fs::write(output_path, rendered)?;
-
-    // Copy the JavaScript bundle to the output directory
-    if let Some(output_dir) = output_path.parent() {
-        let assets_dir = output_dir.join("assets");
-        fs::create_dir_all(&assets_dir)?;
-
-        let bundle_source = Path::new("templates/assets/scribe-tree-bundle.js");
-        let bundle_dest = assets_dir.join("scribe-tree-bundle.js");
-
-        if bundle_source.exists() {
-            fs::copy(bundle_source, &bundle_dest)?;
-            info!("📦 Copied bundle to: {}", bundle_dest.display());
-        } else {
-            warn!("⚠️  Bundle not found at: {}", bundle_source.display());
-        }
-    }
-
-    info!("📝 Interactive editor generated: {}", output_path.display());
-    println!("📝 Interactive editor saved to: {}", output_path.display());
-    Ok(())
-}
 async fn clone_github_repo(
     url: &str,
 ) -> Result<(PathBuf, Option<TempDir>), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     Repository::clone(url, temp_dir.path())?;
     Ok((temp_dir.path().to_path_buf(), Some(temp_dir)))
+}
+
+#[cfg(feature = "web")]
+struct CliAnalysisProvider;
+
+#[cfg(feature = "web")]
+#[async_trait]
+impl AnalysisProvider for CliAnalysisProvider {
+    async fn analyze(
+        &self,
+        config: &WebServiceConfig,
+    ) -> std::result::Result<AnalysisOutput, WebServiceError> {
+        let mut scribe_config = Config::default();
+        scribe_config.filtering.max_file_size = config.max_file_size as u64;
+        scribe_config.features.auto_exclude_tests = config.auto_exclude_tests;
+        scribe_config.analysis.token_budget = None;
+        scribe_config.general.working_dir = Some(config.repo_path.clone());
+
+        let selection_options = SelectionOptions {
+            token_target: config.token_budget,
+            force_traditional: config.token_budget == 0,
+            algorithm_name: Some("web-service".to_string()),
+            include_directory_map: true,
+        };
+
+        let outcome = analyze_and_select(&config.repo_path, &scribe_config, &selection_options)
+            .await
+            .map_err(|err| WebServiceError::ScribeCore(err.to_string()))?;
+
+        let selected_files = outcome
+            .selection
+            .selected_files
+            .into_iter()
+            .map(convert_report_file)
+            .collect();
+
+        let metrics = convert_selection_metrics(outcome.selection.metrics);
+
+        Ok(AnalysisOutput {
+            selected_files,
+            selected_file_infos: outcome.selection.selected_file_infos,
+            metrics,
+            repository_files: outcome.analysis.files,
+            token_budget: config.token_budget,
+        })
+    }
+}
+
+#[cfg(feature = "web")]
+fn convert_report_file(file: ReportFile) -> WebReportFile {
+    WebReportFile {
+        path: file.path,
+        relative_path: file.relative_path,
+        content: file.content,
+        size: file.size,
+        estimated_tokens: file.estimated_tokens,
+        importance_score: file.importance_score,
+        centrality_score: file.centrality_score,
+        query_relevance_score: file.query_relevance_score,
+        entry_point_proximity: file.entry_point_proximity,
+        content_quality_score: file.content_quality_score,
+        repository_role_score: file.repository_role_score,
+        recency_score: file.recency_score,
+        modified: format_timestamp(file.modified),
+    }
+}
+
+#[cfg(feature = "web")]
+fn convert_selection_metrics(metrics: SelectionMetrics) -> WebSelectionMetrics {
+    WebSelectionMetrics {
+        total_files_discovered: metrics.total_files_discovered,
+        files_selected: metrics.files_selected,
+        total_tokens_estimated: metrics.total_tokens_estimated,
+        selection_time_ms: metrics.selection_time_ms,
+        algorithm_used: metrics.algorithm_used,
+        coverage_score: metrics.coverage_score,
+        relevance_score: metrics.relevance_score,
+    }
+}
+
+#[cfg(feature = "web")]
+async fn launch_editor_mode(
+    repo_dir: &Path,
+    token_budget: usize,
+    max_bytes: usize,
+    no_exclude_tests: bool,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use std::net::TcpListener;
+
+    info!("Launching embedded web editor for {}", repo_dir.display());
+
+    let host = "127.0.0.1";
+    let mut candidate_port = 5000u16;
+    let chosen = loop {
+        match TcpListener::bind((host, candidate_port)) {
+            Ok(listener) => break Some((candidate_port, listener)),
+            Err(_) => {
+                candidate_port = candidate_port.saturating_add(1);
+                if candidate_port >= 6000 {
+                    break None;
+                }
+            }
+        }
+    };
+
+    let (port, listener) = match chosen {
+        Some(value) => value,
+        None => return Err("No available ports in range 5000-5999".into()),
+    };
+    drop(listener);
+
+    let config = WebServiceConfig {
+        port,
+        host: host.to_string(),
+        repo_path: repo_dir.to_path_buf(),
+        token_budget,
+        auto_open_browser: true,
+        max_file_size: max_bytes,
+        auto_exclude_tests: !no_exclude_tests,
+        ..WebServiceConfig::default()
+    };
+
+    info!(
+        "Starting web editor at http://{}:{} (token budget: {}, max bytes: {})",
+        config.host, config.port, token_budget, max_bytes
+    );
+
+    let provider = Arc::new(CliAnalysisProvider);
+    let mut service = WebService::new(config, provider)?;
+    service.start().await?;
+
+    info!("Web editor session finished");
+    Ok(())
+}
+
+#[cfg(not(feature = "web"))]
+async fn launch_editor_mode(
+    _repo_dir: &Path,
+    _token_budget: usize,
+    _max_bytes: usize,
+    _no_exclude_tests: bool,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    Err(
+        "The --editor option requires the `web` feature. Rebuild Scribe with --features web."
+            .into(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -356,54 +427,37 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         info!("Verbose level set to {}", verbose_level);
     }
 
+    // Normalize repository location (local path or cloned GitHub temp dir)
+    let (repo_dir, _temp_repo_guard) =
+        if repo_path_or_url.starts_with("http://") || repo_path_or_url.starts_with("https://") {
+            info!("🌐 Detected GitHub URL: {}", repo_path_or_url);
+            clone_github_repo(repo_path_or_url).await?
+        } else {
+            let path = PathBuf::from(repo_path_or_url);
+            if !path.exists() {
+                error!("Repository path does not exist: {}", repo_path_or_url);
+                process::exit(1);
+            }
+            if !path.is_dir() {
+                error!("Repository path is not a directory: {}", repo_path_or_url);
+                process::exit(1);
+            }
+            (path.canonicalize()?, None)
+        };
+
     // Check for editor mode IMMEDIATELY - before any analysis
     let editor_mode = matches.get_flag("editor");
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         info!("Editor mode flag: {}", editor_mode);
     }
     if editor_mode {
-        info!("Launching scribe-web for interactive editor mode");
-
-        // Find first available port starting at 5000
-        let mut port = 5000u16;
-        while port < 6000 {
-            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            port += 1;
-        }
-
-        if port >= 6000 {
-            return Err("No available ports in range 5000-5999".into());
-        }
-
-        info!("Selected editor port: {}", port);
-        let mut web_service_cmd = std::process::Command::new("scribe-web");
-        web_service_cmd
-            .arg(&repo_path_or_url)
-            .arg("--token-budget")
-            .arg(&token_target.to_string())
-            .arg("--max-file-size")
-            .arg(max_bytes.to_string())
-            .arg("--port")
-            .arg(&port.to_string());
-
-        if matches.get_flag("no_exclude_tests") {
-            web_service_cmd.arg("--no-exclude-tests");
-        }
-
-        info!(
-            "Starting scribe-web {} --token-budget {} --port {}",
-            repo_path_or_url, token_target, port
-        );
-
-        let status = web_service_cmd.status()?;
-
-        if !status.success() {
-            return Err(format!("Web service failed with exit code: {:?}", status.code()).into());
-        }
-
-        return Ok(());
+        return launch_editor_mode(
+            &repo_dir,
+            token_target,
+            max_bytes,
+            matches.get_flag("no_exclude_tests"),
+        )
+        .await;
     }
 
     // New arguments
@@ -445,27 +499,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         info!("Verbose mode enabled (level: {})", verbose_level);
     }
 
-    // Handle GitHub URLs vs local paths
-    let (repo_dir, _cleanup_temp) =
-        if repo_path_or_url.starts_with("http://") || repo_path_or_url.starts_with("https://") {
-            info!("🌐 Detected GitHub URL: {}", repo_path_or_url);
-            clone_github_repo(repo_path_or_url).await?
-        } else {
-            // Local path handling
-            let path = PathBuf::from(repo_path_or_url);
-            if !path.exists() {
-                error!("Repository path does not exist: {}", repo_path_or_url);
-                process::exit(1);
-            }
-            if !path.is_dir() {
-                error!("Repository path is not a directory: {}", repo_path_or_url);
-                process::exit(1);
-            }
-            (path.canonicalize()?, None)
-        };
-
-    // Load configuration from scribe.config.json if available
-    let scribe_config = load_scribe_config(&repo_dir);
+    // Load repository configuration (.scribe.json or scribe.config.json)
+    let mut config = load_repository_config(&repo_dir);
 
     // Load .scribeignore patterns
     let repo_ignore_patterns = load_ignore_patterns(&repo_dir);
@@ -478,7 +513,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let output_path = if let Some(output) = matches.get_one::<String>("output") {
         // CLI argument takes priority
         PathBuf::from(output)
-    } else if let Some(config_path) = &scribe_config.output_file_path {
+    } else if let Some(config_path) = &config.output.file_path {
         // Use path from config file
         let path = PathBuf::from(config_path);
         if path.is_absolute() {
@@ -508,36 +543,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     };
 
     // Use the library function for proper intelligent analysis
-    let mut config = Config::default();
     config.filtering.max_file_size = max_bytes as u64;
     config.analysis.token_budget = None;
 
     // Enable scaling optimizations if requested
     config.features.scaling_enabled = use_scaling;
 
-    // Respect configuration file include/exclude rules if present
-    if scribe_config.include != default_include_patterns() && !scribe_config.include.is_empty() {
-        config.filtering.include_patterns = normalize_patterns(scribe_config.include.clone());
-    }
-
-    if !scribe_config.ignore_use_gitignore {
-        config.filtering.respect_gitignore = false;
-    }
-
-    let mut exclude_patterns = if !scribe_config.ignore_use_default_patterns {
-        Vec::new()
-    } else {
-        config.filtering.exclude_patterns.clone()
-    };
+    // Start from configuration-defined patterns
+    config.filtering.include_patterns =
+        normalize_patterns(std::mem::take(&mut config.filtering.include_patterns));
+    let mut exclude_patterns =
+        normalize_patterns(std::mem::take(&mut config.filtering.exclude_patterns));
 
     if disable_default_patterns {
         exclude_patterns.clear();
-    }
-
-    if !scribe_config.ignore_custom_patterns.is_empty() {
-        exclude_patterns.extend(normalize_patterns(
-            scribe_config.ignore_custom_patterns.clone(),
-        ));
     }
 
     if !repo_ignore_patterns.is_empty() {
@@ -774,9 +793,98 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Show configuration source info
-    if scribe_config.output_file_path.is_some() && matches.get_one::<String>("output").is_none() {
+    if config.output.file_path.is_some() && matches.get_one::<String>("output").is_none() {
         info!("📋 Output path from configuration file");
     }
 
     Ok(())
+}
+
+fn load_repository_config(repo_dir: &Path) -> Config {
+    let candidates = [".scribe.json", "scribe.config.json"];
+
+    for candidate in &candidates {
+        let candidate_path = repo_dir.join(candidate);
+        if candidate_path.exists() {
+            match Config::load_from_file(&candidate_path) {
+                Ok(config) => {
+                    info!(
+                        "📋 Loaded repository configuration from: {}",
+                        candidate_path.display()
+                    );
+                    return config;
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to load configuration from {}: {}",
+                        candidate_path.display(),
+                        err
+                    );
+                }
+            }
+        }
+    }
+
+    Config::default()
+}
+
+fn load_ignore_patterns(repo_dir: &Path) -> Vec<String> {
+    let mut patterns = Vec::new();
+    let ignore_file = repo_dir.join(".scribeignore");
+    if ignore_file.exists() {
+        match fs::read_to_string(&ignore_file) {
+            Ok(content) => {
+                info!("📋 Loaded ignore patterns from: {}", ignore_file.display());
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if !trimmed.starts_with('!') {
+                        patterns.push(trimmed.to_string());
+                    }
+                }
+            }
+            Err(err) => {
+                warn!("Failed to read {}: {}", ignore_file.display(), err);
+            }
+        }
+    }
+
+    patterns
+}
+
+fn parse_pattern_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .flat_map(|segment| segment.split_whitespace())
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(|pattern| pattern.to_string())
+        .collect()
+}
+
+fn normalize_patterns(patterns: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for pattern in patterns {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut normalized = trimmed.to_string();
+        if trimmed.ends_with('/') {
+            normalized.push_str("**");
+        } else if !trimmed.contains('/') && !trimmed.contains('\\') && !trimmed.contains("**") {
+            normalized = format!("**/{}", trimmed);
+        }
+
+        if seen.insert(normalized.clone()) {
+            result.push(normalized);
+        }
+    }
+
+    result
 }

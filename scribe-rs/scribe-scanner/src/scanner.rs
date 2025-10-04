@@ -3,7 +3,7 @@
 //! This module provides the main Scanner implementation with support for
 //! parallel processing, git integration, and advanced filtering.
 
-use crate::{ContentAnalyzer, GitIntegrator, LanguageDetector, MetadataExtractor};
+use crate::{GitIntegrator, LanguageDetector, MetadataExtractor};
 use scribe_core::{
     FileInfo, GitFileStatus, GitStatus, Language, RenderDecision, Result, ScribeError,
 };
@@ -44,8 +44,6 @@ pub struct ScanOptions {
     pub max_concurrency: usize,
     /// Extract detailed file metadata
     pub metadata_extraction: bool,
-    /// Perform content analysis (imports, documentation)
-    pub content_analysis: bool,
     /// Use git integration when available
     pub git_integration: bool,
     /// Follow symbolic links
@@ -85,7 +83,6 @@ impl Default for ScanOptions {
             parallel_processing: true,
             max_concurrency: num_cpus::get().min(16), // Cap at 16 for memory efficiency
             metadata_extraction: true,
-            content_analysis: false,
             git_integration: false,
             follow_symlinks: false,
             include_hidden: false,
@@ -112,12 +109,6 @@ impl ScanOptions {
     /// Enable metadata extraction
     pub fn with_metadata_extraction(mut self, enabled: bool) -> Self {
         self.metadata_extraction = enabled;
-        self
-    }
-
-    /// Enable content analysis
-    pub fn with_content_analysis(mut self, enabled: bool) -> Self {
-        self.content_analysis = enabled;
         self
     }
 
@@ -198,12 +189,6 @@ impl Scanner {
             None
         };
 
-        let content_analyzer = if options.content_analysis {
-            Some(ContentAnalyzer::new())
-        } else {
-            None
-        };
-
         let git_integrator = if options.git_integration {
             GitIntegrator::new(path).ok()
         } else {
@@ -250,7 +235,6 @@ impl Scanner {
                 file_paths,
                 &options,
                 metadata_extractor.as_ref(),
-                content_analyzer.as_ref(),
                 git_integrator.as_ref(),
                 &language_detector,
             )
@@ -261,7 +245,6 @@ impl Scanner {
                 file_paths,
                 &options,
                 metadata_extractor.as_ref(),
-                content_analyzer.as_ref(),
                 git_integrator.as_ref(),
                 &language_detector,
             )
@@ -332,7 +315,6 @@ impl Scanner {
         file_paths: Vec<PathBuf>,
         options: &ScanOptions,
         metadata_extractor: Option<&MetadataExtractor>,
-        content_analyzer: Option<&ContentAnalyzer>,
         git_integrator: Option<&GitIntegrator>,
         language_detector: &LanguageDetector,
     ) -> Result<Vec<FileInfo>> {
@@ -357,7 +339,6 @@ impl Scanner {
                                 &path,
                                 options,
                                 metadata_extractor,
-                                content_analyzer,
                                 git_integrator,
                                 language_detector,
                             )
@@ -397,7 +378,6 @@ impl Scanner {
         file_paths: Vec<PathBuf>,
         options: &ScanOptions,
         metadata_extractor: Option<&MetadataExtractor>,
-        content_analyzer: Option<&ContentAnalyzer>,
         git_integrator: Option<&GitIntegrator>,
         language_detector: &LanguageDetector,
     ) -> Result<Vec<FileInfo>> {
@@ -409,7 +389,6 @@ impl Scanner {
                     &path,
                     options,
                     metadata_extractor,
-                    content_analyzer,
                     git_integrator,
                     language_detector,
                 )
@@ -439,7 +418,6 @@ impl Scanner {
         path: &Path,
         options: &ScanOptions,
         metadata_extractor: Option<&MetadataExtractor>,
-        content_analyzer: Option<&ContentAnalyzer>,
         git_integrator: Option<&GitIntegrator>,
         language_detector: &LanguageDetector,
     ) -> Result<Option<FileInfo>> {
@@ -507,14 +485,6 @@ impl Scanner {
             }
         }
 
-        // Perform content analysis if requested
-        if let Some(analyzer) = content_analyzer {
-            if let Ok(content_stats) = analyzer.analyze_file(path).await {
-                // Copy over content analysis results
-                // This would include import counts, documentation info, etc.
-            }
-        }
-
         // Get git information if available
         if let Some(git) = git_integrator {
             if let Ok(git_info) = git.get_file_info(path).await {
@@ -553,25 +523,10 @@ impl Scanner {
         true
     }
 
-    /// Basic binary file detection
-    fn is_likely_binary(&self, path: &Path, language: &Language) -> bool {
-        // Check extension-based detection first
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            let binary_extensions = [
-                "bin", "exe", "dll", "so", "dylib", "a", "lib", "obj", "o", "class", "jar", "war",
-                "ear", "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg", "pdf", "doc", "docx",
-                "xls", "xlsx", "ppt", "pptx", "zip", "tar", "gz", "bz2", "rar", "7z", "mp3", "mp4",
-                "avi", "mkv", "mov", "wmv", "ttf", "otf", "woff", "woff2",
-            ];
-
-            if binary_extensions.contains(&extension.to_lowercase().as_str()) {
-                return true;
-            }
-        }
-
-        // If language is detected as a text format, it's likely not binary
-        // Only consider it binary if we can't detect the language
-        matches!(language, Language::Unknown)
+    /// Binary file detection backed by libmagic-style signatures with sensible fallbacks.
+    fn is_likely_binary(&self, path: &Path, _language: &Language) -> bool {
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+        FileInfo::detect_binary_with_hint(path, extension)
     }
 
     /// Get current processing statistics
@@ -723,7 +678,6 @@ mod tests {
             .with_parallel_processing(true)
             .with_max_concurrency(8)
             .with_metadata_extraction(true)
-            .with_content_analysis(true)
             .with_git_integration(false)
             .with_follow_symlinks(false)
             .with_include_hidden(true)
@@ -732,7 +686,6 @@ mod tests {
         assert_eq!(options.parallel_processing, true);
         assert_eq!(options.max_concurrency, 8);
         assert_eq!(options.metadata_extraction, true);
-        assert_eq!(options.content_analysis, true);
         assert_eq!(options.git_integration, false);
         assert_eq!(options.follow_symlinks, false);
         assert_eq!(options.include_hidden, true);
@@ -742,15 +695,15 @@ mod tests {
     #[test]
     fn test_binary_file_detection() {
         let scanner = Scanner::new();
+        let temp_dir = tempfile::TempDir::new().unwrap();
 
-        // Test extension-based detection
-        assert!(scanner.is_likely_binary(Path::new("test.exe"), &Language::Unknown));
-        assert!(scanner.is_likely_binary(Path::new("test.png"), &Language::Unknown));
-        assert!(scanner.is_likely_binary(Path::new("test.pdf"), &Language::Unknown));
+        let text_path = temp_dir.path().join("test.rs");
+        std::fs::write(&text_path, "fn main() {}\n").unwrap();
 
-        // Test text file detection
-        assert!(!scanner.is_likely_binary(Path::new("test.rs"), &Language::Rust));
-        assert!(!scanner.is_likely_binary(Path::new("test.py"), &Language::Python));
-        assert!(!scanner.is_likely_binary(Path::new("test.md"), &Language::Markdown));
+        let binary_path = temp_dir.path().join("image.png");
+        std::fs::write(&binary_path, &[0u8, 159, 146, 150, 0, 1]).unwrap();
+
+        assert!(scanner.is_likely_binary(&binary_path, &Language::Unknown));
+        assert!(!scanner.is_likely_binary(&text_path, &Language::Rust));
     }
 }

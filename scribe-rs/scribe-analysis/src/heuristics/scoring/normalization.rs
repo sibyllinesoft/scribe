@@ -1,7 +1,7 @@
 //! Score normalization logic for consistent heuristic scoring
 
 use super::super::ScanResult;
-use super::types::{HeuristicWeights, RawScoreComponents};
+use super::types::ScoringFeatures;
 
 /// Normalized score components after statistical normalization
 #[derive(Debug, Clone)]
@@ -75,8 +75,18 @@ where
         let churn_score = file.churn_score() as usize;
         stats.max_churn_commits = stats.max_churn_commits.max(churn_score);
 
+        if let Some(imports) = file.imports() {
+            stats.max_import_degree_out = stats.max_import_degree_out.max(imports.len());
+        }
+
+        let centrality_raw = file.centrality_in();
+        stats.max_import_degree_in = stats
+            .max_import_degree_in
+            .max(centrality_raw.round() as usize);
+        stats.max_centrality_raw = stats.max_centrality_raw.max(centrality_raw);
+
         // Count examples
-        let examples_count = count_examples_in_file(file);
+        let examples_count = if file.has_examples() { 1 } else { 0 };
         stats.max_examples_count = stats.max_examples_count.max(examples_count);
     }
 
@@ -95,46 +105,83 @@ where
 }
 
 /// Normalize raw scores using statistics
-pub fn normalize_scores(
-    raw_scores: &RawScoreComponents,
+pub fn normalize_scores<T: ScanResult>(
+    file: &T,
     stats: &NormalizationStats,
+    features: &ScoringFeatures,
 ) -> NormalizedScores {
+    let mut doc_raw = if file.is_docs() { 1.0 } else { 0.0 };
+    if features.enable_doc_analysis {
+        if let Some(doc_analysis) = file.doc_analysis() {
+            doc_raw += doc_analysis.structure_score();
+        }
+    }
+
+    let readme_raw = if file.is_readme() {
+        if file.depth() <= 1 {
+            1.5
+        } else {
+            1.0
+        }
+    } else {
+        0.0
+    };
+
+    let import_out = file.imports().map(|imports| imports.len()).unwrap_or(0);
+    let import_in = file.centrality_in().round().max(0.0) as usize;
+
+    let path_depth = file.depth();
+
+    let test_links_found = if features.enable_test_linking && file.is_test() {
+        1
+    } else {
+        0
+    };
+
+    let churn_commits = if features.enable_churn_analysis {
+        file.churn_score().round().max(0.0) as usize
+    } else {
+        0
+    };
+
+    let centrality_raw = if features.enable_centrality {
+        file.centrality_in()
+    } else {
+        0.0
+    };
+
+    let examples_count = if features.enable_examples_detection && file.has_examples() {
+        1
+    } else {
+        0
+    };
+
     NormalizedScores {
-        doc_score: raw_scores.doc_raw / stats.max_doc_raw,
-        readme_score: raw_scores.readme_raw / stats.max_readme_raw,
-        import_score: calculate_import_score(raw_scores, stats),
-        path_score: calculate_path_score(raw_scores, stats),
-        test_link_score: raw_scores.test_links_found as f64 / stats.max_test_links as f64,
-        churn_score: raw_scores.churn_commits as f64 / stats.max_churn_commits as f64,
-        centrality_score: raw_scores.centrality_raw / stats.max_centrality_raw,
-        entrypoint_score: if raw_scores.is_entrypoint { 1.0 } else { 0.0 },
-        examples_score: raw_scores.examples_count as f64 / stats.max_examples_count as f64,
+        doc_score: doc_raw / stats.max_doc_raw,
+        readme_score: readme_raw / stats.max_readme_raw,
+        import_score: calculate_import_score(import_in, import_out, stats),
+        path_score: calculate_path_score(path_depth, stats),
+        test_link_score: test_links_found as f64 / stats.max_test_links as f64,
+        churn_score: churn_commits as f64 / stats.max_churn_commits as f64,
+        centrality_score: centrality_raw / stats.max_centrality_raw,
+        entrypoint_score: if file.is_entrypoint() { 1.0 } else { 0.0 },
+        examples_score: examples_count as f64 / stats.max_examples_count as f64,
     }
 }
 
 /// Calculate normalized import score combining in and out degree
-fn calculate_import_score(raw_scores: &RawScoreComponents, stats: &NormalizationStats) -> f64 {
-    let in_score = raw_scores.import_degree_in as f64 / stats.max_import_degree_in as f64;
-    let out_score = raw_scores.import_degree_out as f64 / stats.max_import_degree_out as f64;
+fn calculate_import_score(import_in: usize, import_out: usize, stats: &NormalizationStats) -> f64 {
+    let in_score = import_in as f64 / stats.max_import_degree_in as f64;
+    let out_score = import_out as f64 / stats.max_import_degree_out as f64;
 
     // Weight incoming imports higher (more important files are imported more)
     0.7 * in_score + 0.3 * out_score
 }
 
 /// Calculate normalized path score (inverted - deeper paths get lower scores)
-fn calculate_path_score(raw_scores: &RawScoreComponents, stats: &NormalizationStats) -> f64 {
+fn calculate_path_score(path_depth: usize, stats: &NormalizationStats) -> f64 {
     // Invert path depth (deeper = lower score)
-    1.0 - (raw_scores.path_depth as f64 / stats.max_path_depth as f64)
-}
-
-/// Count examples or example-like content in a file
-fn count_examples_in_file<T: ScanResult>(file: &T) -> usize {
-    // Use the built-in method from ScanResult trait
-    if file.has_examples() {
-        1
-    } else {
-        0
-    }
+    1.0 - (path_depth as f64 / stats.max_path_depth as f64)
 }
 
 #[cfg(test)]
@@ -220,19 +267,6 @@ mod tests {
 
     #[test]
     fn test_path_score_inversion() {
-        let raw_scores = RawScoreComponents {
-            doc_raw: 0.0,
-            readme_raw: 0.0,
-            import_degree_in: 0,
-            import_degree_out: 0,
-            path_depth: 3, // Deep path
-            test_links_found: 0,
-            churn_commits: 0,
-            centrality_raw: 0.0,
-            is_entrypoint: false,
-            examples_count: 0,
-        };
-
         let stats = NormalizationStats {
             max_doc_raw: 1.0,
             max_readme_raw: 1.0,
@@ -245,7 +279,7 @@ mod tests {
             max_examples_count: 1,
         };
 
-        let path_score = calculate_path_score(&raw_scores, &stats);
+        let path_score = calculate_path_score(3, &stats);
         // Path depth 3/5 = 0.6, so inverted score should be 1.0 - 0.6 = 0.4
         assert!((path_score - 0.4).abs() < 0.01);
     }

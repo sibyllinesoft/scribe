@@ -7,11 +7,12 @@
 //! - Language-specific semantic chunking and signature extraction using tree-sitter AST parsing
 
 use crate::ast_parser::{AstLanguage, AstParser};
+use regex::Regex;
 use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{Result, ScribeError};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -324,15 +325,20 @@ impl DemotionEngine {
             .collect();
 
         let demoted_content = if selected_chunks.is_empty() {
-            // Fallback: create basic structure summary if no chunks extracted
-            let lines: Vec<&str> = content.lines().collect();
-            lines
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .take(10) // Take more lines for chunks than signatures
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
+            let structure = extract_symbol_signatures(content, file_path);
+            if structure.is_empty() {
+                // Fallback: create basic structure summary if no chunks extracted
+                let lines: Vec<&str> = content.lines().collect();
+                lines
+                    .iter()
+                    .filter(|line| !line.trim().is_empty())
+                    .take(10)
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                structure.join("\n")
+            }
         } else {
             selected_chunks.join("\n\n// ... [content omitted] ...\n\n")
         };
@@ -393,27 +399,31 @@ impl DemotionEngine {
 
         // If no signatures extracted, fall back to basic fallback
         let demoted_content = if signatures.is_empty() {
-            match self
-                .chunker
-                .ast_parser
-                .borrow_mut()
-                .parse_chunks(content, file_path)
-            {
-                Ok(chunks) => {
-                    let mut fallback = Vec::new();
-                    for chunk in chunks {
-                        if let Some(name) = chunk.name {
-                            fallback.push(format!("{} {}", chunk.chunk_type, name));
+            let mut fallback = extract_symbol_signatures(content, file_path);
+            if fallback.is_empty() {
+                match self
+                    .chunker
+                    .ast_parser
+                    .borrow_mut()
+                    .parse_chunks(content, file_path)
+                {
+                    Ok(chunks) => {
+                        for chunk in chunks {
+                            if let Some(name) = chunk.name {
+                                fallback.push(format!("{} {}", chunk.chunk_type, name));
+                            }
+                        }
+
+                        if fallback.is_empty() {
+                            self.signature_extractor.extract_generic_signatures(content)
+                        } else {
+                            fallback.join("\n")
                         }
                     }
-
-                    if fallback.is_empty() {
-                        self.signature_extractor.extract_generic_signatures(content)
-                    } else {
-                        fallback.join("\n")
-                    }
+                    Err(_) => self.signature_extractor.extract_generic_signatures(content),
                 }
-                Err(_) => self.signature_extractor.extract_generic_signatures(content),
+            } else {
+                fallback.join("\n")
             }
         } else {
             signatures.join("\n")
@@ -463,6 +473,43 @@ fn estimate_tokens_for_content(content: &str, file_path: &str) -> usize {
     TokenCounter::global()
         .estimate_file_tokens(content, path_hint)
         .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(content))
+}
+
+fn extract_symbol_signatures(content: &str, file_path: &str) -> Vec<String> {
+    let extension = Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let pattern = match extension.as_str() {
+        "rs" => r"(?m)^\s*(pub\s+)?(async\s+)?(fn|struct|enum|trait)\s+[A-Za-z0-9_]+",
+        "py" => r"(?m)^\s*(def|class)\s+[A-Za-z0-9_]+",
+        "ts" | "tsx" | "js" | "jsx" => {
+            r"(?m)^\s*(export\s+)?(async\s+)?(function|class)\s+[A-Za-z0-9_]+"
+        }
+        "go" => r"(?m)^\s*func\s+[A-Za-z0-9_]+",
+        "java" => r"(?m)^\s*(public\s+)?(class|interface|enum)\s+[A-Za-z0-9_]+",
+        "cs" => r"(?m)^\s*(public\s+)?(class|interface|struct)\s+[A-Za-z0-9_]+",
+        _ => r"(?m)^\s*(fn|function|def|class)\s+[A-Za-z0-9_]+",
+    };
+
+    let regex = match Regex::new(pattern) {
+        Ok(re) => re,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut results = Vec::new();
+
+    for mat in regex.find_iter(content) {
+        let line = mat.as_str().trim().to_string();
+        if seen.insert(line.clone()) {
+            results.push(line);
+        }
+    }
+
+    results
 }
 
 #[cfg(test)]

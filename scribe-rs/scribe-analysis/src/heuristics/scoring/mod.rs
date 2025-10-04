@@ -26,12 +26,11 @@ use std::collections::HashMap;
 // Public modules
 pub mod final_scoring;
 pub mod normalization;
-pub mod raw_scores;
 pub mod types;
 
 // Re-export main types
 pub use normalization::{NormalizationStats, NormalizedScores};
-pub use types::{HeuristicWeights, RawScoreComponents, ScoreComponents, ScoringFeatures};
+pub use types::{HeuristicWeights, ScoreComponents, ScoringFeatures};
 
 /// Main heuristic scorer that coordinates all scoring components
 #[derive(Debug)]
@@ -72,9 +71,8 @@ impl HeuristicScorer {
         }
 
         let norm_stats = self.norm_stats.as_ref().unwrap();
-        let raw_scores =
-            raw_scores::calculate_raw_scores(file, &self.weights, self.import_graph.as_ref());
-        let normalized_scores = normalization::normalize_scores(&raw_scores, norm_stats);
+        let normalized_scores =
+            normalization::normalize_scores(file, norm_stats, &self.weights.features);
 
         // Calculate template boost
         let template_boost = if self.weights.features.enable_template_boost {
@@ -104,7 +102,6 @@ impl HeuristicScorer {
             examples_score: normalized_scores.examples_score,
             priority_boost: file.priority_boost(),
             template_boost,
-            raw_scores,
             weights: self.weights.clone(),
         })
     }

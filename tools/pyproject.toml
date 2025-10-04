@@ -10,7 +10,7 @@ license = {text = "Apache-2.0"}
 authors = [
   {name = "Scribe Project Maintainers"}
 ]
-readme = "README.md"
+readme = "../README.md"
 requires-python = ">=3.9"
 dependencies = [
   "jsonschema>=4.0",

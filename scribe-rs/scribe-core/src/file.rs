@@ -4,6 +4,8 @@
 //! and file classification utilities for the Scribe analysis pipeline.
 
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -23,6 +25,90 @@ pub const BINARY_EXTENSIONS: &[&str] = &[
 
 /// Markdown file extensions
 pub const MARKDOWN_EXTENSIONS: &[&str] = &[".md", ".markdown", ".mdown", ".mkd", ".mkdn"];
+
+/// MIME types under `application/*` that should be treated as plain text.
+const TEXTUAL_APPLICATION_MIME_TYPES: &[&str] = &[
+    "application/json",
+    "application/ld+json",
+    "application/graphql",
+    "application/javascript",
+    "application/x-javascript",
+    "application/typescript",
+    "application/x-typescript",
+    "application/xml",
+    "application/xhtml+xml",
+    "application/x-sh",
+    "application/x-shellscript",
+    "application/x-bash",
+    "application/x-zsh",
+    "application/x-python",
+    "application/x-ruby",
+    "application/x-perl",
+    "application/x-php",
+    "application/x-httpd-php",
+    "application/x-toml",
+    "application/toml",
+    "application/x-yaml",
+    "application/yaml",
+    "application/x-sql",
+    "application/sql",
+    "application/x-rust",
+    "application/x-go",
+    "application/x-java",
+    "application/x-scala",
+    "application/x-kotlin",
+    "application/x-swift",
+    "application/x-dart",
+    "application/x-haskell",
+    "application/x-clojure",
+    "application/x-ocaml",
+    "application/x-lisp",
+    "application/x-r",
+    "application/x-matlab",
+    "application/x-tex",
+    "application/x-empty",
+];
+
+/// Keywords inside MIME subtypes that indicate textual content even if the
+/// top-level type is `application/*`.
+const TEXTUAL_APPLICATION_KEYWORDS: &[&str] = &[
+    "+json",
+    "+xml",
+    "json",
+    "xml",
+    "yaml",
+    "yml",
+    "toml",
+    "graphql",
+    "javascript",
+    "typescript",
+    "ecmascript",
+    "shellscript",
+    "shell",
+    "bash",
+    "zsh",
+    "sh",
+    "python",
+    "ruby",
+    "perl",
+    "php",
+    "rust",
+    "go",
+    "java",
+    "scala",
+    "kotlin",
+    "swift",
+    "dart",
+    "haskell",
+    "clojure",
+    "ocaml",
+    "lisp",
+    "sql",
+    "graphql",
+    "tex",
+    "rscript",
+    "matlab",
+];
 
 /// Decision about whether to include a file in analysis
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,6 +314,53 @@ impl Language {
         )
     }
 
+    /// Display name used for user-facing messaging
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Language::Rust => "Rust",
+            Language::C => "C",
+            Language::Cpp => "C++",
+            Language::Go => "Go",
+            Language::Zig => "Zig",
+            Language::JavaScript => "JavaScript",
+            Language::TypeScript => "TypeScript",
+            Language::HTML => "HTML",
+            Language::CSS => "CSS",
+            Language::SCSS => "SCSS",
+            Language::SASS => "SASS",
+            Language::Python => "Python",
+            Language::Java => "Java",
+            Language::CSharp => "C#",
+            Language::Kotlin => "Kotlin",
+            Language::Scala => "Scala",
+            Language::Ruby => "Ruby",
+            Language::PHP => "PHP",
+            Language::Haskell => "Haskell",
+            Language::OCaml => "OCaml",
+            Language::FSharp => "F#",
+            Language::Erlang => "Erlang",
+            Language::Elixir => "Elixir",
+            Language::Clojure => "Clojure",
+            Language::JSON => "JSON",
+            Language::YAML => "YAML",
+            Language::TOML => "TOML",
+            Language::XML => "XML",
+            Language::Markdown => "Markdown",
+            Language::SQL => "SQL",
+            Language::Bash => "Bash",
+            Language::PowerShell => "PowerShell",
+            Language::Batch => "Batch",
+            Language::R => "R",
+            Language::Julia => "Julia",
+            Language::Matlab => "Matlab",
+            Language::Swift => "Swift",
+            Language::ObjectiveC => "Objective-C",
+            Language::Dart => "Dart",
+            Language::Bash => "Bash",
+            Language::Unknown => "Unknown",
+        }
+    }
+
     /// Get the typical file extensions for this language
     pub fn extensions(&self) -> &'static [&'static str] {
         match self {
@@ -292,6 +425,20 @@ pub enum FileType {
     Generated,
     /// Unknown or unclassified
     Unknown,
+}
+
+impl FileType {
+    pub fn display_label(&self) -> &'static str {
+        match self {
+            FileType::Source { .. } => "Source",
+            FileType::Documentation { .. } => "Documentation",
+            FileType::Configuration { .. } => "Configuration",
+            FileType::Test { .. } => "Test",
+            FileType::Binary => "Binary",
+            FileType::Generated => "Generated",
+            FileType::Unknown => "Unknown",
+        }
+    }
 }
 
 /// Documentation format classification
@@ -401,8 +548,9 @@ impl FileInfo {
         let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
         let language = Language::from_extension(extension);
-        let is_binary = Self::detect_binary_by_extension(extension);
-        let file_type = Self::classify_file_type(&relative_path, &language, extension);
+        let is_binary = Self::detect_binary_with_hint(path, extension);
+        let file_type =
+            Self::classify_file_type_with_binary(&relative_path, &language, extension, is_binary);
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -476,17 +624,129 @@ impl FileInfo {
         }
     }
 
-    /// Check if file extension indicates binary content
+    /// Detect whether a file is binary using libmagic-compatible signatures with
+    /// sensible fallbacks for small or unknown files.
+    pub fn detect_binary(path: &Path) -> bool {
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+        Self::detect_binary_with_hint(path, extension)
+    }
+
+    /// Detect whether a file is binary, allowing the caller to provide an
+    /// extension hint for fallback heuristics.
+    pub fn detect_binary_with_hint(path: &Path, extension: &str) -> bool {
+        if let Some(mime) = tree_magic_mini::from_filepath(path) {
+            if !Self::is_textual_mime(mime) {
+                return true;
+            }
+            return false;
+        }
+
+        if let Ok(mut file) = File::open(path) {
+            let mut buffer = [0u8; 8192];
+            if let Ok(read) = file.read(&mut buffer) {
+                if read == 0 {
+                    return false;
+                }
+
+                let slice = &buffer[..read];
+                let mime = tree_magic_mini::from_u8(slice);
+                if !Self::is_textual_mime(mime) {
+                    return true;
+                }
+
+                if slice.iter().any(|byte| *byte == 0) {
+                    return true;
+                }
+            }
+        }
+
+        Self::detect_binary_by_extension(extension)
+    }
+
+    /// Detect whether in-memory content represents a binary file.
+    pub fn detect_binary_from_bytes(bytes: &[u8], extension: Option<&str>) -> bool {
+        if bytes.is_empty() {
+            return false;
+        }
+
+        let mime = tree_magic_mini::from_u8(bytes);
+        if !Self::is_textual_mime(mime) {
+            return true;
+        }
+
+        if bytes.iter().any(|byte| *byte == 0) {
+            return true;
+        }
+
+        extension
+            .map(Self::detect_binary_by_extension)
+            .unwrap_or(false)
+    }
+
+    /// Check if file extension indicates binary content (fallback heuristic).
     pub fn detect_binary_by_extension(extension: &str) -> bool {
-        BINARY_EXTENSIONS.contains(&format!(".{}", extension.to_lowercase()).as_str())
+        if extension.is_empty() {
+            return false;
+        }
+
+        let trimmed = extension.trim_start_matches('.');
+        let lower = trimmed.to_lowercase();
+        let prefixed = format!(".{}", lower);
+
+        BINARY_EXTENSIONS.contains(&prefixed.as_str())
+    }
+
+    #[inline]
+    fn is_textual_mime(mime: &str) -> bool {
+        let canonical = mime
+            .split(';')
+            .next()
+            .unwrap_or(mime)
+            .trim()
+            .to_ascii_lowercase();
+        let mime = canonical.as_str();
+
+        if mime.starts_with("text/") || mime.starts_with("inode/") || mime.starts_with("message/") {
+            return true;
+        }
+
+        if mime.starts_with("application/") {
+            if TEXTUAL_APPLICATION_MIME_TYPES.contains(&mime) {
+                return true;
+            }
+
+            if TEXTUAL_APPLICATION_KEYWORDS
+                .iter()
+                .any(|keyword| mime.contains(keyword))
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Classify file type based on path and language
     pub fn classify_file_type(path: &str, language: &Language, extension: &str) -> FileType {
+        let is_binary = Self::detect_binary_by_extension(extension);
+        Self::classify_file_type_with_binary(path, language, extension, is_binary)
+    }
+
+    /// Classify file type when the binary state is already known.
+    pub fn classify_file_type_with_binary(
+        path: &str,
+        language: &Language,
+        extension: &str,
+        is_binary: bool,
+    ) -> FileType {
         let path_lower = path.to_lowercase();
 
+        if is_binary {
+            return FileType::Binary;
+        }
+
         // Test files
-        if path_lower.contains("test") || path_lower.contains("spec") {
+        if is_test_path(Path::new(path)) {
             return FileType::Test {
                 language: language.clone(),
             };
@@ -516,11 +776,6 @@ impl FileInfo {
                 _ => ConfigurationFormat::Json,
             };
             return FileType::Configuration { format };
-        }
-
-        // Binary files
-        if Self::detect_binary_by_extension(extension) {
-            return FileType::Binary;
         }
 
         // Generated files (common patterns)
@@ -592,6 +847,134 @@ pub fn bytes_to_human(bytes: u64) -> String {
     }
 }
 
+/// Detect language from a file path based on extension or special names
+pub fn detect_language_from_path(path: &Path) -> Language {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(Language::from_extension)
+        .unwrap_or(Language::Unknown)
+}
+
+/// Convenience helper returning the human-friendly language name
+pub fn language_display_name(language: &Language) -> &'static str {
+    language.display_name()
+}
+
+/// Heuristic test-file detection based on path segments and naming conventions
+pub fn is_test_path(path: &Path) -> bool {
+    let path_lower = path.to_string_lossy().to_lowercase();
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    if file_name == "output.md" || file_name.starts_with("output.") {
+        return true;
+    }
+
+    let segments: Vec<&str> = path_lower
+        .split(|c| c == '/' || c == '\\')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+
+    const TEST_DIR_MARKERS: &[&str] = &[
+        "test",
+        "tests",
+        "testing",
+        "__tests__",
+        "integration-tests",
+        "integration_test",
+        "integrationtests",
+        "e2e",
+        "qa",
+        "spec",
+    ];
+
+    if segments
+        .iter()
+        .any(|segment| TEST_DIR_MARKERS.contains(segment))
+    {
+        return true;
+    }
+
+    const TEST_PREFIXES: &[&str] = &["test_", "spec_", "itest_", "integration_"];
+    if TEST_PREFIXES
+        .iter()
+        .any(|prefix| file_name.starts_with(prefix))
+    {
+        return true;
+    }
+
+    const TEST_SUFFIXES: &[&str] = &["_test", "_tests", "_spec", "_itest", "_integration", "_e2e"];
+    if TEST_SUFFIXES
+        .iter()
+        .any(|suffix| file_name.strip_suffix(suffix).is_some())
+    {
+        return true;
+    }
+
+    if file_name.contains(".test.") || file_name.contains(".spec.") {
+        return true;
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "rs" => file_name.ends_with("_test.rs") || segments.iter().any(|seg| *seg == "tests"),
+        "py" => file_name.starts_with("test_") || file_name.ends_with("_test.py"),
+        "go" => file_name.ends_with("_test.go"),
+        "java" | "kt" => {
+            file_name.ends_with("test.java")
+                || file_name.ends_with("tests.java")
+                || file_name.ends_with("test.kt")
+                || file_name.ends_with("tests.kt")
+        }
+        "php" => file_name.ends_with("test.php"),
+        "rb" => file_name.ends_with("_spec.rb") || file_name.ends_with("_test.rb"),
+        "js" | "jsx" | "ts" | "tsx" => {
+            file_name.contains(".test.")
+                || file_name.contains(".spec.")
+                || file_name.ends_with("_test.ts")
+        }
+        _ => false,
+    }
+}
+
+/// Heuristic entrypoint detection based on common file names per language
+pub fn is_entrypoint_path(path: &Path, language: &Language) -> bool {
+    let path_lower = path.to_string_lossy().to_lowercase();
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    match language {
+        Language::Rust => file_name == "main.rs" || file_name == "lib.rs",
+        Language::Python => {
+            file_name == "main.py"
+                || path_lower.contains("/__main__.py")
+                || path_lower.contains("/manage.py")
+                || file_name == "app.py"
+                || file_name == "__init__.py"
+        }
+        Language::JavaScript | Language::TypeScript => {
+            file_name == "index.js"
+                || file_name == "index.ts"
+                || path_lower.contains("/app.js")
+                || path_lower.contains("/server.js")
+        }
+        Language::Go => file_name == "main.go",
+        Language::Java => file_name == "main.java" || path_lower.contains("/main.java"),
+        _ => file_name.starts_with("main.") || file_name.starts_with("index."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,6 +993,33 @@ mod tests {
         assert!(FileInfo::detect_binary_by_extension("exe"));
         assert!(!FileInfo::detect_binary_by_extension("rs"));
         assert!(!FileInfo::detect_binary_by_extension("py"));
+    }
+
+    #[test]
+    fn test_detect_binary_magic_on_files() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut text_file = NamedTempFile::new().unwrap();
+        writeln!(text_file, "fn main() {{ println!(\"hi\"); }}").unwrap();
+
+        assert!(!FileInfo::detect_binary(text_file.path()));
+
+        let mut binary_file = NamedTempFile::new().unwrap();
+        binary_file
+            .write_all(&[0u8, 159, 146, 150, 0, 1, 2])
+            .unwrap();
+
+        assert!(FileInfo::detect_binary(binary_file.path()));
+    }
+
+    #[test]
+    fn test_detect_binary_from_bytes() {
+        let text_bytes = b"#!/usr/bin/env python3\nprint('hello')\n";
+        assert!(!FileInfo::detect_binary_from_bytes(text_bytes, Some("py")));
+
+        let binary_bytes = [0u8, 255, 1, 2, 3, 4, 5];
+        assert!(FileInfo::detect_binary_from_bytes(&binary_bytes, None));
     }
 
     #[test]

@@ -432,10 +432,13 @@
             align-items: center;
             gap: 20px;
         }
-        
-        .control-buttons {
+
+        .control-message {
+            font-size: 13px;
+            color: var(--text-secondary);
             display: flex;
-            gap: 12px;
+            align-items: center;
+            gap: 6px;
         }
         
         .btn {
@@ -507,11 +510,8 @@
                 gap: 12px;
                 padding: 16px;
             }
-            
-            .control-buttons {
-                justify-content: center;
-            }
-            
+
+            .control-message,
             .status-indicator {
                 justify-content: center;
             }
@@ -538,13 +538,8 @@
         </div>
         
         <div class="control-bar">
-            <div class="control-buttons">
-                <button id="save-btn" class="btn btn-primary">
-                    💾 Save Bundle
-                </button>
-                <button id="shutdown-btn" class="btn btn-secondary">
-                    🛑 Shutdown Server
-                </button>
+            <div class="control-message">
+                🔒 Viewer mode — selections are read-only in this export
             </div>
             <div class="status-indicator">
                 <span id="connection-status" class="status-dot online"></span>
@@ -651,23 +646,11 @@
         
         // Control functionality
         function initializeControls() {
-            // Ping server every 30 seconds to keep alive
+            // Ping server every 30 seconds to keep status fresh
             setInterval(pingServer, 30000);
-            
+
             // Initial ping
             pingServer();
-            
-            // Setup button event listeners
-            const saveBtn = document.getElementById('save-btn');
-            const shutdownBtn = document.getElementById('shutdown-btn');
-            
-            if (saveBtn) {
-                saveBtn.addEventListener('click', handleSave);
-            }
-            
-            if (shutdownBtn) {
-                shutdownBtn.addEventListener('click', handleShutdown);
-            }
         }
         
         async function pingServer() {
@@ -705,93 +688,7 @@
             }
         }
         
-        async function handleSave() {
-            const saveBtn = document.getElementById('save-btn');
-            if (!saveBtn) return;
-            
-            // Disable button and show loading
-            saveBtn.disabled = true;
-            saveBtn.innerHTML = '⏳ Saving...';
-            
-            try {
-                // Get current selected files from the tree
-                const selectedFiles = getSelectedFiles();
-                
-                const response = await fetch('/api/bundle/save', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        files: selectedFiles
-                    })
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    saveBtn.innerHTML = '✅ Saved!';
-                    setTimeout(() => {
-                        saveBtn.innerHTML = '💾 Save Bundle';
-                        saveBtn.disabled = false;
-                    }, 2000);
-                } else {
-                    throw new Error('Save failed');
-                }
-            } catch (error) {
-                console.error('Save error:', error);
-                saveBtn.innerHTML = '❌ Save Failed';
-                setTimeout(() => {
-                    saveBtn.innerHTML = '💾 Save Bundle';
-                    saveBtn.disabled = false;
-                }, 2000);
-            }
-        }
         
-        async function handleShutdown() {
-            if (!confirm('Are you sure you want to shutdown the server?')) {
-                return;
-            }
-            
-            const shutdownBtn = document.getElementById('shutdown-btn');
-            if (!shutdownBtn) return;
-            
-            // Disable button and show loading
-            shutdownBtn.disabled = true;
-            shutdownBtn.innerHTML = '⏳ Shutting down...';
-            
-            try {
-                const response = await fetch('/api/shutdown', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                });
-                
-                if (response.ok) {
-                    shutdownBtn.innerHTML = '✅ Server stopped';
-                    updateConnectionStatus(false);
-                    // Show goodbye message
-                    setTimeout(() => {
-                        document.body.innerHTML = '<div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-size: 24px; color: var(--text-primary);">🛑 Server has been shut down</div>';
-                    }, 1000);
-                } else {
-                    throw new Error('Shutdown failed');
-                }
-            } catch (error) {
-                console.error('Shutdown error:', error);
-                shutdownBtn.innerHTML = '❌ Shutdown Failed';
-                setTimeout(() => {
-                    shutdownBtn.innerHTML = '🛑 Shutdown Server';
-                    shutdownBtn.disabled = false;
-                }, 2000);
-            }
-        }
-        
-        function getSelectedFiles() {
-            // This would integrate with the React tree component
-            // For now, return all files as selected
-            return fileData.map(file => file.path);
-        }
     </script>
 </body>
 </html>

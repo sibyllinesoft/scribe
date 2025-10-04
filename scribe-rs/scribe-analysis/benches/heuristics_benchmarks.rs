@@ -184,7 +184,7 @@ fn bench_template_detection(c: &mut Criterion) {
     ];
 
     group.bench_function("template_detection", |b| {
-        let detector = TemplateDetector::new();
+        let detector = TemplateDetector::new().unwrap();
         b.iter(|| {
             for file_path in &test_files {
                 black_box(detector.get_score_boost(file_path).unwrap());
@@ -216,7 +216,7 @@ fn bench_import_analysis(c: &mut Criterion) {
             size,
             |b, _| {
                 b.iter_batched(
-                    || ImportGraphBuilder::new(),
+                    || ImportGraphBuilder::new().unwrap(),
                     |mut builder| black_box(builder.build_graph(&files).unwrap()),
                     BatchSize::SmallInput,
                 );
@@ -227,7 +227,7 @@ fn bench_import_analysis(c: &mut Criterion) {
             BenchmarkId::new("pagerank_calculation", size),
             size,
             |b, _| {
-                let mut builder = ImportGraphBuilder::new();
+                let mut builder = ImportGraphBuilder::new().unwrap();
                 let graph = builder.build_graph(&files).unwrap();
                 b.iter(|| {
                     let mut graph_copy = graph.clone();

@@ -1,23 +1,25 @@
 //! HTTP handlers for the Scribe web service
 
-use crate::{ApiResponse, AppState, BundleState, Result, WebServiceError};
+use crate::{
+    AnalysisOutput, ApiResponse, AppState, BundleState, Result, WebReportFile, WebSelectionMetrics,
+    WebServiceError,
+};
 use axum::{
     extract::State,
     response::{Html, IntoResponse, Json},
 };
 use handlebars::{Context as HbContext, Handlebars, Helper, HelperResult, Output, RenderContext};
 use once_cell::sync::Lazy;
-use scribe_analyzer::{analyze_and_select, ReportFile, SelectionMetrics, SelectionOptions};
-use scribe_core::{Config, FileInfo};
+use scribe_core::FileInfo;
 use scribe_selection::{
     BundleOptions, CodeBundler, ContextExtractor, ContextOptions, SelectionResult,
 };
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info};
 
 /// Health check endpoint
@@ -139,7 +141,7 @@ pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
 
     match get_or_compute_analysis(&state).await {
         Ok(cached) => {
-            update_bundle_state(&state, &cached.analysis).await;
+            let _ = update_bundle_state(&state, &cached.analysis).await;
 
             if let Some(html) = cached
                 .rendered_html
@@ -193,8 +195,16 @@ pub async fn scan_repository(State(state): State<AppState>) -> impl IntoResponse
     info!("Scanning repository: {}", repo_path.display());
     match get_or_compute_analysis(&state).await {
         Ok(cached) => {
-            update_bundle_state(&state, &cached.analysis).await;
-            Json(ApiResponse::success(cached.scan_result.clone()))
+            let categories = update_bundle_state(&state, &cached.analysis).await;
+            let bundle_snapshot = state.bundle_state.read().await.clone();
+            let scan_result = build_scan_result(
+                &cached.analysis,
+                &bundle_snapshot,
+                cached.rendered_html.clone(),
+                categories,
+            );
+
+            Json(ApiResponse::success(scan_result))
         }
         Err(err) => {
             error!("Scan failed: {}", err);
@@ -262,20 +272,49 @@ pub async fn toggle_file(
 ) -> impl IntoResponse {
     debug!("Toggling file: {}", request.path);
 
+    let cached = match get_or_compute_analysis(&state).await {
+        Ok(cached) => cached,
+        Err(err) => {
+            error!("Toggle failed during analysis: {}", err);
+            return Json(ApiResponse::error(err.to_string()));
+        }
+    };
+
+    let available_paths: HashSet<&str> = cached
+        .analysis
+        .repository_files
+        .iter()
+        .map(|info| info.relative_path.as_str())
+        .collect();
+
+    if !available_paths.contains(request.path.as_str()) {
+        return Json(ApiResponse::error(format!(
+            "File {} not found in repository analysis",
+            request.path
+        )));
+    }
+
     let mut bundle_state = state.bundle_state.write().await;
 
-    if bundle_state.included_files.contains(&request.path) {
-        bundle_state.included_files.retain(|f| f != &request.path);
+    if let Some(position) = bundle_state
+        .included_files
+        .iter()
+        .position(|path| path == &request.path)
+    {
+        bundle_state.included_files.remove(position);
         info!("Removed file from bundle: {}", request.path);
     } else {
         bundle_state.included_files.push(request.path.clone());
         info!("Added file to bundle: {}", request.path);
     }
 
-    bundle_state.last_updated = chrono::Utc::now();
-    // TODO: Recalculate token estimate and size
+    let categories = recompute_bundle_summary(&mut bundle_state, &cached.analysis);
+    let snapshot = bundle_state.clone();
+    drop(bundle_state);
 
-    Json(ApiResponse::success(bundle_state.clone()))
+    let scan_result = build_scan_result(&cached.analysis, &snapshot, None, categories);
+
+    Json(ApiResponse::success(scan_result))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -349,9 +388,13 @@ pub async fn toggle_directory(
         info!("Added directory {} to bundle", request.path);
     }
 
-    recompute_bundle_summary(&mut bundle_state, &cached.analysis);
+    let categories = recompute_bundle_summary(&mut bundle_state, &cached.analysis);
+    let snapshot = bundle_state.clone();
+    drop(bundle_state);
 
-    Json(ApiResponse::success(bundle_state.clone()))
+    let scan_result = build_scan_result(&cached.analysis, &snapshot, None, categories);
+
+    Json(ApiResponse::success(scan_result))
 }
 
 /// Generate bundle with current selection
@@ -363,12 +406,10 @@ pub async fn generate_bundle(
 
     match get_or_compute_analysis(&state).await {
         Ok(cached) => {
-            update_bundle_state(&state, &cached.analysis).await;
+            let _ = update_bundle_state(&state, &cached.analysis).await;
 
-            let included_files = {
-                let bundle_state = state.bundle_state.read().await;
-                bundle_state.included_files.clone()
-            };
+            let bundle_snapshot = state.bundle_state.read().await.clone();
+            let included_files = bundle_snapshot.included_files.clone();
 
             if included_files.is_empty() {
                 return Json(ApiResponse::error(
@@ -381,39 +422,34 @@ pub async fn generate_bundle(
                     let cfg = state.config.read().await;
                     cfg.repo_path.clone()
                 };
-                let included_set: HashSet<&str> =
-                    included_files.iter().map(|path| path.as_str()).collect();
-                let filtered_reports: Vec<ReportFile> = cached
-                    .analysis
-                    .selected_files
-                    .iter()
-                    .filter(|file| included_set.contains(file.relative_path.as_str()))
-                    .cloned()
-                    .collect();
 
-                let template_data = prepare_template_data(
-                    &repo_root,
-                    &filtered_reports,
-                    &cached.analysis.metrics,
-                );
+                match build_reports_for_selection(&cached.analysis, &bundle_snapshot) {
+                    Ok((reports, metrics)) => {
+                        let template_data = prepare_template_data(&repo_root, &reports, &metrics);
 
-                return match render_template(&template_data) {
-                    Ok(content) => {
-                        let bundle = GeneratedBundle {
-                            format: request.format.clone(),
-                            filename: "scribe-bundle.html".to_string(),
-                            size: content.len(),
-                            content,
+                        return match render_template(&template_data) {
+                            Ok(content) => {
+                                let bundle = GeneratedBundle {
+                                    format: request.format.clone(),
+                                    filename: "scribe-bundle.html".to_string(),
+                                    size: content.len(),
+                                    content,
+                                };
+                                Json(ApiResponse::success(bundle))
+                            }
+                            Err(err) => {
+                                error!("Bundle generation failed: {}", err);
+                                Json(ApiResponse::error(
+                                    "Unable to render HTML bundle".to_string(),
+                                ))
+                            }
                         };
-                        Json(ApiResponse::success(bundle))
                     }
                     Err(err) => {
-                        error!("Bundle generation failed: {}", err);
-                        Json(ApiResponse::error(
-                            "Unable to render HTML bundle".to_string(),
-                        ))
+                        error!("Failed to build HTML reports: {}", err);
+                        return Json(ApiResponse::error(err.to_string()));
                     }
-                };
+                }
             }
 
             let context_extractor = ContextExtractor::new();
@@ -500,12 +536,10 @@ pub async fn save_bundle(
         }
     };
 
-    update_bundle_state(&state, &cached.analysis).await;
+    let _ = update_bundle_state(&state, &cached.analysis).await;
 
-    let included_files = {
-        let bundle_state = state.bundle_state.read().await;
-        bundle_state.included_files.clone()
-    };
+    let bundle_snapshot = state.bundle_state.read().await.clone();
+    let included_files = bundle_snapshot.included_files.clone();
 
     if included_files.is_empty() {
         return Json(ApiResponse::error(
@@ -519,29 +553,22 @@ pub async fn save_bundle(
     };
 
     let content = if request.format.eq_ignore_ascii_case("html") {
-        let included_set: HashSet<&str> =
-            included_files.iter().map(|path| path.as_str()).collect();
-        let filtered_reports: Vec<ReportFile> = cached
-            .analysis
-            .selected_files
-            .iter()
-            .filter(|file| included_set.contains(file.relative_path.as_str()))
-            .cloned()
-            .collect();
-
-        let template_data = prepare_template_data(
-            &repo_root,
-            &filtered_reports,
-            &cached.analysis.metrics,
-        );
-
-        match render_template(&template_data) {
-            Ok(html) => html,
+        match build_reports_for_selection(&cached.analysis, &bundle_snapshot) {
+            Ok((reports, metrics)) => {
+                let template_data = prepare_template_data(&repo_root, &reports, &metrics);
+                match render_template(&template_data) {
+                    Ok(html) => html,
+                    Err(err) => {
+                        error!("Bundle generation failed: {}", err);
+                        return Json(ApiResponse::error(
+                            "Unable to render HTML bundle".to_string(),
+                        ));
+                    }
+                }
+            }
             Err(err) => {
-                error!("Bundle generation failed: {}", err);
-                return Json(ApiResponse::error(
-                    "Unable to render HTML bundle".to_string(),
-                ));
+                error!("Failed to build HTML reports: {}", err);
+                return Json(ApiResponse::error(err.to_string()));
             }
         }
     } else {
@@ -676,64 +703,43 @@ pub async fn update_config(
     Json(ApiResponse::success(new_config))
 }
 
-#[derive(Clone)]
-struct AnalysisOutput {
-    selected_files: Vec<ReportFile>,
-    selected_file_infos: Vec<FileInfo>,
-    metrics: SelectionMetrics,
-    repository_files: Vec<FileInfo>,
-    token_budget: usize,
-}
-
-async fn analyze_repository_for_web(
-    config: &crate::WebServiceConfig,
-) -> std::result::Result<AnalysisOutput, WebServiceError> {
-    let mut scribe_config = Config::default();
-    scribe_config.filtering.max_file_size = config.max_file_size as u64;
-    scribe_config.features.auto_exclude_tests = config.auto_exclude_tests;
-    scribe_config.analysis.token_budget = None;
-    scribe_config.general.working_dir = Some(config.repo_path.clone());
-
-    let selection_options = SelectionOptions {
-        token_target: config.token_budget,
-        force_traditional: config.token_budget == 0,
-        algorithm_name: Some("web-service".to_string()),
-        include_directory_map: true,
-    };
-
-    let outcome = analyze_and_select(&config.repo_path, &scribe_config, &selection_options)
-        .await
-        .map_err(|err| WebServiceError::ScribeCore(err.to_string()))?;
-
-    Ok(AnalysisOutput {
-        selected_files: outcome.selection.selected_files,
-        selected_file_infos: outcome.selection.selected_file_infos,
-        metrics: outcome.selection.metrics,
-        repository_files: outcome.analysis.files,
-        token_budget: config.token_budget,
-    })
-}
-
-fn recompute_bundle_summary(bundle_state: &mut BundleState, analysis: &AnalysisOutput) {
+fn recompute_bundle_summary(
+    bundle_state: &mut BundleState,
+    analysis: &AnalysisOutput,
+) -> HashMap<String, Vec<FileEntry>> {
     let repo_lookup: HashMap<&str, &FileInfo> = analysis
         .repository_files
         .iter()
         .map(|info| (info.relative_path.as_str(), info))
         .collect();
 
-    let original_paths = bundle_state.included_files.clone();
-    bundle_state.included_files.clear();
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for path in bundle_state.included_files.drain(..) {
+        if repo_lookup.contains_key(path.as_str()) && seen.insert(path.clone()) {
+            normalized.push(path);
+        }
+    }
+
+    bundle_state.included_files = normalized;
 
     let mut total_size: u64 = 0;
     let mut total_tokens: usize = 0;
 
-    for path in original_paths {
+    for path in &bundle_state.included_files {
         if let Some(info) = repo_lookup.get(path.as_str()) {
             total_size += info.size;
             total_tokens = total_tokens.saturating_add(info.token_estimate.unwrap_or(0));
-            bundle_state.included_files.push(path);
         }
     }
+
+    let included_entries: Vec<FileEntry> = bundle_state
+        .included_files
+        .iter()
+        .filter_map(|path| repo_lookup.get(path.as_str()).copied())
+        .map(|info| file_entry_from_fileinfo(info, true))
+        .collect();
 
     let included_set: HashSet<&str> = bundle_state
         .included_files
@@ -741,20 +747,32 @@ fn recompute_bundle_summary(bundle_state: &mut BundleState, analysis: &AnalysisO
         .map(|path| path.as_str())
         .collect();
 
-    let excluded = analysis
-        .repository_files
-        .iter()
-        .filter(|info| !included_set.contains(info.relative_path.as_str()))
-        .map(|info| info.relative_path.clone())
-        .collect();
+    let mut excluded_paths = Vec::new();
+    let mut excluded_entries = Vec::new();
+
+    for info in &analysis.repository_files {
+        if !included_set.contains(info.relative_path.as_str()) {
+            excluded_paths.push(info.relative_path.clone());
+            excluded_entries.push(file_entry_from_fileinfo(info, false));
+        }
+    }
 
     bundle_state.total_size = file_size_to_usize(total_size);
     bundle_state.token_estimate = total_tokens;
-    bundle_state.excluded_files = HashMap::from([( "excluded".to_string(), excluded )]);
+    bundle_state.excluded_files = HashMap::from([("excluded".to_string(), excluded_paths)]);
     bundle_state.last_updated = chrono::Utc::now();
+
+    let mut categories = HashMap::new();
+    categories.insert("included".to_string(), included_entries);
+    categories.insert("excluded".to_string(), excluded_entries);
+
+    categories
 }
 
-async fn update_bundle_state(state: &AppState, analysis: &AnalysisOutput) {
+async fn update_bundle_state(
+    state: &AppState,
+    analysis: &AnalysisOutput,
+) -> HashMap<String, Vec<FileEntry>> {
     let mut bundle_state = state.bundle_state.write().await;
     if bundle_state.included_files.is_empty() {
         bundle_state.included_files = analysis
@@ -781,7 +799,7 @@ async fn update_bundle_state(state: &AppState, analysis: &AnalysisOutput) {
                 .collect();
         }
     }
-    recompute_bundle_summary(&mut bundle_state, analysis);
+    recompute_bundle_summary(&mut bundle_state, analysis)
 }
 
 fn file_entry_from_fileinfo(file: &FileInfo, included: bool) -> FileEntry {
@@ -794,7 +812,10 @@ fn file_entry_from_fileinfo(file: &FileInfo, included: bool) -> FileEntry {
     }
 }
 
-fn file_entry_from_report_file(file: &ReportFile, matching_info: Option<&FileInfo>) -> FileEntry {
+fn file_entry_from_report_file(
+    file: &WebReportFile,
+    matching_info: Option<&FileInfo>,
+) -> FileEntry {
     let file_type = matching_info
         .map(|info| format!("{:?}", info.language))
         .unwrap_or_else(|| "unknown".to_string());
@@ -850,6 +871,96 @@ fn build_selection_result(analysis: &AnalysisOutput, included_files: &[String]) 
     }
 }
 
+fn build_scan_result(
+    analysis: &AnalysisOutput,
+    bundle_state: &BundleState,
+    rendered_html: Option<String>,
+    mut categories: HashMap<String, Vec<FileEntry>>,
+) -> ScanResult {
+    categories.entry("included".to_string()).or_default();
+    categories.entry("excluded".to_string()).or_default();
+
+    ScanResult {
+        total_files: analysis.repository_files.len(),
+        selected_files: bundle_state.included_files.len(),
+        excluded_files: analysis
+            .repository_files
+            .len()
+            .saturating_sub(bundle_state.included_files.len()),
+        token_estimate: bundle_state.token_estimate,
+        total_size: bundle_state.total_size,
+        categories,
+        rendered_html,
+    }
+}
+
+fn build_reports_for_selection(
+    analysis: &AnalysisOutput,
+    bundle_state: &BundleState,
+) -> Result<(Vec<WebReportFile>, WebSelectionMetrics)> {
+    let mut reports = Vec::new();
+    let mut total_tokens = 0usize;
+
+    for path in &bundle_state.included_files {
+        if let Some(existing) = analysis
+            .selected_files
+            .iter()
+            .find(|file| &file.relative_path == path)
+        {
+            total_tokens = total_tokens.saturating_add(existing.estimated_tokens);
+            reports.push(existing.clone());
+            continue;
+        }
+
+        if let Some(info) = analysis
+            .repository_files
+            .iter()
+            .find(|info| &info.relative_path == path)
+        {
+            let content = match &info.content {
+                Some(cached) => cached.clone(),
+                None => std::fs::read_to_string(&info.path).unwrap_or_else(|_| {
+                    format!("<unable to read file {}>", info.path.to_string_lossy())
+                }),
+            };
+
+            let estimated_tokens = info
+                .token_estimate
+                .unwrap_or_else(|| (content.len() / 4).max(1));
+
+            total_tokens = total_tokens.saturating_add(estimated_tokens);
+
+            reports.push(WebReportFile {
+                path: info.path.clone(),
+                relative_path: info.relative_path.clone(),
+                content,
+                size: info.size,
+                estimated_tokens,
+                importance_score: 0.0,
+                centrality_score: info.centrality_score.unwrap_or(0.0),
+                query_relevance_score: 0.0,
+                entry_point_proximity: 0.0,
+                content_quality_score: 0.0,
+                repository_role_score: 0.0,
+                recency_score: 0.0,
+                modified: format_modified(info.modified),
+            });
+        } else {
+            return Err(WebServiceError::FileNotFound { path: path.clone() });
+        }
+    }
+
+    let mut metrics = analysis.metrics.clone();
+    metrics.files_selected = reports.len();
+    metrics.total_tokens_estimated = total_tokens;
+
+    if metrics.total_files_discovered == 0 {
+        metrics.total_files_discovered = analysis.repository_files.len();
+    }
+
+    Ok((reports, metrics))
+}
+
 /// Template data structure for Handlebars rendering
 #[derive(Serialize, Clone)]
 struct TemplateData {
@@ -876,8 +987,8 @@ struct TemplateFile {
 
 fn prepare_template_data(
     repo_path: &Path,
-    selected_files: &[ReportFile],
-    metrics: &SelectionMetrics,
+    selected_files: &[WebReportFile],
+    metrics: &WebSelectionMetrics,
 ) -> TemplateData {
     let repo_name = repo_path
         .file_name()
@@ -1071,7 +1182,7 @@ async fn get_or_compute_analysis(state: &AppState) -> crate::Result<CachedAnalys
         }
     }
 
-    let analysis = analyze_repository_for_web(&config_snapshot).await?;
+    let analysis = state.analysis_provider.analyze(&config_snapshot).await?;
     let (scan_result, template_data, rendered_html) =
         build_render_data(&analysis, &config_snapshot);
 
@@ -1126,15 +1237,49 @@ fn get_file_icon(extension: &str) -> String {
     .to_string()
 }
 
+fn format_modified(time: Option<SystemTime>) -> String {
+    match time {
+        Some(ts) => {
+            let datetime: chrono::DateTime<chrono::Local> = ts.into();
+            datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        None => "N/A".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppState, BundleState, WebServiceConfig};
+    use crate::{AnalysisProvider, AppState, BundleState, WebServiceConfig};
+    use async_trait::async_trait;
     use axum::{routing::get, Router};
     use axum_test::TestServer;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::RwLock;
+
+    struct DummyProvider;
+
+    #[async_trait]
+    impl AnalysisProvider for DummyProvider {
+        async fn analyze(&self, config: &WebServiceConfig) -> crate::Result<AnalysisOutput> {
+            Ok(AnalysisOutput {
+                selected_files: Vec::new(),
+                selected_file_infos: Vec::new(),
+                metrics: WebSelectionMetrics {
+                    total_files_discovered: 0,
+                    files_selected: 0,
+                    total_tokens_estimated: 0,
+                    selection_time_ms: 0,
+                    algorithm_used: "test".to_string(),
+                    coverage_score: 0.0,
+                    relevance_score: 0.0,
+                },
+                repository_files: Vec::new(),
+                token_budget: config.token_budget,
+            })
+        }
+    }
 
     fn create_test_app_state() -> AppState {
         let temp_dir = TempDir::new().unwrap();
@@ -1155,6 +1300,7 @@ mod tests {
             bundle_state: Arc::new(RwLock::new(BundleState::default())),
             last_ping: Arc::new(tokio::sync::RwLock::new(tokio::time::Instant::now())),
             shutdown_sender: Arc::new(tokio::sync::RwLock::new(None)),
+            analysis_provider: Arc::new(DummyProvider),
         }
     }
 
@@ -1442,6 +1588,7 @@ mod tests {
             token_estimate: 5000,
             total_size: 10240,
             categories,
+            rendered_html: None,
         };
 
         assert_eq!(

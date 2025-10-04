@@ -8,8 +8,8 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::report::SelectionMetrics;
 use crate::{
-    analyze_repository, apply_token_budget_selection, format_bytes, format_timestamp,
-    report::ReportFile, Config, RepositoryAnalysis,
+    analyze_repository, apply_token_budget_selection, format_timestamp, report::ReportFile, Config,
+    RepositoryAnalysis,
 };
 use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{FileInfo, Result};
@@ -137,6 +137,27 @@ pub async fn select_from_analysis(
     let mut selected_files = Vec::new();
     let mut budget_consumed = 0usize;
 
+    // Always attempt to include the directory map first so subsequent selection respects
+    // the remaining budget. This keeps the structural overview available in every bundle.
+    if options.include_directory_map {
+        if let Some(directory_map) = build_directory_map_for_analysis(repo_path, &analysis.files) {
+            let map_tokens = directory_map.estimated_tokens;
+
+            if !unlimited_budget {
+                budget_consumed = budget_consumed.saturating_add(map_tokens);
+
+                if map_tokens > options.token_target && std::env::var("SCRIBE_DEBUG").is_ok() {
+                    eprintln!(
+                        "Directory map ({} tokens) exceeds the token budget {}; proceeding regardless",
+                        map_tokens, options.token_target
+                    );
+                }
+            }
+
+            selected_files.push(directory_map);
+        }
+    }
+
     for info in selected_infos {
         let mut content = info.content.clone();
         if content.is_none() && !info.is_binary {
@@ -183,6 +204,7 @@ pub async fn select_from_analysis(
             content_quality_score: 0.0,
             repository_role_score: 0.0,
             recency_score: 0.0,
+            modified: info.modified,
         });
     }
 
@@ -218,18 +240,9 @@ pub async fn select_from_analysis(
                 content_quality_score: 0.0,
                 repository_role_score: 0.0,
                 recency_score: 0.0,
+                modified: first.modified,
             });
             selected_file_infos.push(first.clone());
-        }
-    }
-
-    if options.include_directory_map
-        && !selected_files
-            .iter()
-            .any(|file| file.relative_path == "DIRECTORY_MAP.txt")
-    {
-        if let Some(directory_map) = build_directory_map_for_analysis(repo_path, &analysis.files) {
-            selected_files.insert(0, directory_map);
         }
     }
 
@@ -323,6 +336,7 @@ fn build_directory_map_for_analysis(repo_path: &Path, files: &[FileInfo]) -> Opt
         content_quality_score: 0.0,
         repository_role_score: 0.0,
         recency_score: 0.0,
+        modified: None,
     })
 }
 
@@ -332,26 +346,13 @@ fn gather_inventory_entries(repo_path: &Path, files: &[FileInfo]) -> Vec<Invento
     }
 
     let mut entries = Vec::with_capacity(files.len() + 16);
-    let total_size: u64 = files.iter().map(|f| f.size).sum();
-    let root_modified = files.iter().filter_map(|f| f.modified).max();
-
     entries.push(InventoryEntry {
         path: String::new(),
-        is_dir: true,
-        size: total_size,
-        modified: root_modified,
     });
 
     let mut directories: HashSet<String> = HashSet::new();
 
     for file in files {
-        entries.push(InventoryEntry {
-            path: file.relative_path.clone(),
-            is_dir: false,
-            size: file.size,
-            modified: file.modified,
-        });
-
         let mut ancestor = Path::new(&file.relative_path).parent();
         while let Some(parent) = ancestor {
             let parent_str = parent.to_string_lossy().to_string();
@@ -371,14 +372,8 @@ fn gather_inventory_entries(repo_path: &Path, files: &[FileInfo]) -> Vec<Invento
         let dir_path = repo_path.join(&dir);
         let metadata = fs::metadata(dir_path).ok();
         let modified = metadata.as_ref().and_then(|meta| meta.modified().ok());
-        let size = metadata.map(|meta| meta.len()).unwrap_or(0);
 
-        entries.push(InventoryEntry {
-            path: dir,
-            is_dir: true,
-            size,
-            modified,
-        });
+        entries.push(InventoryEntry { path: dir });
     }
 
     entries
@@ -387,9 +382,6 @@ fn gather_inventory_entries(repo_path: &Path, files: &[FileInfo]) -> Vec<Invento
 #[derive(Debug, Clone)]
 struct InventoryEntry {
     path: String,
-    is_dir: bool,
-    size: u64,
-    modified: Option<SystemTime>,
 }
 
 fn build_directory_map(entries: &[InventoryEntry]) -> Option<String> {
@@ -398,16 +390,13 @@ fn build_directory_map(entries: &[InventoryEntry]) -> Option<String> {
     }
 
     let mut sorted = entries.to_vec();
-    sorted.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| b.is_dir.cmp(&a.is_dir)));
+    sorted.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut lines = Vec::with_capacity(sorted.len() + 4);
-    lines.push("Repository Inventory".to_string());
-    lines.push("====================".to_string());
-    lines.push(format!(
-        "{:<60} {:<4} {:>10} {}",
-        "Path", "Type", "Size", "Modified"
-    ));
-    lines.push(format!("{:-<60} {:-<4} {:-<10} {:-<19}", "", "", "", ""));
+    lines.push("Repository Directory Map".to_string());
+    lines.push("========================".to_string());
+    lines.push("Directory".to_string());
+    lines.push("---------".to_string());
 
     for entry in sorted {
         let display_path = if entry.path.is_empty() {
@@ -415,14 +404,7 @@ fn build_directory_map(entries: &[InventoryEntry]) -> Option<String> {
         } else {
             entry.path.as_str()
         };
-        let type_label = if entry.is_dir { "dir" } else { "file" };
-        let size_label = format_bytes(entry.size);
-        let modified_label = format_timestamp(entry.modified);
-
-        lines.push(format!(
-            "{:<60} {:<4} {:>10} {}",
-            display_path, type_label, size_label, modified_label
-        ));
+        lines.push(display_path.to_string());
     }
 
     lines.push(String::new());

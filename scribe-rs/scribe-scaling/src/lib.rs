@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
-
 //! # Scribe Scaling
 //!
 //! Advanced scaling optimizations for handling large repositories (10k-100k+ files) efficiently.
@@ -53,7 +51,7 @@ pub mod selector;
 
 // Re-export main types
 pub use adaptive::AdaptiveConfig;
-pub use caching::CacheConfig;
+pub use caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
 pub use engine::{ProcessingResult, ScalingConfig, ScalingEngine};
 pub use memory::{MemoryConfig, MemoryStats};
 pub use metrics::{BenchmarkResult, ScalingMetrics};

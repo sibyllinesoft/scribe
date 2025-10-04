@@ -33,6 +33,7 @@ pub struct ReportFile {
     pub content_quality_score: f64,
     pub repository_role_score: f64,
     pub recency_score: f64,
+    pub modified: Option<SystemTime>,
 }
 
 /// Summary of the selection process used when generating reports.
@@ -114,6 +115,7 @@ pub fn generate_html_output(
                 "content_quality_score": format!("{:.2}", file.content_quality_score),
                 "repository_role_score": format!("{:.2}", file.repository_role_score),
                 "recency_score": format!("{:.2}", file.recency_score),
+                "modified": format_timestamp(file.modified),
                 "icon": get_file_icon(&file.relative_path)
             })
         }).collect::<Vec<_>>()
@@ -139,10 +141,12 @@ pub fn generate_cxml_output(
     )?;
 
     for file in files {
+        let path = escape_cxml(&file.relative_path);
+        let modified = escape_cxml(&format_timestamp(file.modified));
         writeln!(
             output,
-            "  <file path=\"{}\">",
-            escape_cxml(&file.relative_path)
+            "  <file path=\"{}\" modified=\"{}\">",
+            path, modified
         )?;
         writeln!(output, "    <![CDATA[")?;
         output.push_str(&file.content);
@@ -170,6 +174,11 @@ pub fn generate_repomix_output(
 
     for file in files {
         writeln!(output, "## {}", file.relative_path)?;
+        writeln!(
+            output,
+            "- Last modified: {}",
+            format_timestamp(file.modified)
+        )?;
         writeln!(output, "```")?;
         output.push_str(&file.content);
         if !file.content.ends_with('\n') {
@@ -199,10 +208,12 @@ pub fn generate_xml_output(
     )?;
 
     for file in files {
+        let path = escape_cxml(&file.relative_path);
+        let modified = escape_cxml(&format_timestamp(file.modified));
         writeln!(
             output,
-            "  <file path=\"{}\">",
-            escape_cxml(&file.relative_path)
+            "  <file path=\"{}\" modified=\"{}\">",
+            path, modified
         )?;
         writeln!(
             output,
@@ -243,6 +254,7 @@ pub fn generate_json_output(
         "files": files.iter().map(|file| {
             json!({
                 "path": file.relative_path,
+                "modified": format_timestamp(file.modified),
                 "size_bytes": file.size,
                 "estimated_tokens": file.estimated_tokens,
                 "importance_score": file.importance_score,
@@ -278,6 +290,7 @@ pub fn generate_text_output(
             "--- {} ({} tokens) ---",
             file.relative_path, file.estimated_tokens
         )?;
+        writeln!(output, "Last modified: {}", format_timestamp(file.modified))?;
         output.push_str(&file.content);
         if !file.content.ends_with('\n') {
             output.push('\n');
@@ -304,6 +317,7 @@ pub fn generate_markdown_output(
         writeln!(output, "- Size: {}", format_bytes(file.size))?;
         writeln!(output, "- Tokens: {}", file.estimated_tokens)?;
         writeln!(output, "- Importance: {:.2}", file.importance_score)?;
+        writeln!(output, "- Modified: {}", format_timestamp(file.modified))?;
         writeln!(output, "")?;
         writeln!(output, "```")?;
         output.push_str(&file.content);

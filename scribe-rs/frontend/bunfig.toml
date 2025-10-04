@@ -1,0 +1,58 @@
+# Bun configuration for Scribe Frontend
+
+[install]
+# Prefer bun for package management
+registry = "https://registry.npmjs.org/"
+# Cache packages for faster installs
+cache = "~/.bun/install/cache"
+# Enable exact versions for consistency
+exact = true
+# Automatically run postinstall scripts
+auto = true
+
+[install.scopes]
+# Scope configurations for specific registries
+
+[run]
+# Enable hot reloading for development
+hot = true
+# Show more detailed logs during development
+silent = false
+
+# Test configuration for Bun native test runner
+[test]
+# Use Bun's native test runner without external preload
+
+# Build optimization
+[build]
+# Enable source maps for debugging
+sourcemap = true
+# Target modern browsers
+target = "browser"
+# Enable splitting for better caching
+splitting = true
+# Enable tree shaking
+treeshaking = true
+
+# Development server settings
+[dev]
+# Enable hot module replacement
+hmr = true
+# Port for development server
+port = 3000
+# Host for development server
+host = "localhost"
+
+# TypeScript configuration
+[typescript]
+# Enable TypeScript support
+enabled = true
+# Strict type checking
+strict = true
+
+# JSX configuration
+[jsx]
+# Use React's new JSX transform
+runtime = "automatic"
+# Enable React Fast Refresh
+refresh = true

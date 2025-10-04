@@ -3,16 +3,86 @@
 //! These tests verify that the HTTP server and API endpoints work correctly
 //! when running as a complete system.
 
+use async_trait::async_trait;
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
 use axum_test::TestServer;
-use scribe_webservice::{WebService, WebServiceConfig};
+use scribe_core::{
+    file::{FileType, Language},
+    FileInfo, RenderDecision,
+};
+use scribe_webservice::Result as WebResult;
+use scribe_webservice::{
+    AnalysisOutput, AnalysisProvider, WebReportFile, WebSelectionMetrics, WebService,
+    WebServiceConfig,
+};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::sync::Arc;
 use tempfile::TempDir;
 use tower::ServiceExt;
+
+struct StubAnalysisProvider;
+
+#[async_trait]
+impl AnalysisProvider for StubAnalysisProvider {
+    async fn analyze(&self, config: &WebServiceConfig) -> WebResult<AnalysisOutput> {
+        let relative = "src/lib.rs".to_string();
+        let path = config.repo_path.join(&relative);
+
+        let file_info = FileInfo {
+            path: path.clone(),
+            relative_path: relative.clone(),
+            size: 128,
+            modified: None,
+            decision: RenderDecision::include("stub"),
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
+            language: Language::Rust,
+            content: Some("fn main() {}".to_string()),
+            token_estimate: Some(64),
+            line_count: Some(1),
+            char_count: Some(12),
+            is_binary: false,
+            git_status: None,
+            centrality_score: Some(0.4),
+        };
+
+        let report_file = WebReportFile {
+            path,
+            relative_path: relative.clone(),
+            content: "fn main() {}".into(),
+            size: 128,
+            estimated_tokens: 64,
+            importance_score: 0.9,
+            centrality_score: 0.4,
+            query_relevance_score: 0.6,
+            entry_point_proximity: 0.8,
+            content_quality_score: 0.7,
+            repository_role_score: 0.5,
+            recency_score: 0.2,
+            modified: "N/A".to_string(),
+        };
+
+        Ok(AnalysisOutput {
+            selected_files: vec![report_file],
+            selected_file_infos: vec![file_info.clone()],
+            metrics: WebSelectionMetrics {
+                total_files_discovered: 1,
+                files_selected: 1,
+                total_tokens_estimated: 64,
+                selection_time_ms: 2,
+                algorithm_used: "integration-test".to_string(),
+                coverage_score: 0.4,
+                relevance_score: 0.6,
+            },
+            repository_files: vec![file_info],
+            token_budget: config.token_budget,
+        })
+    }
+}
 
 async fn create_test_server() -> TestServer {
     let temp_dir = TempDir::new().unwrap();
@@ -28,7 +98,7 @@ async fn create_test_server() -> TestServer {
         auto_shutdown_timeout: 60,
     };
 
-    let service = WebService::new(config).unwrap();
+    let service = WebService::new(config, Arc::new(StubAnalysisProvider)).unwrap();
     let app = service.create_router();
     TestServer::new(app).unwrap()
 }
@@ -120,16 +190,14 @@ async fn test_toggle_file_endpoint() {
 
     let json: Value = response.json();
     assert_eq!(json["success"], true);
-    assert!(json["data"]["included_files"].is_array());
-    assert!(json["data"]["excluded_files"].is_object());
+    assert!(json["data"]["categories"].is_object());
     assert!(json["data"]["token_estimate"].is_number());
     assert!(json["data"]["total_size"].is_number());
 
-    // Verify the file was added
-    let included_files = json["data"]["included_files"].as_array().unwrap();
+    let included_files = json["data"]["categories"]["included"].as_array().unwrap();
     assert!(included_files
         .iter()
-        .any(|f| f.as_str() == Some("src/lib.rs")));
+        .any(|f| f["path"].as_str() == Some("src/lib.rs")));
 }
 
 #[tokio::test]
@@ -145,20 +213,20 @@ async fn test_toggle_file_multiple_times() {
 
     assert_eq!(response1.status_code(), StatusCode::OK);
     let json1: Value = response1.json();
-    let included_files1 = json1["data"]["included_files"].as_array().unwrap();
+    let included_files1 = json1["data"]["categories"]["included"].as_array().unwrap();
     assert!(included_files1
         .iter()
-        .any(|f| f.as_str() == Some("src/main.rs")));
+        .any(|f| f["path"].as_str() == Some("src/main.rs")));
 
     // Toggle off
     let response2 = server.post("/api/files/toggle").json(&request_body).await;
 
     assert_eq!(response2.status_code(), StatusCode::OK);
     let json2: Value = response2.json();
-    let included_files2 = json2["data"]["included_files"].as_array().unwrap();
+    let included_files2 = json2["data"]["categories"]["included"].as_array().unwrap();
     assert!(!included_files2
         .iter()
-        .any(|f| f.as_str() == Some("src/main.rs")));
+        .any(|f| f["path"].as_str() == Some("src/main.rs")));
 }
 
 #[tokio::test]

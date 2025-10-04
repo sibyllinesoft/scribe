@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    ".",
     "scribe-core",
     "scribe-analysis", 
     "scribe-graph",
@@ -9,7 +10,7 @@ members = [
     "scribe-scaling",
     "scribe-webservice",
 ]
-default-members = ["scribe-core"]
+default-members = ["."]
 resolver = "2"
 
 [workspace.package]
@@ -66,7 +67,7 @@ tempfile = "3.8"
 tokio-test = "0.4"
 
 [package]
-name = "scribe-analyzer"
+name = "scribe"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -84,7 +85,7 @@ exclude = ["workspace.toml"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
 [features]
-default = ["core", "analysis", "graph", "scanner", "patterns", "selection", "scaling"]
+default = ["core", "analysis", "graph", "scanner", "patterns", "selection", "scaling", "web"]
 cli = ["default"]
 
 # Core features
@@ -95,12 +96,13 @@ scanner = ["core", "dep:scribe-scanner"]
 patterns = ["core", "dep:scribe-patterns"]
 selection = ["core", "analysis", "graph", "dep:scribe-selection"]
 scaling = ["core", "dep:scribe-scaling"]
+web = ["scaling", "dep:scribe-webservice"]
 
 # Convenience feature groups
 full = ["default", "scaling"]
 minimal = ["core"]
 fast = ["core", "scanner", "patterns"]
-comprehensive = ["core", "analysis", "graph", "scanner", "patterns", "selection", "scaling"]
+comprehensive = ["core", "analysis", "graph", "scanner", "patterns", "selection", "scaling", "web"]
 
 [[bin]]
 name = "scribe"
@@ -129,6 +131,7 @@ scribe-scanner = { path = "./scribe-scanner", version = "0.5.0", optional = true
 scribe-patterns = { path = "./scribe-patterns", version = "0.5.0", optional = true }
 scribe-selection = { path = "./scribe-selection", version = "0.5.0", optional = true }
 scribe-scaling = { path = "./scribe-scaling", version = "0.5.0", optional = true }
+scribe-webservice = { path = "./scribe-webservice", version = "0.5.0", optional = true, default-features = false }
 
 # Core dependencies used by multiple crates
 serde = { version = "1.0", features = ["derive"] }
@@ -177,9 +180,6 @@ handlebars = "4.5"
 # Path and URL utilities
 url = "2.4"
 tempfile = "3.8"
-
-# Binary detection with proper magic
-content_inspector = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

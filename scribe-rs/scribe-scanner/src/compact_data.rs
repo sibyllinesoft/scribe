@@ -4,20 +4,21 @@
 //! memory usage through string interning, compact encoding, and cache-friendly
 //! data layouts for large-scale file scanning operations.
 
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use std::time::SystemTime;
 use fxhash::FxHashMap;
-use string_interner::{StringInterner, DefaultSymbol, backend::StringBackend};
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use scribe_core::{GitFileStatus, Language, RenderDecision, Result, ScribeError};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use string_interner::{backend::StringBackend, DefaultSymbol, StringInterner};
 use xxhash_rust::xxh3::xxh3_64;
-use scribe_core::{Result, ScribeError, Language, GitFileStatus, RenderDecision};
 
 /// Interned string identifier
 pub type StringId = DefaultSymbol;
 
 /// Global string interner for path deduplication
-static GLOBAL_INTERNER: parking_lot::Mutex<StringInterner> = parking_lot::Mutex::new(StringInterner::new());
+static GLOBAL_INTERNER: parking_lot::Mutex<StringInterner> =
+    parking_lot::Mutex::new(StringInterner::new());
 
 /// Compact file information with interned strings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +95,7 @@ pub enum PackedFileType {
     Build = 5,
     Data = 6,
     Generated = 7,
+    Binary = 8,
 }
 
 /// Packed render decision (1 byte)
@@ -123,7 +125,7 @@ pub enum PackedGitStatus {
 pub struct CompactMetrics {
     /// Line count (up to 16M lines)
     pub line_count: u24,
-    /// Character count (up to 16M chars) 
+    /// Character count (up to 16M chars)
     pub char_count: u24,
     /// Token estimate (up to 64K tokens)
     pub token_estimate: u16,
@@ -155,7 +157,7 @@ pub struct CompactFileCollection {
 pub struct CompressionStats {
     /// Original uncompressed size estimate
     pub uncompressed_bytes: u64,
-    /// Actual compressed size 
+    /// Actual compressed size
     pub compressed_bytes: u64,
     /// Compression ratio
     pub compression_ratio: f64,
@@ -175,7 +177,7 @@ impl u24 {
     pub fn new(value: u32) -> Self {
         Self(value & 0x00FFFFFF) // Mask to 24 bits
     }
-    
+
     pub fn get(self) -> u32 {
         self.0
     }
@@ -219,7 +221,7 @@ impl CompactFileInfo {
 
         // Convert types to compact representations
         let language = PackedLanguage::from(file_info.language);
-        let file_type = PackedFileType::from_string(&file_info.file_type);
+        let file_type = PackedFileType::from_file_type(&file_info.file_type);
         let decision = PackedDecision::from(&file_info.decision);
         let git_status = file_info.git_status.as_ref().map(PackedGitStatus::from);
 
@@ -242,7 +244,8 @@ impl CompactFileInfo {
             path_id,
             relative_path_id,
             size: file_info.size.min(u32::MAX as u64) as u32,
-            modified: file_info.modified
+            modified: file_info
+                .modified
                 .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs().min(u32::MAX as u64) as u32)
                 .unwrap_or(0),
@@ -257,9 +260,11 @@ impl CompactFileInfo {
 
     /// Convert back to full file info
     pub fn to_full_file_info(&self, interner: &StringInterner) -> Result<scribe_core::FileInfo> {
-        let path_str = interner.resolve(self.path_id)
+        let path_str = interner
+            .resolve(self.path_id)
             .ok_or_else(|| ScribeError::data("Invalid path ID".to_string()))?;
-        let relative_path = interner.resolve(self.relative_path_id)
+        let relative_path = interner
+            .resolve(self.relative_path_id)
             .ok_or_else(|| ScribeError::data("Invalid relative path ID".to_string()))?;
 
         let modified = if self.modified > 0 {
@@ -268,14 +273,26 @@ impl CompactFileInfo {
             None
         };
 
+        let language = Language::from(self.language);
+        let relative_path_str = relative_path.to_string();
+        let extension = Path::new(&relative_path_str)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+
         Ok(scribe_core::FileInfo {
             path: PathBuf::from(path_str),
-            relative_path: relative_path.to_string(),
+            relative_path: relative_path_str.clone(),
             size: self.size as u64,
             modified,
             decision: RenderDecision::from(&self.decision),
-            file_type: self.file_type.to_file_type(&Language::from(self.language)),
-            language: Language::from(self.language),
+            file_type: scribe_core::FileInfo::classify_file_type_with_binary(
+                &relative_path_str,
+                &language,
+                extension,
+                self.flags.is_binary(),
+            ),
+            language,
             content: None, // Not stored in compact format
             token_estimate: Some(self.token_estimate()),
             line_count: Some(self.line_count()),
@@ -327,27 +344,28 @@ impl CompactFileCollection {
     /// Add a file to the collection
     pub fn add_file(&mut self, file_info: &scribe_core::FileInfo) {
         let original_size = self.estimate_file_info_size(file_info);
-        let compact_info = CompactFileInfo::from_full_file_info(file_info, &mut self.local_interner);
-        
+        let compact_info =
+            CompactFileInfo::from_full_file_info(file_info, &mut self.local_interner);
+
         // Add to path index
         let path_hash = xxh3_64(file_info.path.to_string_lossy().as_bytes());
         self.path_index.insert(path_hash, self.files.len());
-        
+
         self.files.push(compact_info);
-        
+
         // Update stats
         self.stats.files_processed += 1;
         self.stats.uncompressed_bytes += original_size as u64;
         self.stats.compressed_bytes += compact_info.memory_footprint() as u64;
         self.stats.interned_strings += 1; // Approximation
-        
+
         self.update_compression_stats();
     }
 
     /// Add multiple files efficiently
     pub fn add_files(&mut self, file_infos: &[scribe_core::FileInfo]) {
         self.files.reserve(file_infos.len());
-        
+
         for file_info in file_infos {
             self.add_file(file_info);
         }
@@ -356,7 +374,8 @@ impl CompactFileCollection {
     /// Find file by path hash (fast lookup)
     pub fn find_by_path(&self, path: &Path) -> Option<&CompactFileInfo> {
         let path_hash = xxh3_64(path.to_string_lossy().as_bytes());
-        self.path_index.get(&path_hash)
+        self.path_index
+            .get(&path_hash)
             .and_then(|&index| self.files.get(index))
     }
 
@@ -410,7 +429,7 @@ impl CompactFileCollection {
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let interner_data: Vec<_> = self.local_interner.into_iter().collect();
         let data = (&self.files, &interner_data, &self.stats);
-        
+
         bincode::serialize(&data)
             .map_err(|e| ScribeError::io(format!("Serialization failed: {}", e)))
     }
@@ -420,7 +439,7 @@ impl CompactFileCollection {
         let (files, interner_data, stats): (
             Vec<CompactFileInfo>,
             Vec<(StringId, String)>,
-            CompressionStats
+            CompressionStats,
         ) = bincode::deserialize(data)
             .map_err(|e| ScribeError::io(format!("Deserialization failed: {}", e)))?;
 
@@ -453,21 +472,19 @@ impl CompactFileCollection {
     /// Update compression statistics
     fn update_compression_stats(&mut self) {
         if self.stats.uncompressed_bytes > 0 {
-            self.stats.compression_ratio = 
+            self.stats.compression_ratio =
                 1.0 - (self.stats.compressed_bytes as f64 / self.stats.uncompressed_bytes as f64);
         }
 
         // Estimate interning savings
         let unique_strings = self.local_interner.len();
-        let total_string_bytes: usize = self.local_interner
-            .into_iter()
-            .map(|(_, s)| s.len())
-            .sum();
+        let total_string_bytes: usize = self.local_interner.into_iter().map(|(_, s)| s.len()).sum();
 
         let without_interning = self.files.len() * 2 * 50; // Estimate avg 50 chars per path
         let with_interning = total_string_bytes + unique_strings * std::mem::size_of::<StringId>();
-        
-        self.stats.interning_savings_bytes = without_interning.saturating_sub(with_interning) as u64;
+
+        self.stats.interning_savings_bytes =
+            without_interning.saturating_sub(with_interning) as u64;
     }
 
     /// Rebuild path index after sorting
@@ -483,6 +500,46 @@ impl CompactFileCollection {
 }
 
 impl PackedLanguage {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Rust,
+            2 => Self::Python,
+            3 => Self::JavaScript,
+            4 => Self::TypeScript,
+            5 => Self::Go,
+            6 => Self::Java,
+            7 => Self::C,
+            8 => Self::Cpp,
+            9 => Self::CSharp,
+            10 => Self::PHP,
+            11 => Self::Ruby,
+            12 => Self::Swift,
+            13 => Self::Kotlin,
+            14 => Self::Scala,
+            15 => Self::Clojure,
+            16 => Self::Haskell,
+            17 => Self::Elixir,
+            18 => Self::Erlang,
+            19 => Self::OCaml,
+            20 => Self::FSharp,
+            21 => Self::Html,
+            22 => Self::Css,
+            23 => Self::Json,
+            24 => Self::Xml,
+            25 => Self::Yaml,
+            26 => Self::Toml,
+            27 => Self::Sql,
+            28 => Self::Shell,
+            29 => Self::Dockerfile,
+            30 => Self::Markdown,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
     /// Convert from Language enum
     pub fn from(lang: Language) -> Self {
         match lang {
@@ -550,29 +607,57 @@ impl From<PackedLanguage> for Language {
 }
 
 impl PackedFileType {
-    pub fn from_string(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "source" => Self::Source,
-            "test" => Self::Test,
-            "config" => Self::Config,
-            "documentation" => Self::Documentation,
-            "build" => Self::Build,
-            "data" => Self::Data,
-            "generated" => Self::Generated,
-            _ => Self::Unknown,
+    pub fn from_file_type(file_type: &scribe_core::FileType) -> Self {
+        match file_type {
+            scribe_core::FileType::Source { .. } => Self::Source,
+            scribe_core::FileType::Test { .. } => Self::Test,
+            scribe_core::FileType::Configuration { .. } => Self::Config,
+            scribe_core::FileType::Documentation { .. } => Self::Documentation,
+            scribe_core::FileType::Build => Self::Build,
+            scribe_core::FileType::Data => Self::Data,
+            scribe_core::FileType::Generated => Self::Generated,
+            scribe_core::FileType::Binary => Self::Binary,
+            scribe_core::FileType::Unknown => Self::Unknown,
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_file_type(&self, language: &Language) -> scribe_core::FileType {
         match self {
-            Self::Source => "source".to_string(),
-            Self::Test => "test".to_string(),
-            Self::Config => "config".to_string(),
-            Self::Documentation => "documentation".to_string(),
-            Self::Build => "build".to_string(),
-            Self::Data => "data".to_string(),
-            Self::Generated => "generated".to_string(),
-            Self::Unknown => "unknown".to_string(),
+            Self::Source => scribe_core::FileType::Source {
+                language: language.clone(),
+            },
+            Self::Test => scribe_core::FileType::Test {
+                language: language.clone(),
+            },
+            Self::Config => scribe_core::FileType::Configuration {
+                format: scribe_core::file::ConfigurationFormat::Json,
+            },
+            Self::Documentation => scribe_core::FileType::Documentation {
+                format: scribe_core::file::DocumentationFormat::Markdown,
+            },
+            Self::Build => scribe_core::FileType::Build,
+            Self::Data => scribe_core::FileType::Data,
+            Self::Generated => scribe_core::FileType::Generated,
+            Self::Binary => scribe_core::FileType::Binary,
+            Self::Unknown => scribe_core::FileType::Unknown,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Source,
+            2 => Self::Test,
+            3 => Self::Config,
+            4 => Self::Documentation,
+            5 => Self::Build,
+            6 => Self::Data,
+            7 => Self::Generated,
+            8 => Self::Binary,
+            _ => Self::Unknown,
         }
     }
 }
@@ -671,7 +756,7 @@ impl Default for CompactFileCollection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scribe_core::{Language, RenderDecision, GitFileStatus, GitStatus, FileType};
+    use scribe_core::{FileType, GitFileStatus, GitStatus, Language, RenderDecision};
     use std::time::UNIX_EPOCH;
 
     fn create_test_file_info() -> scribe_core::FileInfo {
@@ -681,7 +766,9 @@ mod tests {
             size: 1024,
             modified: Some(UNIX_EPOCH + std::time::Duration::from_secs(1640995200)),
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: Some("fn main() {}\n".to_string()),
             token_estimate: Some(10),
@@ -699,32 +786,35 @@ mod tests {
     fn test_compact_file_info_conversion() {
         let original = create_test_file_info();
         let mut interner = StringInterner::new();
-        
+
         let compact = CompactFileInfo::from_full_file_info(&original, &mut interner);
         let restored = compact.to_full_file_info(&interner).unwrap();
-        
+
         assert_eq!(original.path, restored.path);
         assert_eq!(original.relative_path, restored.relative_path);
         assert_eq!(original.size, restored.size);
         assert_eq!(original.language, restored.language);
         assert_eq!(original.file_type, restored.file_type);
         assert_eq!(original.is_binary, restored.is_binary);
-        
+
         // Check metrics
         assert_eq!(original.line_count.unwrap() as u32, compact.line_count());
         assert_eq!(original.char_count.unwrap() as u32, compact.char_count());
-        assert_eq!(original.token_estimate.unwrap() as u32, compact.token_estimate());
+        assert_eq!(
+            original.token_estimate.unwrap() as u32,
+            compact.token_estimate()
+        );
     }
 
     #[test]
     fn test_u24_serialization() {
         let value = u24::new(12345678);
         assert_eq!(value.get(), 12345678 & 0x00FFFFFF);
-        
+
         // Test edge cases
         let max_value = u24::new(0x00FFFFFF);
         assert_eq!(max_value.get(), 0x00FFFFFF);
-        
+
         let overflow_value = u24::new(0x01000000);
         assert_eq!(overflow_value.get(), 0x00000000); // Should wrap
     }
@@ -750,12 +840,12 @@ mod tests {
     fn test_compact_file_collection() {
         let mut collection = CompactFileCollection::new();
         let file_info = create_test_file_info();
-        
+
         collection.add_file(&file_info);
-        
+
         assert_eq!(collection.files().len(), 1);
         assert!(collection.find_by_path(&file_info.path).is_some());
-        
+
         let stats = collection.stats();
         assert_eq!(stats.files_processed, 1);
         assert!(stats.compressed_bytes < stats.uncompressed_bytes);
@@ -765,24 +855,27 @@ mod tests {
     #[test]
     fn test_collection_filtering() {
         let mut collection = CompactFileCollection::new();
-        
+
         // Add multiple files with different languages
-        for (i, lang) in [Language::Rust, Language::Python, Language::JavaScript].iter().enumerate() {
+        for (i, lang) in [Language::Rust, Language::Python, Language::JavaScript]
+            .iter()
+            .enumerate()
+        {
             let mut file_info = create_test_file_info();
             file_info.language = lang.clone();
             file_info.path = PathBuf::from(format!("/project/file{}.ext", i));
             file_info.relative_path = format!("file{}.ext", i);
             collection.add_file(&file_info);
         }
-        
+
         assert_eq!(collection.files().len(), 3);
-        
+
         let rust_files = collection.files_by_language(PackedLanguage::Rust);
         assert_eq!(rust_files.len(), 1);
-        
+
         let python_files = collection.files_by_language(PackedLanguage::Python);
         assert_eq!(python_files.len(), 1);
-        
+
         let source_files = collection.files_by_type(PackedFileType::Source);
         assert_eq!(source_files.len(), 3);
     }
@@ -790,7 +883,7 @@ mod tests {
     #[test]
     fn test_collection_sorting() {
         let mut collection = CompactFileCollection::new();
-        
+
         // Add files with different sizes
         for (i, size) in [100, 500, 200].iter().enumerate() {
             let mut file_info = create_test_file_info();
@@ -799,13 +892,13 @@ mod tests {
             file_info.relative_path = format!("file{}.rs", i);
             collection.add_file(&file_info);
         }
-        
+
         collection.sort_by_size();
-        
+
         let files = collection.files();
         assert!(files[0].size >= files[1].size);
         assert!(files[1].size >= files[2].size);
-        
+
         // Check that path index was rebuilt correctly
         let file0_path = PathBuf::from("/project/file0.rs");
         assert!(collection.find_by_path(&file0_path).is_some());
@@ -816,20 +909,20 @@ mod tests {
         let mut collection = CompactFileCollection::new();
         let file_info = create_test_file_info();
         collection.add_file(&file_info);
-        
+
         // Serialize
         let serialized = collection.serialize().unwrap();
         assert!(!serialized.is_empty());
-        
+
         // Deserialize
         let deserialized = CompactFileCollection::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(deserialized.files().len(), collection.files().len());
         assert_eq!(
             deserialized.stats().files_processed,
             collection.stats().files_processed
         );
-        
+
         // Check that path index was rebuilt
         assert!(deserialized.find_by_path(&file_info.path).is_some());
     }
@@ -839,7 +932,7 @@ mod tests {
         let original = create_test_file_info();
         let mut interner = StringInterner::new();
         let compact = CompactFileInfo::from_full_file_info(&original, &mut interner);
-        
+
         // Compact version should be smaller
         let compact_size = compact.memory_footprint();
         let original_size = std::mem::size_of::<scribe_core::FileInfo>()
@@ -847,24 +940,27 @@ mod tests {
             + original.relative_path.len()
             + std::mem::size_of::<FileType>() // FileType is an enum, use size_of instead
             + original.content.as_ref().map(|c| c.len()).unwrap_or(0);
-        
-        println!("Original: {} bytes, Compact: {} bytes", original_size, compact_size);
+
+        println!(
+            "Original: {} bytes, Compact: {} bytes",
+            original_size, compact_size
+        );
         // Note: Due to string interning, we need the collection level to see real savings
     }
 
     #[test]
     fn test_file_flags() {
         let mut flags = FileFlags::new();
-        
+
         assert!(!flags.is_binary());
         assert!(!flags.has_content());
-        
+
         flags.set_binary(true);
         flags.set_has_content(true);
-        
+
         assert!(flags.is_binary());
         assert!(flags.has_content());
-        
+
         flags.set_binary(false);
         assert!(!flags.is_binary());
         assert!(flags.has_content()); // Should remain true
@@ -873,7 +969,7 @@ mod tests {
     #[test]
     fn test_compression_stats() {
         let mut collection = CompactFileCollection::new();
-        
+
         // Add multiple files to see compression benefits
         for i in 0..100 {
             let mut file_info = create_test_file_info();
@@ -882,12 +978,12 @@ mod tests {
             file_info.content = Some(format!("fn function_{}() {{}}\n", i));
             collection.add_file(&file_info);
         }
-        
+
         let stats = collection.stats();
         assert_eq!(stats.files_processed, 100);
         assert!(stats.compression_ratio > 0.0);
         assert!(stats.interning_savings_bytes > 0);
-        
+
         println!("Compression ratio: {:.2}%", stats.compression_ratio * 100.0);
         println!("Interning savings: {} bytes", stats.interning_savings_bytes);
     }

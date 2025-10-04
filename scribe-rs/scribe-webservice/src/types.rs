@@ -1,7 +1,9 @@
 //! Type definitions for the Scribe web service
 
+use scribe_core::FileInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Request to toggle file inclusion
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,6 +126,46 @@ pub struct ErrorResponse {
     pub error: String,
     pub code: String,
     pub details: Option<serde_json::Value>,
+}
+
+/// Representation of a file selected for presentation in the web UI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebReportFile {
+    pub path: PathBuf,
+    pub relative_path: String,
+    pub content: String,
+    pub size: u64,
+    pub estimated_tokens: usize,
+    pub importance_score: f64,
+    pub centrality_score: f64,
+    pub query_relevance_score: f64,
+    pub entry_point_proximity: f64,
+    pub content_quality_score: f64,
+    pub repository_role_score: f64,
+    pub recency_score: f64,
+    pub modified: String,
+}
+
+/// Selection metrics used by the web interface
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSelectionMetrics {
+    pub total_files_discovered: usize,
+    pub files_selected: usize,
+    pub total_tokens_estimated: usize,
+    pub selection_time_ms: u128,
+    pub algorithm_used: String,
+    pub coverage_score: f64,
+    pub relevance_score: f64,
+}
+
+/// Analysis results shared with the web interface
+#[derive(Debug, Clone)]
+pub struct AnalysisOutput {
+    pub selected_files: Vec<WebReportFile>,
+    pub selected_file_infos: Vec<FileInfo>,
+    pub metrics: WebSelectionMetrics,
+    pub repository_files: Vec<FileInfo>,
+    pub token_budget: usize,
 }
 
 #[cfg(test)]

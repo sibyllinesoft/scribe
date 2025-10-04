@@ -13,7 +13,7 @@
 
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use scribe_core::{error::ScribeError, Result};
+use scribe_core::{error::ScribeError, file, Language, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -70,9 +70,15 @@ pub struct NodeMetadata {
 impl NodeMetadata {
     /// Create new node metadata
     pub fn new(file_path: String) -> Self {
-        let language = detect_language_from_extension(&file_path);
-        let is_entrypoint = is_entrypoint_file(&file_path);
-        let is_test = is_test_file(&file_path);
+        let path = std::path::Path::new(&file_path);
+        let language_enum = file::detect_language_from_path(path);
+        let language = if matches!(language_enum, Language::Unknown) {
+            None
+        } else {
+            Some(file::language_display_name(&language_enum).to_lowercase())
+        };
+        let is_entrypoint = file::is_entrypoint_path(path, &language_enum);
+        let is_test = file::is_test_path(path);
 
         Self {
             file_path,
@@ -733,77 +739,6 @@ impl GraphStatistics {
             dangling_nodes: 0,
         }
     }
-}
-
-/// Utility functions for node classification
-fn detect_language_from_extension(file_path: &str) -> Option<String> {
-    let ext = std::path::Path::new(file_path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())?;
-
-    match ext.as_str() {
-        "py" => Some("python".to_string()),
-        "js" | "jsx" | "mjs" => Some("javascript".to_string()),
-        "ts" | "tsx" => Some("typescript".to_string()),
-        "rs" => Some("rust".to_string()),
-        "go" => Some("go".to_string()),
-        "java" | "kt" => Some("java".to_string()),
-        "cpp" | "cc" | "cxx" | "hpp" | "h" => Some("cpp".to_string()),
-        "c" => Some("c".to_string()),
-        "rb" => Some("ruby".to_string()),
-        "php" => Some("php".to_string()),
-        "cs" => Some("csharp".to_string()),
-        "swift" => Some("swift".to_string()),
-        _ => None,
-    }
-}
-
-fn is_entrypoint_file(file_path: &str) -> bool {
-    let file_name = std::path::Path::new(file_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    matches!(
-        file_name.as_str(),
-        "main.py"
-            | "main.rs"
-            | "main.go"
-            | "main.js"
-            | "main.ts"
-            | "index.py"
-            | "index.rs"
-            | "index.go"
-            | "index.js"
-            | "index.ts"
-            | "app.py"
-            | "app.rs"
-            | "app.go"
-            | "app.js"
-            | "app.ts"
-            | "server.py"
-            | "server.rs"
-            | "server.go"
-            | "server.js"
-            | "server.ts"
-            | "lib.rs"
-            | "__init__.py"
-    )
-}
-
-fn is_test_file(file_path: &str) -> bool {
-    let path_lower = file_path.to_lowercase();
-    path_lower.contains("test")
-        || path_lower.contains("spec")
-        || path_lower.contains("__tests__")
-        || path_lower.ends_with("_test.py")
-        || path_lower.ends_with("_test.rs")
-        || path_lower.ends_with("_test.go")
-        || path_lower.ends_with(".test.js")
-        || path_lower.ends_with(".test.ts")
-        || path_lower.ends_with("_spec.rb")
 }
 
 impl Default for DependencyGraph {

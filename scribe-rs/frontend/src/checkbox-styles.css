@@ -1,0 +1,87 @@
+/* Checkbox styles for tree nodes */
+.tree-checkbox {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+
+.tree-checkbox:hover {
+  border-color: var(--accent-primary);
+  background: var(--hover-color);
+}
+
+.tree-checkbox.checked {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.tree-checkbox.indeterminate {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+
+.tree-checkbox .checkbox-icon {
+  color: white;
+  width: 14px;
+  height: 14px;
+}
+
+/* Ensure checkbox doesn't interfere with tree navigation */
+.tree-node-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  width: 100%;
+}
+
+/* Update tree node layout to accommodate checkbox */
+.tree-node {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  user-select: none;
+  border-radius: 4px;
+  margin: 1px 0;
+}
+
+/* Make sure the label and icon are clickable for navigation */
+.tree-label, .tree-icon {
+  cursor: pointer;
+}
+
+.tree-label:hover, .tree-icon:hover {
+  color: var(--accent-primary);
+}
+
+/* Adjust spacing when checkbox is present */
+.tree-arrow {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.tree-arrow:hover {
+  opacity: 1;
+}

@@ -4,15 +4,15 @@
 //! batch operations using libgit2 plumbing, dramatically reducing I/O overhead
 //! and system call overhead for large repositories.
 
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-use fxhash::FxHashMap;
-use scribe_core::{Result, ScribeError, GitFileStatus, GitStatus};
-use string_interner::{StringInterner, DefaultSymbol};
-use xxhash_rust::xxh3::xxh3_64;
-use serde::{Serialize, Deserialize};
 use bincode;
+use fxhash::FxHashMap;
+use scribe_core::{GitFileStatus, GitStatus, Result, ScribeError};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use string_interner::{DefaultSymbol, StringInterner};
+use xxhash_rust::xxh3::xxh3_64;
 
 /// Interned path identifier for memory efficiency
 pub type PathId = DefaultSymbol;
@@ -61,7 +61,7 @@ pub struct CompactGitFileInfo {
     pub path_id: PathId,
     pub status: GitFileStatus,
     pub last_commit_hash: Option<u64>, // xxh3 hash of commit
-    pub churn_score: f32, // 0.0-1.0 activity score
+    pub churn_score: f32,              // 0.0-1.0 activity score
 }
 
 /// Bulk git status result
@@ -78,7 +78,7 @@ impl GitBatchProcessor {
     /// Create a new batch processor for the given repository
     pub fn new<P: AsRef<Path>>(repo_path: P) -> Result<Self> {
         let repo_path = repo_path.as_ref().to_path_buf();
-        
+
         let repo = match git2::Repository::open(&repo_path) {
             Ok(repo) => Some(repo),
             Err(_) => None, // Not a git repository or git2 unavailable
@@ -101,7 +101,7 @@ impl GitBatchProcessor {
     /// Load all file statuses in a single bulk operation
     pub fn load_bulk_status(&mut self) -> Result<BulkStatusResult> {
         let start_time = SystemTime::now();
-        
+
         let repo = match &self.repo {
             Some(repo) => repo,
             None => return Err(ScribeError::git("Repository not available".to_string())),
@@ -118,7 +118,8 @@ impl GitBatchProcessor {
             .include_ignored(false)
             .recurse_untracked_dirs(true);
 
-        let statuses = repo.statuses(Some(&mut status_options))
+        let statuses = repo
+            .statuses(Some(&mut status_options))
             .map_err(|e| ScribeError::git(format!("Failed to get repository status: {}", e)))?;
 
         let mut result = BulkStatusResult {
@@ -134,7 +135,7 @@ impl GitBatchProcessor {
             if let Some(path) = entry.path() {
                 let path_id = self.path_interner.get_or_intern(path);
                 let git_status = self.convert_git2_status(entry.status());
-                
+
                 // Update counters
                 match git_status {
                     GitFileStatus::Modified => result.modified_files += 1,
@@ -151,17 +152,19 @@ impl GitBatchProcessor {
         // Mark bulk status as loaded and cache timestamp
         self.bulk_status_loaded = true;
         self.cache_timestamp = Some(SystemTime::now());
-        
+
         // Update metrics
         self.metrics.batch_size = result.files_processed as u64;
-        self.metrics.batch_load_time_us = start_time.elapsed()
-            .unwrap_or_default()
-            .as_micros() as u64;
+        self.metrics.batch_load_time_us =
+            start_time.elapsed().unwrap_or_default().as_micros() as u64;
 
         result.load_time_ms = self.metrics.batch_load_time_us / 1000;
 
-        log::info!("Loaded git status for {} files in {}ms", 
-                  result.files_processed, result.load_time_ms);
+        log::info!(
+            "Loaded git status for {} files in {}ms",
+            result.files_processed,
+            result.load_time_ms
+        );
 
         Ok(result)
     }
@@ -182,7 +185,7 @@ impl GitBatchProcessor {
         };
 
         let path_str = relative_path.to_string_lossy();
-        
+
         // Check cache first
         if let Some(path_id) = self.path_interner.get(&*path_str) {
             if let Some(&status) = self.status_cache.get(&path_id) {
@@ -196,7 +199,10 @@ impl GitBatchProcessor {
     }
 
     /// Get multiple file statuses efficiently using batch cache
-    pub fn get_multiple_file_statuses(&mut self, paths: &[PathBuf]) -> Result<Vec<(PathBuf, GitFileStatus)>> {
+    pub fn get_multiple_file_statuses(
+        &mut self,
+        paths: &[PathBuf],
+    ) -> Result<Vec<(PathBuf, GitFileStatus)>> {
         // Ensure bulk status is loaded
         if !self.bulk_status_loaded || !self.is_cache_valid() {
             self.load_bulk_status()?;
@@ -226,7 +232,7 @@ impl GitBatchProcessor {
     /// Get compact git information for a file using cached data
     pub fn get_compact_file_info(&mut self, path: &Path) -> Result<CompactGitFileInfo> {
         let status = self.get_file_status(path)?;
-        
+
         let relative_path = if path.is_absolute() {
             path.strip_prefix(&self.repo_path)
                 .map_err(|_| ScribeError::git("Path not in repository".to_string()))?
@@ -258,11 +264,12 @@ impl GitBatchProcessor {
             None => return Err(ScribeError::git("Repository not available".to_string())),
         };
 
-        let index = repo.index()
+        let index = repo
+            .index()
             .map_err(|e| ScribeError::git(format!("Failed to get repository index: {}", e)))?;
 
         let mut files = Vec::with_capacity(index.len());
-        
+
         for entry in index.iter() {
             if let Some(path) = std::str::from_utf8(&entry.path).ok() {
                 files.push(self.repo_path.join(path));
@@ -281,12 +288,14 @@ impl GitBatchProcessor {
         };
 
         let mut results = FxHashMap::default();
-        
+
         // Walk the repository history for bulk analysis
-        let mut revwalk = repo.revwalk()
+        let mut revwalk = repo
+            .revwalk()
             .map_err(|e| ScribeError::git(format!("Failed to create revwalk: {}", e)))?;
-        
-        revwalk.push_head()
+
+        revwalk
+            .push_head()
             .map_err(|e| ScribeError::git(format!("Failed to push HEAD: {}", e)))?;
 
         // Limit to recent commits for performance
@@ -298,8 +307,10 @@ impl GitBatchProcessor {
                 break;
             }
 
-            let oid = oid.map_err(|e| ScribeError::git(format!("Failed to get commit OID: {}", e)))?;
-            let commit = repo.find_commit(oid)
+            let oid =
+                oid.map_err(|e| ScribeError::git(format!("Failed to get commit OID: {}", e)))?;
+            let commit = repo
+                .find_commit(oid)
                 .map_err(|e| ScribeError::git(format!("Failed to find commit: {}", e)))?;
 
             if let Ok(tree) = commit.tree() {
@@ -353,11 +364,17 @@ impl GitBatchProcessor {
     fn convert_git2_status(&self, status: git2::Status) -> GitFileStatus {
         if status.contains(git2::Status::WT_NEW) || status.contains(git2::Status::INDEX_NEW) {
             GitFileStatus::Untracked
-        } else if status.contains(git2::Status::WT_MODIFIED) || status.contains(git2::Status::INDEX_MODIFIED) {
+        } else if status.contains(git2::Status::WT_MODIFIED)
+            || status.contains(git2::Status::INDEX_MODIFIED)
+        {
             GitFileStatus::Modified
-        } else if status.contains(git2::Status::WT_DELETED) || status.contains(git2::Status::INDEX_DELETED) {
+        } else if status.contains(git2::Status::WT_DELETED)
+            || status.contains(git2::Status::INDEX_DELETED)
+        {
             GitFileStatus::Deleted
-        } else if status.contains(git2::Status::WT_RENAMED) || status.contains(git2::Status::INDEX_RENAMED) {
+        } else if status.contains(git2::Status::WT_RENAMED)
+            || status.contains(git2::Status::INDEX_RENAMED)
+        {
             GitFileStatus::Renamed
         } else if status.contains(git2::Status::IGNORED) {
             GitFileStatus::Ignored
@@ -379,7 +396,7 @@ impl GitBatchProcessor {
         }
 
         let relative_str = relative_path.to_string_lossy();
-        let diff_path = relative_str.replace('\', "/");
+        let diff_path = relative_str.replace('\\', "/");
 
         let mut revwalk = repo
             .revwalk()
@@ -447,7 +464,7 @@ impl GitBatchProcessor {
             return Ok(*cached);
         }
 
-        let diff_path = relative_path.to_string_lossy().replace('\', "/");
+        let diff_path = relative_path.to_string_lossy().replace('\\', "/");
 
         let mut revwalk = repo
             .revwalk()
@@ -557,7 +574,7 @@ impl GitBatchProcessor {
         let (status_cache, interner_data, cache_timestamp): (
             FxHashMap<PathId, GitFileStatus>,
             Vec<(DefaultSymbol, String)>,
-            Option<SystemTime>
+            Option<SystemTime>,
         ) = bincode::deserialize(data)
             .map_err(|e| ScribeError::io(format!("Failed to deserialize cache: {}", e)))?;
 
@@ -576,18 +593,14 @@ impl GitBatchProcessor {
 
     /// Estimate memory savings from path interning
     pub fn calculate_memory_savings(&self) -> u64 {
-        let total_strings_bytes: usize = self.path_interner
-            .into_iter()
-            .map(|(_, s)| s.len())
-            .sum();
+        let total_strings_bytes: usize = self.path_interner.into_iter().map(|(_, s)| s.len()).sum();
 
         let interned_overhead = self.path_interner.len() * std::mem::size_of::<PathId>();
-        let cache_entries = self.status_cache.len() * (
-            std::mem::size_of::<PathId>() + std::mem::size_of::<GitFileStatus>()
-        );
+        let cache_entries = self.status_cache.len()
+            * (std::mem::size_of::<PathId>() + std::mem::size_of::<GitFileStatus>());
 
-        let without_interning = self.status_cache.len() * 
-            (total_strings_bytes / self.path_interner.len().max(1));
+        let without_interning =
+            self.status_cache.len() * (total_strings_bytes / self.path_interner.len().max(1));
 
         let with_interning = total_strings_bytes + interned_overhead + cache_entries;
 
@@ -624,9 +637,9 @@ impl Default for GitBatchProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
     use std::process::Command;
+    use tempfile::TempDir;
 
     fn create_test_git_repo() -> Result<TempDir> {
         let temp_dir = TempDir::new().unwrap();
@@ -639,7 +652,9 @@ mod tests {
             .output();
 
         if output.is_err() || !output.unwrap().status.success() {
-            return Err(ScribeError::git("Git not available for testing".to_string()));
+            return Err(ScribeError::git(
+                "Git not available for testing".to_string(),
+            ));
         }
 
         // Configure git
@@ -688,7 +703,7 @@ mod tests {
         if let Ok(temp_dir) = create_test_git_repo() {
             let processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
             let files = processor.list_tracked_files_fast().unwrap();
-            
+
             assert_eq!(files.len(), 1);
             assert!(files[0].file_name().unwrap() == "test.rs");
         }
@@ -698,13 +713,13 @@ mod tests {
     fn test_bulk_status_loading() {
         if let Ok(temp_dir) = create_test_git_repo() {
             let mut processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
-            
+
             // Create a modified file
             let modified_file = temp_dir.path().join("modified.rs");
             fs::write(&modified_file, "fn modified() {}").unwrap();
-            
+
             let result = processor.load_bulk_status().unwrap();
-            
+
             assert_eq!(result.files_processed, 1); // Only the untracked file
             assert_eq!(result.untracked_files, 1);
             assert!(result.load_time_ms < 1000); // Should be fast
@@ -715,16 +730,16 @@ mod tests {
     fn test_file_status_lookup() {
         if let Ok(temp_dir) = create_test_git_repo() {
             let mut processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
-            
+
             // Test existing committed file
             let test_file = temp_dir.path().join("test.rs");
             let status = processor.get_file_status(&test_file).unwrap();
             assert_eq!(status, GitFileStatus::Unmodified);
-            
+
             // Test untracked file
             let untracked_file = temp_dir.path().join("untracked.rs");
             fs::write(&untracked_file, "fn untracked() {}").unwrap();
-            
+
             // Need to reload status to see the new file
             processor.load_bulk_status().unwrap();
             let status = processor.get_file_status(&untracked_file).unwrap();
@@ -736,14 +751,14 @@ mod tests {
     fn test_multiple_file_statuses() {
         if let Ok(temp_dir) = create_test_git_repo() {
             let mut processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
-            
+
             let files = vec![
                 temp_dir.path().join("test.rs"),
                 temp_dir.path().join("nonexistent.rs"),
             ];
-            
+
             let results = processor.get_multiple_file_statuses(&files).unwrap();
-            
+
             assert_eq!(results.len(), 2);
             assert_eq!(results[0].1, GitFileStatus::Unmodified);
             assert_eq!(results[1].1, GitFileStatus::Unmodified); // Non-existent = clean
@@ -755,7 +770,7 @@ mod tests {
         if let Ok(temp_dir) = create_test_git_repo() {
             let mut processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
             processor.load_bulk_status().unwrap();
-            
+
             // Should show some memory savings from interning
             let savings = processor.calculate_memory_savings();
             // For a single file, savings might be minimal or zero
@@ -768,15 +783,15 @@ mod tests {
         if let Ok(temp_dir) = create_test_git_repo() {
             let mut processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
             processor.load_bulk_status().unwrap();
-            
+
             // Serialize cache
             let serialized = processor.serialize_cache().unwrap();
             assert!(!serialized.is_empty());
-            
+
             // Clear and deserialize
             processor.clear_cache();
             assert!(!processor.bulk_status_loaded);
-            
+
             processor.deserialize_cache(&serialized).unwrap();
             assert!(processor.bulk_status_loaded);
         }
@@ -787,12 +802,12 @@ mod tests {
         if let Ok(temp_dir) = create_test_git_repo() {
             let mut processor = GitBatchProcessor::new(temp_dir.path()).unwrap();
             processor.load_bulk_status().unwrap();
-            
+
             // Make some status queries to generate metrics
             let test_file = temp_dir.path().join("test.rs");
             processor.get_file_status(&test_file).unwrap();
             processor.get_file_status(&test_file).unwrap(); // Second call should hit cache
-            
+
             let metrics = processor.metrics();
             assert!(metrics.batch_size > 0);
             assert!(metrics.status_calls_avoided > 0);
@@ -802,22 +817,22 @@ mod tests {
     #[test]
     fn test_git2_status_conversion() {
         let processor = GitBatchProcessor::default();
-        
+
         assert_eq!(
             processor.convert_git2_status(git2::Status::WT_NEW),
             GitFileStatus::Untracked
         );
-        
+
         assert_eq!(
             processor.convert_git2_status(git2::Status::WT_MODIFIED),
             GitFileStatus::Modified
         );
-        
+
         assert_eq!(
             processor.convert_git2_status(git2::Status::WT_DELETED),
             GitFileStatus::Deleted
         );
-        
+
         assert_eq!(
             processor.convert_git2_status(git2::Status::empty()),
             GitFileStatus::Unmodified

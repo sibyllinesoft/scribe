@@ -20,14 +20,12 @@
 //! - **Configurable Weighting**: V1/V2 feature flags with dynamic weight adjustment
 //! - **Performance Optimized**: Caching and lazy evaluation for large codebases
 
-pub mod enhanced_scoring;
 pub mod import_analysis;
 pub mod scoring;
 pub mod template_detection;
 
 pub use scoring::{
-    HeuristicScorer, HeuristicWeights, RawScoreComponents, ScoreComponents, ScoringFeatures,
-    WeightPreset,
+    HeuristicScorer, HeuristicWeights, ScoreComponents, ScoringFeatures, WeightPreset,
 };
 
 pub use template_detection::{
@@ -37,11 +35,6 @@ pub use template_detection::{
 
 pub use import_analysis::{
     import_matches_file, CentralityCalculator, ImportGraph, ImportGraphBuilder,
-};
-
-pub use enhanced_scoring::{
-    AdaptiveFactors, EnhancedHeuristicScorer, EnhancedScoreComponents, EnhancedWeights,
-    ProjectType, RepositoryCharacteristics,
 };
 
 use scribe_core::Result;
@@ -54,8 +47,6 @@ pub struct HeuristicSystem {
     scorer: HeuristicScorer,
     /// Template detection engine
     template_detector: TemplateDetector,
-    /// Import graph builder
-    import_builder: ImportGraphBuilder,
 }
 
 impl HeuristicSystem {
@@ -64,7 +55,6 @@ impl HeuristicSystem {
         Ok(Self {
             scorer: HeuristicScorer::new(HeuristicWeights::default()),
             template_detector: TemplateDetector::new()?,
-            import_builder: ImportGraphBuilder::new()?,
         })
     }
 
@@ -73,7 +63,6 @@ impl HeuristicSystem {
         Ok(Self {
             scorer: HeuristicScorer::new(weights),
             template_detector: TemplateDetector::new()?,
-            import_builder: ImportGraphBuilder::new()?,
         })
     }
 
@@ -82,7 +71,6 @@ impl HeuristicSystem {
         Ok(Self {
             scorer: HeuristicScorer::new(HeuristicWeights::with_v2_features()),
             template_detector: TemplateDetector::new()?,
-            import_builder: ImportGraphBuilder::new()?,
         })
     }
 
