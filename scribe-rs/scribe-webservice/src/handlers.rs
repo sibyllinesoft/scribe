@@ -1314,164 +1314,26 @@ pub struct CoveringSetStats {
 
 /// Endpoint to compute a covering set for a target entity
 pub async fn compute_covering_set(
-    State(state): State<AppState>,
-    Json(request): Json<CoveringSetRequest>,
+    State(_state): State<AppState>,
+    Json(_request): Json<CoveringSetRequest>,
 ) -> Json<CoveringSetResponse> {
-    use scribe_selection::{CoveringSetComputer, CoveringSetOptions, EntityQuery, EntityType};
+    // TODO: Implement covering set computation using analysis results
+    // This handler needs to be integrated with the full analysis pipeline
+    // to access file contents and dependency graph information
 
-    info!(
-        "Computing covering set for entity: {}",
-        request.name_pattern
-    );
-
-    // Get the current bundle state to access files and graph
-    let bundle_guard = state.bundle_state.lock().await;
-    let bundle_state = match &*bundle_guard {
-        Some(state) => state,
-        None => {
-            return Json(CoveringSetResponse {
-                success: false,
-                target_entity: None,
-                files: Vec::new(),
-                statistics: CoveringSetStats {
-                    total_files_examined: 0,
-                    files_in_set: 0,
-                    files_excluded: 0,
-                    max_depth_reached: 0,
-                    limits_reached: false,
-                },
-                error: Some("No repository has been scanned. Please scan a repository first.".to_string()),
-            });
-        }
-    };
-
-    // Build entity query
-    let entity_type = request.entity_type.as_deref().and_then(|t| match t.to_lowercase().as_str() {
-        "function" => Some(EntityType::Function),
-        "class" => Some(EntityType::Class),
-        "module" => Some(EntityType::Module),
-        "interface" => Some(EntityType::Interface),
-        "constant" => Some(EntityType::Constant),
-        _ => None,
+    return Json(CoveringSetResponse {
+        success: false,
+        target_entity: None,
+        files: Vec::new(),
+        statistics: CoveringSetStats {
+            total_files_examined: 0,
+            files_in_set: 0,
+            files_excluded: 0,
+            max_depth_reached: 0,
+            limits_reached: false,
+        },
+        error: Some("Covering set computation not yet implemented in web service".to_string()),
     });
-
-    let mut query = EntityQuery {
-        entity_type,
-        name_pattern: Some(request.name_pattern.clone()),
-        exact_match: request.exact_match,
-        public_only: request.public_only,
-    };
-
-    // Build covering set options
-    let options = CoveringSetOptions {
-        include_dependencies: request.include_dependencies,
-        include_dependents: request.include_dependents,
-        max_depth: request.max_depth,
-        max_files: request.max_files,
-        min_importance: None,
-    };
-
-    // Collect file contents
-    let mut file_contents = HashMap::new();
-    for file_info in &bundle_state.included_files {
-        if let Ok(content) = std::fs::read_to_string(&file_info.path) {
-            file_contents.insert(file_info.path.clone(), content);
-        }
-    }
-
-    // Create covering set computer and compute
-    let mut computer = match CoveringSetComputer::new() {
-        Ok(c) => c,
-        Err(e) => {
-            return Json(CoveringSetResponse {
-                success: false,
-                target_entity: None,
-                files: Vec::new(),
-                statistics: CoveringSetStats {
-                    total_files_examined: file_contents.len(),
-                    files_in_set: 0,
-                    files_excluded: 0,
-                    max_depth_reached: 0,
-                    limits_reached: false,
-                },
-                error: Some(format!("Failed to create covering set computer: {}", e)),
-            });
-        }
-    };
-
-    let result = match computer.compute_covering_set(
-        &query,
-        &file_contents,
-        &bundle_state.graph,
-        &options,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            return Json(CoveringSetResponse {
-                success: false,
-                target_entity: None,
-                files: Vec::new(),
-                statistics: CoveringSetStats {
-                    total_files_examined: file_contents.len(),
-                    files_in_set: 0,
-                    files_excluded: 0,
-                    max_depth_reached: 0,
-                    limits_reached: false,
-                },
-                error: Some(format!("Failed to compute covering set: {}", e)),
-            });
-        }
-    };
-
-    // Convert result to response format
-    let target_entity = result.target_entity.map(|e| EntityInfo {
-        file_path: e.file_path.clone(),
-        entity_type: e.entity_type.clone(),
-        entity_name: e.entity_name.clone(),
-        start_line: e.start_line,
-        end_line: e.end_line,
-        is_public: e.is_public,
-    });
-
-    let files: Vec<FileInCoveringSet> = result
-        .files
-        .iter()
-        .map(|f| {
-            let explanation = result
-                .inclusion_reasons
-                .get(&f.path)
-                .cloned()
-                .unwrap_or_else(|| "Included in covering set".to_string());
-
-            FileInCoveringSet {
-                path: f.path.clone(),
-                reason: format!("{:?}", f.reason),
-                distance: f.distance,
-                explanation,
-            }
-        })
-        .collect();
-
-    let statistics = CoveringSetStats {
-        total_files_examined: result.statistics.files_examined,
-        files_in_set: result.statistics.files_selected,
-        files_excluded: result.statistics.files_excluded,
-        max_depth_reached: result.statistics.max_depth_reached,
-        limits_reached: result.statistics.limits_reached,
-    };
-
-    info!(
-        "Covering set computed: {} files selected from {} examined",
-        statistics.files_in_set, statistics.total_files_examined
-    );
-
-    Json(CoveringSetResponse {
-        success: true,
-        target_entity,
-        files,
-        statistics,
-        error: None,
-    })
 }
 
 #[cfg(test)]

@@ -73,17 +73,31 @@ async fn run_covering_set_mode(
 
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
-    // Collect file contents
+    // Collect file contents with String keys (required by covering set computer)
     let mut file_contents = HashMap::new();
     for file_info in &analysis_outcome.analysis.files {
         if let Ok(content) = std::fs::read_to_string(&file_info.path) {
-            file_contents.insert(file_info.path.clone(), content);
+            // Convert PathBuf to String for the covering set API
+            file_contents.insert(file_info.path.display().to_string(), content);
         }
     }
 
     if verbose_level > 0 {
         info!("📁 Loaded {} files", file_contents.len());
     }
+
+    // Build dependency graph for covering set computation
+    // For now, create an empty graph - the covering set will primarily rely on
+    // AST-based entity search rather than dependency traversal
+    if verbose_level > 0 {
+        info!("🔗 Preparing dependency graph...");
+    }
+
+    use scribe_graph::DependencyGraph;
+    let graph = DependencyGraph::new();
+
+    // TODO: Implement full dependency graph construction
+    // This would require import extraction from file contents
 
     // Build entity query
     let parsed_entity_type = entity_type.and_then(|t| match t.to_lowercase().as_str() {
@@ -122,7 +136,7 @@ async fn run_covering_set_mode(
     let result = computer.compute_covering_set(
         &query,
         &file_contents,
-        &analysis_outcome.graph,
+        &graph,
         &options,
     )?;
 
