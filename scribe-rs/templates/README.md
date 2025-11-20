@@ -4,17 +4,29 @@ This directory contains the external HTML templates used by the Scribe CLI for g
 
 ## Templates
 
-### `report.html`
-The main HTML template for repository analysis reports. Features:
+### `report_cdn.html` (Default - Recommended)
+**The current default template** - Uses CDN links for minimal output size. Features:
+- **60% smaller file size** (8KB vs 20KB template)
+- **No bundled JavaScript** - Uses CDN for highlight.js
 - Professional dark theme with CSS variables
-- Responsive design with mobile support  
-- Beautiful glassmorphism header with blur effects
-- Lucide icons for file types and UI elements
-- Interactive hover effects and transitions
-- Syntax-highlighted code display
-- Table of contents with anchor links
+- Responsive design with mobile support
+- Syntax-highlighted code display via highlight.js CDN
 - File metadata display (size, tokens, importance score)
-- Performance optimizations (max-height with scrolling)
+- Expand/collapse file sections
+- Clean, minimal design optimized for performance
+
+**CDN Dependencies:**
+- highlight.js (CSS + JS) from cdnjs.cloudflare.com
+
+### `report_bundled.html` (Legacy)
+The older template with all assets embedded. Features:
+- Self-contained (no external dependencies)
+- React-based file tree visualization
+- Larger file size due to bundled assets (20KB template + 268KB JS bundle)
+- Full offline functionality
+
+### `report.html`
+Alternative template with different styling approach.
 
 ## Template Variables
 

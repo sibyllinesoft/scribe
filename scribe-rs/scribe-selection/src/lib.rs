@@ -5,23 +5,29 @@
 //! semantic understanding, dependency analysis, and contextual relevance.
 
 pub mod ast_parser;
-pub mod bandit_router;
 pub mod bundler;
 pub mod context;
+pub mod covering_set;
 pub mod demotion;
 pub mod quota;
 pub mod selector;
+pub mod simple_router;
 pub mod token_budget;
 pub mod two_pass;
 
 // Re-export main types
-pub use ast_parser::{AstChunk, AstLanguage, AstParser, AstSignature};
-pub use bandit_router::{
-    BanditConfig, BanditRouter, BanditState, BanditStatistics, PerformanceFeedback,
-    RoutingDecision, SelectionStrategy,
+pub use ast_parser::{
+    AstChunk, AstLanguage, AstParser, AstSignature, EntityLocation, EntityQuery, EntityType,
 };
 pub use bundler::{BundleOptions, CodeBundle, CodeBundler};
 pub use context::{CodeContext, ContextExtractor, ContextFile, ContextOptions};
+pub use covering_set::{
+    CoveringSetComputer, CoveringSetFile, CoveringSetOptions, CoveringSetResult,
+    CoveringSetStatistics, InclusionReason,
+};
+pub use simple_router::{
+    ProjectSize, RoutingDecision, SelectionStrategy, SimpleRouter, TimeConstraint,
+};
 pub use demotion::{
     ChunkInfo, CodeChunker, DemotionEngine, DemotionResult, FidelityMode, SignatureExtractor,
 };

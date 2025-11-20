@@ -33,6 +33,147 @@ async fn clone_github_repo(
     Ok((temp_dir.path().to_path_buf(), Some(temp_dir)))
 }
 
+async fn run_covering_set_mode(
+    repo_dir: &Path,
+    entity_name: &str,
+    entity_type: Option<&str>,
+    exact_match: bool,
+    include_dependents: bool,
+    max_depth: Option<usize>,
+    max_files: Option<usize>,
+    verbose_level: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use scribe_selection::{CoveringSetComputer, CoveringSetOptions, EntityQuery, EntityType};
+    use scribe::analyze_and_select;
+    use std::collections::HashMap;
+
+    if verbose_level > 0 {
+        info!("🎯 Covering set mode: finding '{}'", entity_name);
+    } else {
+        println!("🎯 Finding covering set for: {}", entity_name);
+    }
+
+    // First, scan and analyze the repository to get file info and build dependency graph
+    let mut config = Config::default();
+    config.general.working_dir = Some(repo_dir.to_path_buf());
+    config.analysis.token_budget = None; // Analyze all files
+
+    let selection_options = SelectionOptions {
+        token_target: 0, // No budget limit for initial analysis
+        force_traditional: false,
+        algorithm_name: Some("covering-set".to_string()),
+        include_directory_map: false,
+    };
+
+    if verbose_level > 0 {
+        info!("📊 Scanning repository...");
+    } else {
+        println!("📊 Scanning repository...");
+    }
+
+    let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
+
+    // Collect file contents
+    let mut file_contents = HashMap::new();
+    for file_info in &analysis_outcome.analysis.files {
+        if let Ok(content) = std::fs::read_to_string(&file_info.path) {
+            file_contents.insert(file_info.path.clone(), content);
+        }
+    }
+
+    if verbose_level > 0 {
+        info!("📁 Loaded {} files", file_contents.len());
+    }
+
+    // Build entity query
+    let parsed_entity_type = entity_type.and_then(|t| match t.to_lowercase().as_str() {
+        "function" => Some(EntityType::Function),
+        "class" => Some(EntityType::Class),
+        "module" => Some(EntityType::Module),
+        "interface" => Some(EntityType::Interface),
+        "constant" => Some(EntityType::Constant),
+        _ => None,
+    });
+
+    let query = EntityQuery {
+        entity_type: parsed_entity_type,
+        name_pattern: Some(entity_name.to_string()),
+        exact_match,
+        public_only: None,
+    };
+
+    // Build covering set options
+    let options = CoveringSetOptions {
+        include_dependencies: true,
+        include_dependents,
+        max_depth,
+        max_files,
+        min_importance: None,
+    };
+
+    if verbose_level > 0 {
+        info!("🔍 Computing covering set...");
+    } else {
+        println!("🔍 Computing covering set...");
+    }
+
+    // Compute covering set
+    let mut computer = CoveringSetComputer::new()?;
+    let result = computer.compute_covering_set(
+        &query,
+        &file_contents,
+        &analysis_outcome.graph,
+        &options,
+    )?;
+
+    // Display results
+    if let Some(target) = &result.target_entity {
+        println!("\n✅ Found target entity:");
+        println!("  • File     : {}", target.file_path);
+        println!("  • Type     : {}", target.entity_type);
+        println!("  • Name     : {}", target.entity_name);
+        println!("  • Lines    : {}-{}", target.start_line, target.end_line);
+        println!("  • Public   : {}", if target.is_public { "yes" } else { "no" });
+    } else {
+        println!("\n❌ Entity '{}' not found", entity_name);
+        println!("   Try:");
+        println!("   - Using a different name pattern");
+        println!("   - Removing --exact-match flag for fuzzy search");
+        println!("   - Specifying --entity-type (function, class, module, etc.)");
+        return Ok(());
+    }
+
+    println!("\n📦 Covering set ({} files):", result.files.len());
+    for (idx, file) in result.files.iter().enumerate() {
+        let explanation = result
+            .inclusion_reasons
+            .get(&file.path)
+            .map(|s| s.as_str())
+            .unwrap_or("Included");
+
+        println!(
+            "  {}. {} (distance: {}, reason: {})",
+            idx + 1,
+            file.path,
+            file.distance,
+            explanation
+        );
+    }
+
+    println!("\n📊 Statistics:");
+    println!("  • Files examined  : {}", result.statistics.files_examined);
+    println!("  • Files selected  : {}", result.statistics.files_selected);
+    println!("  • Files excluded  : {}", result.statistics.files_excluded);
+    println!("  • Max depth       : {}", result.statistics.max_depth_reached);
+    println!("  • Limits reached  : {}", if result.statistics.limits_reached { "yes" } else { "no" });
+
+    if verbose_level > 0 {
+        info!("✨ Covering set computation complete");
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "web")]
 struct CliAnalysisProvider;
 
@@ -411,6 +552,50 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .long("scaling")
                 .help("Enable advanced scaling optimizations for large repositories")
                 .action(ArgAction::SetTrue),
+        )
+        // Covering set mode
+        .arg(
+            Arg::new("covering_set")
+                .long("covering-set")
+                .help("Find covering set for a specific entity (function, class, module)")
+                .value_name("ENTITY_NAME"),
+        )
+        .arg(
+            Arg::new("entity_type")
+                .long("entity-type")
+                .help("Type of entity to find: function, class, module, interface, constant")
+                .value_name("TYPE")
+                .requires("covering_set"),
+        )
+        .arg(
+            Arg::new("exact_match")
+                .long("exact-match")
+                .help("Match entity name exactly (vs substring match)")
+                .action(ArgAction::SetTrue)
+                .requires("covering_set"),
+        )
+        .arg(
+            Arg::new("include_dependents")
+                .long("include-dependents")
+                .help("Include files that depend on the target (for impact analysis)")
+                .action(ArgAction::SetTrue)
+                .requires("covering_set"),
+        )
+        .arg(
+            Arg::new("max_depth")
+                .long("max-depth")
+                .help("Maximum dependency traversal depth")
+                .value_name("DEPTH")
+                .value_parser(clap::value_parser!(usize))
+                .requires("covering_set"),
+        )
+        .arg(
+            Arg::new("max_files_covering")
+                .long("max-files")
+                .help("Maximum number of files in covering set")
+                .value_name("COUNT")
+                .value_parser(clap::value_parser!(usize))
+                .requires("covering_set"),
         );
 
     let matches = app.get_matches();
@@ -456,6 +641,21 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             token_target,
             max_bytes,
             matches.get_flag("no_exclude_tests"),
+        )
+        .await;
+    }
+
+    // Check for covering set mode
+    if let Some(entity_name) = matches.get_one::<String>("covering_set") {
+        return run_covering_set_mode(
+            &repo_dir,
+            entity_name,
+            matches.get_one::<String>("entity_type").map(|s| s.as_str()),
+            matches.get_flag("exact_match"),
+            matches.get_flag("include_dependents"),
+            matches.get_one::<usize>("max_depth").copied(),
+            matches.get_one::<usize>("max_files_covering").copied(),
+            verbose_level,
         )
         .await;
     }

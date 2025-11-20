@@ -142,6 +142,7 @@ impl WebService {
             .route("/api/bundle/export", post(handlers::export_bundle))
             .route("/api/config", get(handlers::get_config))
             .route("/api/config", post(handlers::update_config))
+            .route("/api/covering-set", post(handlers::compute_covering_set))
             // Main web interface
             .route("/", get(handlers::index))
             .route("/editor", get(handlers::bundle_editor))

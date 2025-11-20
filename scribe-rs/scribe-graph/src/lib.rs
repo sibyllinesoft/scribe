@@ -105,6 +105,7 @@ pub use pagerank::{
 
 pub use graph::{
     ConcurrentDependencyGraph, DegreeInfo, DependencyGraph, GraphStatistics, NodeMetadata,
+    TraversalDirection,
 };
 
 pub use statistics::{

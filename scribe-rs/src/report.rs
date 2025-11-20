@@ -68,7 +68,10 @@ pub fn generate_html_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
 ) -> Result<String, Box<dyn Error>> {
-    let template_str = include_str!("../templates/report_bundled.html");
+    // Use CDN-based template for smaller output size
+    // This reduces the generated HTML file size by ~60% by using CDN links
+    // for highlight.js instead of embedding a 268KB React bundle
+    let template_str = include_str!("../templates/report_cdn.html");
     let mut handlebars = Handlebars::new();
     handlebars.register_template_string("report", template_str)?;
 

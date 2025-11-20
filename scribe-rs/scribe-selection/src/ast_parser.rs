@@ -1150,6 +1150,195 @@ impl AstParser {
     fn node_text(&self, node: Node, content: &str) -> String {
         content[node.start_byte()..node.end_byte()].to_string()
     }
+
+    /// Search for entities (functions, classes, etc.) by name within parsed content
+    ///
+    /// Returns locations of all matching entities across the provided content.
+    pub fn find_entities(
+        &mut self,
+        content: &str,
+        file_path: &str,
+        query: &EntityQuery,
+    ) -> Result<Vec<EntityLocation>> {
+        let chunks = self.parse_chunks(content, file_path)?;
+        let mut locations = Vec::new();
+
+        for chunk in chunks {
+            if self.matches_query(&chunk, query) {
+                locations.push(EntityLocation {
+                    file_path: file_path.to_string(),
+                    entity_type: chunk.chunk_type.clone(),
+                    entity_name: chunk.name.clone().unwrap_or_default(),
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    is_public: chunk.is_public,
+                    content: chunk.content.clone(),
+                });
+            }
+        }
+
+        Ok(locations)
+    }
+
+    /// Check if a chunk matches the entity query
+    fn matches_query(&self, chunk: &AstChunk, query: &EntityQuery) -> bool {
+        // Match by entity type if specified
+        if let Some(ref entity_type) = query.entity_type {
+            if !self.chunk_type_matches(entity_type, &chunk.chunk_type) {
+                return false;
+            }
+        }
+
+        // Match by name if specified
+        if let Some(ref name_pattern) = query.name_pattern {
+            let chunk_name = chunk.name.as_deref().unwrap_or("");
+            if query.exact_match {
+                if chunk_name != name_pattern {
+                    return false;
+                }
+            } else {
+                // Case-insensitive substring match
+                if !chunk_name.to_lowercase().contains(&name_pattern.to_lowercase()) {
+                    return false;
+                }
+            }
+        }
+
+        // Match by visibility if specified
+        if let Some(public_only) = query.public_only {
+            if public_only && !chunk.is_public {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check if chunk type matches the requested entity type
+    fn chunk_type_matches(&self, requested: &EntityType, chunk_type: &str) -> bool {
+        match requested {
+            EntityType::Function => matches!(chunk_type, "function" | "method"),
+            EntityType::Class => matches!(chunk_type, "class" | "struct_item" | "trait_item"),
+            EntityType::Module => matches!(chunk_type, "mod" | "module" | "package"),
+            EntityType::Interface => matches!(chunk_type, "interface" | "trait_item"),
+            EntityType::Constant => matches!(chunk_type, "const" | "constant" | "static"),
+            EntityType::Any => true,
+        }
+    }
+}
+
+/// Entity type for search queries
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntityType {
+    Function,
+    Class,
+    Module,
+    Interface,
+    Constant,
+    Any,
+}
+
+/// Query for finding entities
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityQuery {
+    /// Type of entity to search for (None means any type)
+    pub entity_type: Option<EntityType>,
+    /// Name pattern to match (None means any name)
+    pub name_pattern: Option<String>,
+    /// Whether to match name exactly (vs substring)
+    pub exact_match: bool,
+    /// Only return public/exported entities
+    pub public_only: Option<bool>,
+}
+
+impl EntityQuery {
+    /// Create a query for any entity with a specific name
+    pub fn by_name(name: &str) -> Self {
+        Self {
+            entity_type: None,
+            name_pattern: Some(name.to_string()),
+            exact_match: false,
+            public_only: None,
+        }
+    }
+
+    /// Create a query for a specific entity type
+    pub fn by_type(entity_type: EntityType) -> Self {
+        Self {
+            entity_type: Some(entity_type),
+            name_pattern: None,
+            exact_match: false,
+            public_only: None,
+        }
+    }
+
+    /// Create a query for a specific function by name
+    pub fn function(name: &str) -> Self {
+        Self {
+            entity_type: Some(EntityType::Function),
+            name_pattern: Some(name.to_string()),
+            exact_match: false,
+            public_only: None,
+        }
+    }
+
+    /// Create a query for a specific class/struct by name
+    pub fn class(name: &str) -> Self {
+        Self {
+            entity_type: Some(EntityType::Class),
+            name_pattern: Some(name.to_string()),
+            exact_match: false,
+            public_only: None,
+        }
+    }
+
+    /// Create a query for a specific module by path
+    pub fn module(path: &str) -> Self {
+        Self {
+            entity_type: Some(EntityType::Module),
+            name_pattern: Some(path.to_string()),
+            exact_match: false,
+            public_only: None,
+        }
+    }
+
+    /// Set whether to match exactly
+    pub fn exact(mut self) -> Self {
+        self.exact_match = true;
+        self
+    }
+
+    /// Only match public/exported entities
+    pub fn public(mut self) -> Self {
+        self.public_only = Some(true);
+        self
+    }
+}
+
+/// Location of an entity in the codebase
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityLocation {
+    /// File path containing the entity
+    pub file_path: String,
+    /// Type of entity (function, class, etc.)
+    pub entity_type: String,
+    /// Name of the entity
+    pub entity_name: String,
+    /// Start line number (1-indexed)
+    pub start_line: usize,
+    /// End line number (1-indexed)
+    pub end_line: usize,
+    /// Whether this entity is public/exported
+    pub is_public: bool,
+    /// Full content of the entity
+    pub content: String,
+}
+
+impl EntityLocation {
+    /// Get a unique identifier for this entity
+    pub fn identifier(&self) -> String {
+        format!("{}::{}", self.file_path, self.entity_name)
+    }
 }
 
 impl Default for AstParser {
