@@ -1,28 +1,70 @@
 # Scribe
 
-Scribe is a Rust workspace for building high quality repository bundles for AI assistance, code review, and documentation. The project pairs a fast, memory-safe core written in Rust with a small set of Python utilities for validation and security scanning.
+**The intelligent repository bundler that maximizes LLM reasoning quality.**
 
-## Highlights
+Scribe uses research-grade graph algorithms, surgical entity selection, and transformer-aware context positioning to build bundles that help LLMs truly understand your code. Built in Rust for production-grade performance, Scribe analyzes repositories of any size while intelligently prioritizing what matters—no babysitting required.
 
-- **Rust-first implementation.** The `scribe-rs` workspace provides the CLI, web service, and supporting crates for scanning repositories, analysing code structure, and generating bundles in multiple formats.
-- **Interactive editor.** The CLI can emit an interactive HTML report that lets you review selected files, adjust the bundle, and export different output styles.
-- **Language aware analysis.** Sub-crates such as `scribe-analysis`, `scribe-graph`, and `scribe-selection` handle AST parsing, import graph modelling, and scoring to prioritise important files.
-- **Lightweight Python helpers.** The support code that backs the remaining Python scripts lives under `tools/scripts/support`, with installable utilities for secret scanning and pack verification.
+## Why Scribe?
+
+While other tools simply concatenate files, Scribe treats repository bundling as an information retrieval problem:
+
+- **Surgical precision:** Extract only the files needed to understand a specific function or class
+- **Intelligent prioritization:** PageRank centrality analysis identifies what's genuinely important
+- **Context optimization:** Exploits transformer attention patterns for better LLM reasoning
+- **Production performance:** Sub-second on small repos, <30s on 100k+ file enterprises
+- **Transparent decisions:** Explainable inclusion reasons for every selected file
+
+See [WHY_SCRIBE.md](WHY_SCRIBE.md) for a detailed comparison with alternatives like Repomix and Code2Prompt.
+
+## Key Features
+
+### Intelligence That Doesn't Need Babysitting
+
+- **PageRank centrality analysis:** Identifies truly important files in your dependency graph, just like Google ranks web pages
+- **Surgical covering set selection:** Target specific functions, classes, or modules and automatically compute minimal dependency closures
+- **Multi-dimensional scoring:** Combines documentation coverage, test linkage, git churn, and graph centrality with configurable weights
+- **Progressive demotion:** Intelligent content reduction (full → chunks → signatures) that maximizes information density within any token budget
+
+### Optimized for LLM Recall
+
+- **3-tier context positioning:** Exploits transformer attention patterns by placing high-priority files at HEAD (20%), supporting context in MIDDLE (60%), and core functionality at TAIL (20%)
+- **Query-aware ordering:** When provided a query, surfaces most relevant files where LLMs attend best
+- **AST-based semantic chunking:** Language-aware content reduction that preserves critical functions and type signatures
+
+### Production-Grade Performance
+
+- **Rust-first implementation:** Fast, memory-safe core with parallel processing via Rayon
+- **Scalable:** Small repos <1s, medium ~5s, large ~15s, 100k+ files <30s
+- **Efficient memory:** 50MB to ~2GB based on repo size with streaming architecture
+- **Persistent caching:** Signature-based invalidation for incremental updates
+
+### Transparent and Extensible
+
+- **Explainable selections:** Detailed inclusion reasons (target, direct dependency, transitive, centrality-based)
+- **Multiple algorithms:** Simple router, complex bandit, covering-set selection for different use cases
+- **Rich output formats:** Markdown, HTML (with interactive editor), JSON, XML
+- **Language support:** Tier-1 AST parsing for Python, JS/TS, Rust, Go, plus 15+ additional languages
 
 ## Quick Start
 
 ```bash
-# Build and install the CLI locally
+# Install from source
 cargo install --path scribe-rs --locked
 
-# Generate a bundle for the current repository
+# Generate a Markdown bundle for your repository
 scribe --style markdown --output bundle.md
 
-# Produce an interactive HTML editor next to the bundle
+# Create an interactive HTML editor to review and customize
 scribe --style html --editor --output bundle.html
+
+# Surgical selection: Get only files needed to understand a specific function
+scribe --covering-set "authenticate_user" --entity-type function --max-files 20
+
+# Use with custom token budget
+scribe --token-budget 100000 --style markdown
 ```
 
-Run `scribe --help` to see the available algorithms, token budgeting controls, Git integration flags, and output formats.
+Run `scribe --help` to see available algorithms, token budgeting controls, Git integration flags, and output formats.
 
 ## Python Utilities
 
