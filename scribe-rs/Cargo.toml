@@ -14,7 +14,7 @@ default-members = ["."]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -67,19 +67,23 @@ tempfile = "3.8"
 tokio-test = "0.4"
 
 [package]
-name = "scribe"
+name = "scribe-cli"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
+documentation = "https://docs.rs/scribe-cli"
 description = "Advanced code analysis and repository exploration library with AI-powered insights"
 keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
 exclude = ["workspace.toml"]
+
+[lib]
+name = "scribe"
+path = "src/lib.rs"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
@@ -124,14 +128,14 @@ open = "5.0"
 indicatif = { version = "0.17", features = ["tokio", "futures", "rayon"] }
 
 # Sub-crate dependencies with optional features
-scribe-core = { path = "./scribe-core", version = "0.5.0", optional = true }
-scribe-analysis = { path = "./scribe-analysis", version = "0.5.0", optional = true }
-scribe-graph = { path = "./scribe-graph", version = "0.5.0", optional = true }
-scribe-scanner = { path = "./scribe-scanner", version = "0.5.0", optional = true }
-scribe-patterns = { path = "./scribe-patterns", version = "0.5.0", optional = true }
-scribe-selection = { path = "./scribe-selection", version = "0.5.0", optional = true }
-scribe-scaling = { path = "./scribe-scaling", version = "0.5.0", optional = true }
-scribe-webservice = { path = "./scribe-webservice", version = "0.5.0", optional = true, default-features = false }
+scribe-core = { path = "./scribe-core", version = "0.5.1", optional = true }
+scribe-analysis = { path = "./scribe-analysis", version = "0.5.1", optional = true }
+scribe-graph = { path = "./scribe-graph", version = "0.5.1", optional = true }
+scribe-scanner = { path = "./scribe-scanner", version = "0.5.1", optional = true }
+scribe-patterns = { path = "./scribe-patterns", version = "0.5.1", optional = true }
+scribe-selection = { path = "./scribe-selection", version = "0.5.1", optional = true }
+scribe-scaling = { path = "./scribe-scaling", version = "0.5.1", optional = true }
+scribe-webservice = { path = "./scribe-webservice", version = "0.5.1", optional = true, default-features = false }
 
 # Core dependencies used by multiple crates
 serde = { version = "1.0", features = ["derive"] }

@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command, ValueEnum};
-use git2::Repository;
+use git2::{DiffOptions, Repository};
 use serde_json::{self, json};
 use std::collections::HashSet;
 use std::fs;
@@ -183,6 +183,372 @@ async fn run_covering_set_mode(
 
     if verbose_level > 0 {
         info!("✨ Covering set computation complete");
+    }
+
+    Ok(())
+}
+
+async fn run_covering_set_diff_mode(
+    repo_dir: &Path,
+    diff_against: Option<&str>,
+    include_dependents: bool,
+    max_depth: Option<usize>,
+    max_files: Option<usize>,
+    verbose_level: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use scribe_graph::centrality::{ImportDetector, ImportResolutionConfig};
+    use scribe_graph::DependencyGraph;
+    use scribe_selection::{CoveringSetComputer, CoveringSetOptions};
+    use scribe_analysis::heuristics::{DocumentAnalysis, ScanResult};
+    use scribe_core::file::{is_entrypoint_path, is_test_path, FileType};
+    use scribe_core::Language;
+
+    #[derive(Debug, Clone)]
+    struct DiffScanFile {
+        path: String,
+        relative_path: String,
+        depth: usize,
+        is_docs: bool,
+        is_readme: bool,
+        is_test: bool,
+        is_entrypoint: bool,
+        has_examples: bool,
+        priority_boost: f64,
+        churn_score: f64,
+        imports: Vec<String>,
+    }
+
+    impl ScanResult for DiffScanFile {
+        fn path(&self) -> &str {
+            &self.path
+        }
+        fn relative_path(&self) -> &str {
+            &self.relative_path
+        }
+        fn depth(&self) -> usize {
+            self.depth
+        }
+        fn is_docs(&self) -> bool {
+            self.is_docs
+        }
+        fn is_readme(&self) -> bool {
+            self.is_readme
+        }
+        fn is_test(&self) -> bool {
+            self.is_test
+        }
+        fn is_entrypoint(&self) -> bool {
+            self.is_entrypoint
+        }
+        fn has_examples(&self) -> bool {
+            self.has_examples
+        }
+        fn priority_boost(&self) -> f64 {
+            self.priority_boost
+        }
+        fn churn_score(&self) -> f64 {
+            self.churn_score
+        }
+        fn centrality_in(&self) -> f64 {
+            0.0
+        }
+        fn imports(&self) -> Option<&[String]> {
+            Some(&self.imports)
+        }
+        fn doc_analysis(&self) -> Option<&DocumentAnalysis> {
+            None
+        }
+    }
+
+    fn extract_imports(content: &str, language: &Language) -> Vec<String> {
+        use std::collections::HashSet;
+        let mut imports = HashSet::new();
+        match language {
+            Language::Rust => {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("use ") {
+                        let statement = trimmed
+                            .trim_start_matches("use ")
+                            .trim_end_matches(';')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or_default()
+                            .trim_end_matches("::");
+                        if !statement.is_empty() {
+                            imports.insert(statement.to_string());
+                        }
+                    } else if trimmed.starts_with("mod ") {
+                        let module = trimmed
+                            .trim_start_matches("mod ")
+                            .trim_end_matches(';')
+                            .trim();
+                        if !module.is_empty() {
+                            imports.insert(module.to_string());
+                        }
+                    }
+                }
+            }
+            Language::Python => {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("import ") {
+                        for module in trimmed.trim_start_matches("import ").split(',') {
+                            let module = module.trim().split_whitespace().next().unwrap_or("");
+                            if !module.is_empty() {
+                                imports.insert(module.to_string());
+                            }
+                        }
+                    } else if trimmed.starts_with("from ") && trimmed.contains(" import ") {
+                        let module = trimmed
+                            .trim_start_matches("from ")
+                            .split(" import ")
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+                        if !module.is_empty() {
+                            imports.insert(module.to_string());
+                        }
+                    }
+                }
+            }
+            Language::JavaScript | Language::TypeScript => {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("import ") {
+                        if let Some(start) = trimmed.find('"') {
+                            if let Some(end) = trimmed[start + 1..].find('"') {
+                                imports.insert(trimmed[start + 1..start + 1 + end].to_string());
+                            }
+                        } else if let Some(start) = trimmed.find('\'') {
+                            if let Some(end) = trimmed[start + 1..].find('\'') {
+                                imports.insert(trimmed[start + 1..start + 1 + end].to_string());
+                            }
+                        }
+                    } else if trimmed.contains("require(") {
+                        if let Some(start) = trimmed.find("require(") {
+                            let start = start + "require(".len();
+                            let slice = &trimmed[start..];
+                            if let Some(end_idx) = slice.find(')') {
+                                let inner = &slice[..end_idx];
+                                let inner = inner.trim_matches(&['\'', '"'][..]);
+                                if !inner.is_empty() {
+                                    imports.insert(inner.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Language::Go => {
+                let mut in_block = false;
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed == "import (" {
+                        in_block = true;
+                        continue;
+                    }
+                    if in_block {
+                        if trimmed == ")" {
+                            in_block = false;
+                            continue;
+                        }
+                        let import_path = trimmed.trim_matches(&['"', '`'][..]);
+                        if !import_path.is_empty() {
+                            imports.insert(import_path.to_string());
+                        }
+                    } else if trimmed.starts_with("import ") {
+                        let import_path = trimmed
+                            .trim_start_matches("import ")
+                            .trim_matches(&['"', '`'][..]);
+                        if !import_path.is_empty() {
+                            imports.insert(import_path.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut ordered: Vec<String> = imports.into_iter().collect();
+        ordered.sort();
+        ordered.truncate(64);
+        ordered
+    }
+
+    if verbose_level > 0 {
+        info!("🎯 Covering set (diff) mode");
+    } else {
+        println!("🎯 Computing covering set for git diff");
+    }
+
+    let repo = Repository::open(repo_dir)?;
+    let mut diff_opts = DiffOptions::new();
+    diff_opts.include_untracked(true).recurse_untracked_dirs(true);
+
+    let workdir = repo.workdir().unwrap_or(repo_dir);
+    let mut changed_files = std::collections::HashSet::new();
+
+    if let Some(reference) = diff_against {
+        let obj = repo.revparse_single(reference)?;
+        let commit = obj.peel_to_commit()?;
+        let tree = commit.tree()?;
+        let diff = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut diff_opts))?;
+        for delta in diff.deltas() {
+            if let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                changed_files.insert(workdir.join(path).to_string_lossy().to_string());
+            }
+        }
+    } else {
+        let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
+        for delta in diff.deltas() {
+            if let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                changed_files.insert(workdir.join(path).to_string_lossy().to_string());
+            }
+        }
+    }
+
+    if changed_files.is_empty() {
+        println!("❌ No changes detected in the diff");
+        return Ok(());
+    }
+
+    let changed_files: Vec<String> = changed_files.into_iter().collect();
+
+    if verbose_level > 0 {
+        info!("📁 {} changed files detected", changed_files.len());
+    } else {
+        println!("📁 {} changed files detected", changed_files.len());
+    }
+
+    // Reuse the full analysis pipeline to collect file metadata and content.
+    let mut config = Config::default();
+    config.general.working_dir = Some(repo_dir.to_path_buf());
+    config.analysis.token_budget = None;
+    let selection_options = SelectionOptions {
+        token_target: 0,
+        force_traditional: true,
+        algorithm_name: Some("covering-set-diff".to_string()),
+        include_directory_map: false,
+    };
+    let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
+
+    // Build ScanResult shims with imports for dependency graph construction
+    let diff_scan_files: Vec<DiffScanFile> = analysis_outcome
+        .analysis
+        .files
+        .iter()
+        .map(|file| {
+            let extension = file
+                .path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("");
+            let language = Language::from_extension(extension);
+            let content = if file.is_binary {
+                String::new()
+            } else {
+                file.content
+                    .clone()
+                    .or_else(|| std::fs::read_to_string(&file.path).ok())
+                    .unwrap_or_default()
+            };
+
+            let imports = if file.is_binary {
+                Vec::new()
+            } else {
+                extract_imports(&content, &language)
+            };
+
+            let relative_path = file.relative_path.clone();
+            let depth = relative_path.matches('/').count();
+            let path_lower = relative_path.to_lowercase();
+
+            DiffScanFile {
+                path: file.path.to_string_lossy().to_string(),
+                relative_path,
+                depth,
+                is_docs: matches!(file.file_type, FileType::Documentation { .. }),
+                is_readme: path_lower.contains("readme"),
+                is_test: is_test_path(&file.path),
+                is_entrypoint: is_entrypoint_path(&file.path, &language),
+                has_examples: path_lower.contains("example"),
+                priority_boost: 0.0,
+                churn_score: 0.0,
+                imports,
+            }
+        })
+        .collect();
+
+    let mut graph = DependencyGraph::with_capacity(diff_scan_files.len());
+    for file in &diff_scan_files {
+        graph.add_node(file.path.clone())?;
+    }
+
+    let detector =
+        ImportDetector::with_file_index(ImportResolutionConfig::default(), &diff_scan_files);
+    let file_map: std::collections::HashMap<&str, &DiffScanFile> = diff_scan_files
+        .iter()
+        .map(|f| (f.path.as_str(), f))
+        .collect();
+
+    for file in &diff_scan_files {
+        if let Some(imports) = file.imports() {
+            for import_str in imports {
+                if let Some(resolved) = detector.resolve_import(import_str, &file.path, &file_map) {
+                    graph.add_edge(file.path.clone(), resolved)?;
+                }
+            }
+        }
+    }
+
+    let options = CoveringSetOptions {
+        include_dependencies: true,
+        include_dependents,
+        max_depth,
+        max_files,
+        min_importance: None,
+    };
+
+    let computer = CoveringSetComputer::new()?;
+    let result =
+        computer.compute_covering_set_for_files(&changed_files, &graph, None, &options)?;
+
+    println!("\n📦 Covering set for diff ({} files):", result.files.len());
+    for (idx, file) in result.files.iter().enumerate() {
+        let explanation = result
+            .inclusion_reasons
+            .get(&file.path)
+            .map(|s| s.as_str())
+            .unwrap_or("Included");
+
+        println!(
+            "  {}. {} (distance: {}, reason: {})",
+            idx + 1,
+            file.path,
+            file.distance,
+            explanation
+        );
+    }
+
+    println!("\n📊 Statistics:");
+    println!("  • Files examined  : {}", result.statistics.files_examined);
+    println!("  • Files selected  : {}", result.statistics.files_selected);
+    println!("  • Files excluded  : {}", result.statistics.files_excluded);
+    println!(
+        "  • Max depth       : {}",
+        result.statistics.max_depth_reached
+    );
+    println!(
+        "  • Limits reached  : {}",
+        if result.statistics.limits_reached {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+
+    if verbose_level > 0 {
+        info!("✨ Diff covering set computation complete");
     }
 
     Ok(())
@@ -409,6 +775,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .default_value("html"),
         )
         .arg(
+            Arg::new("line_numbers")
+                .long("line-numbers")
+                .help("Prefix each line of bundled files with its line number")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("token_target")
                 .long("token-target")
                 .alias("token-budget")
@@ -575,6 +947,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .value_name("ENTITY_NAME"),
         )
         .arg(
+            Arg::new("covering_set_diff")
+                .long("covering-set-diff")
+                .help("Compute covering set for the current git diff")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("covering_set"),
+        )
+        .arg(
+            Arg::new("diff_against")
+                .long("diff-against")
+                .help("Git ref to diff against (defaults to HEAD)")
+                .value_name("REF")
+                .requires("covering_set_diff"),
+        )
+        .arg(
             Arg::new("entity_type")
                 .long("entity-type")
                 .help("Type of entity to find: function, class, module, interface, constant")
@@ -592,24 +978,21 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             Arg::new("include_dependents")
                 .long("include-dependents")
                 .help("Include files that depend on the target (for impact analysis)")
-                .action(ArgAction::SetTrue)
-                .requires("covering_set"),
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("max_depth")
                 .long("max-depth")
                 .help("Maximum dependency traversal depth")
                 .value_name("DEPTH")
-                .value_parser(clap::value_parser!(usize))
-                .requires("covering_set"),
+                .value_parser(clap::value_parser!(usize)),
         )
         .arg(
             Arg::new("max_files_covering")
                 .long("max-files")
                 .help("Maximum number of files in covering set")
                 .value_name("COUNT")
-                .value_parser(clap::value_parser!(usize))
-                .requires("covering_set"),
+                .value_parser(clap::value_parser!(usize)),
         );
 
     let matches = app.get_matches();
@@ -621,6 +1004,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let token_target = *matches.get_one::<usize>("token_target").unwrap();
     let max_bytes = *matches.get_one::<usize>("max_bytes").unwrap();
     let verbose_level = matches.get_count("verbose");
+    let include_line_numbers = matches.get_flag("line_numbers");
 
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         info!("Verbose level set to {}", verbose_level);
@@ -655,6 +1039,19 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             token_target,
             max_bytes,
             matches.get_flag("no_exclude_tests"),
+        )
+        .await;
+    }
+
+    // Covering set for git diff
+    if matches.get_flag("covering_set_diff") {
+        return run_covering_set_diff_mode(
+            &repo_dir,
+            matches.get_one::<String>("diff_against").map(|s| s.as_str()),
+            matches.get_flag("include_dependents"),
+            matches.get_one::<usize>("max_depth").copied(),
+            matches.get_one::<usize>("max_files_covering").copied(),
+            verbose_level,
         )
         .await;
     }
@@ -990,6 +1387,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         info!("📝 Generating {} output", format_label);
     }
 
+    let mut selected_files = selected_files;
+
+    if include_line_numbers {
+        apply_line_numbers_to_files(&mut selected_files);
+    }
+
     let report_content = generate_report(report_format, &selected_files, &metrics)?;
     fs::write(&output_path, report_content)?;
 
@@ -1101,4 +1504,26 @@ fn normalize_patterns(patterns: Vec<String>) -> Vec<String> {
     }
 
     result
+}
+
+fn apply_line_numbers_to_files(files: &mut [ReportFile]) {
+    for file in files {
+        file.content = add_line_numbers(&file.content);
+    }
+}
+
+fn add_line_numbers(content: &str) -> String {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let width = lines.len().max(1).to_string().len().max(3);
+
+    let mut numbered = String::with_capacity(content.len() + lines.len() * (width + 3));
+    for (idx, line) in lines.iter().enumerate() {
+        let line_no = idx + 1;
+        numbered.push_str(&format!("{:width$} | {}", line_no, line, width = width));
+        if idx + 1 < lines.len() {
+            numbered.push('\n');
+        }
+    }
+
+    numbered
 }

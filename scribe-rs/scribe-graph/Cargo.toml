@@ -1,6 +1,6 @@
 [package]
 name = "scribe-graph"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -13,8 +13,8 @@ description = "Graph-based code representation and analysis for Scribe"
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.5.0", path = "../scribe-core" }
-scribe-analysis = { version = "0.5.0", path = "../scribe-analysis" }
+scribe-core = { version = "0.5.1", path = "../scribe-core" }
+scribe-analysis = { version = "0.5.1", path = "../scribe-analysis" }
 
 # Core dependencies
 serde = { version = "1.0", features = ["derive"] }

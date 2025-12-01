@@ -97,13 +97,23 @@ pub struct CoveringSetFile {
     pub distance: usize,
     /// Importance score if available
     pub importance: Option<f64>,
+    /// Relevant line ranges (inclusive, 1-indexed)
+    pub line_ranges: Vec<LineRange>,
 }
 
+/// Line range information
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineRange {
+    pub start_line: usize,
+    pub end_line: usize,
+}
 /// Reason a file was included in the covering set
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InclusionReason {
     /// File contains the target entity
     TargetFile,
+    /// File was directly changed in a diff
+    ChangedFile,
     /// File is a direct dependency of the target
     DirectDependency,
     /// File is a transitive dependency
@@ -197,6 +207,10 @@ impl CoveringSetComputer {
             reason: InclusionReason::TargetFile,
             distance: 0,
             importance: None,
+            line_ranges: vec![LineRange {
+                start_line: target.start_line,
+                end_line: target.end_line,
+            }],
         });
         inclusion_reasons.insert(
             target_file.clone(),
@@ -221,6 +235,7 @@ impl CoveringSetComputer {
                 reason: reason.clone(),
                 distance,
                 importance: None,
+                line_ranges: Vec::new(),
             });
 
             let reason_text = self.format_inclusion_reason(&reason, distance);
@@ -245,6 +260,108 @@ impl CoveringSetComputer {
 
         Ok(CoveringSetResult {
             target_entity,
+            files: covering_set,
+            statistics,
+            inclusion_reasons,
+        })
+    }
+
+    /// Compute a covering set starting from a set of changed files (git diff)
+    ///
+    /// This variant is useful for code review or impact analysis scenarios where
+    /// you want the minimal set of files that explain or are affected by a diff
+    /// without needing to name a specific entity.
+    pub fn compute_covering_set_for_files(
+        &self,
+        changed_files: &[String],
+        graph: &DependencyGraph,
+        line_map: Option<&HashMap<String, Vec<LineRange>>>,
+        options: &CoveringSetOptions,
+    ) -> Result<CoveringSetResult> {
+        let mut statistics = CoveringSetStatistics {
+            files_examined: changed_files.len(),
+            files_selected: 0,
+            files_excluded: 0,
+            max_depth_reached: 0,
+            limits_reached: false,
+        };
+
+        if changed_files.is_empty() {
+            return Ok(CoveringSetResult {
+                target_entity: None,
+                files: Vec::new(),
+                statistics,
+                inclusion_reasons: HashMap::new(),
+            });
+        }
+
+        let direction = self.get_traversal_direction(options);
+        let closure_files = graph.compute_closure(changed_files, direction, options.max_depth);
+
+        let mut covering_set = Vec::new();
+        let mut inclusion_reasons = HashMap::new();
+
+        // Add the changed files as seeds
+        for changed in changed_files {
+            covering_set.push(CoveringSetFile {
+                path: changed.clone(),
+                reason: InclusionReason::ChangedFile,
+                distance: 0,
+                importance: None,
+                line_ranges: line_map
+                    .and_then(|m| m.get(changed))
+                    .cloned()
+                    .unwrap_or_default(),
+            });
+            inclusion_reasons.insert(changed.clone(), "Changed in diff".to_string());
+        }
+
+        // Add dependency/dependent files reachable from any changed file
+        for file in closure_files {
+            if changed_files.contains(&file) {
+                continue;
+            }
+
+            // Pick a representative changed file to compute distance/reason.
+            // We use the first changed file that connects; fallback to the first seed.
+            let reference = changed_files
+                .iter()
+                .find(|target| {
+                    graph.contains_edge(target, &file) || graph.contains_edge(&file, target)
+                })
+                .unwrap_or(&changed_files[0]);
+
+            let (reason, distance) = self.compute_inclusion_info(&file, reference, graph, options);
+
+            covering_set.push(CoveringSetFile {
+                path: file.clone(),
+                reason: reason.clone(),
+                distance,
+                importance: None,
+                line_ranges: Vec::new(),
+            });
+
+            let reason_text = self.format_inclusion_reason(&reason, distance);
+            inclusion_reasons.insert(file, reason_text);
+        }
+
+        let original_count = covering_set.len();
+        self.apply_limits(&mut covering_set, options, &mut statistics);
+
+        if covering_set.len() < original_count {
+            statistics.limits_reached = true;
+            statistics.files_excluded = original_count - covering_set.len();
+        }
+
+        statistics.files_selected = covering_set.len();
+        statistics.max_depth_reached = covering_set
+            .iter()
+            .map(|f| f.distance)
+            .max()
+            .unwrap_or(0);
+
+        Ok(CoveringSetResult {
+            target_entity: None,
             files: covering_set,
             statistics,
             inclusion_reasons,
@@ -347,6 +464,7 @@ impl CoveringSetComputer {
     fn format_inclusion_reason(&self, reason: &InclusionReason, distance: usize) -> String {
         match reason {
             InclusionReason::TargetFile => "Contains the target entity".to_string(),
+            InclusionReason::ChangedFile => "Changed in diff".to_string(),
             InclusionReason::DirectDependency => "Direct dependency of target".to_string(),
             InclusionReason::TransitiveDependency => {
                 format!("Transitive dependency (distance: {})", distance)
@@ -425,10 +543,36 @@ mod tests {
         let reason = computer.format_inclusion_reason(&InclusionReason::TargetFile, 0);
         assert_eq!(reason, "Contains the target entity");
 
+        let reason = computer.format_inclusion_reason(&InclusionReason::ChangedFile, 0);
+        assert_eq!(reason, "Changed in diff");
+
         let reason = computer.format_inclusion_reason(&InclusionReason::DirectDependency, 1);
         assert_eq!(reason, "Direct dependency of target");
 
         let reason = computer.format_inclusion_reason(&InclusionReason::TransitiveDependency, 3);
         assert!(reason.contains("distance: 3"));
+    }
+
+    #[test]
+    fn test_covering_set_for_changed_files() {
+        let computer = CoveringSetComputer::new().unwrap();
+        let graph = DependencyGraph::new();
+
+        let changed = vec!["src/lib.rs".to_string(), "src/main.rs".to_string()];
+        let result = computer
+            .compute_covering_set_for_files(
+                &changed,
+                &graph,
+                None,
+                &CoveringSetOptions::default(),
+            )
+            .unwrap();
+
+        assert!(result.target_entity.is_none());
+        assert_eq!(result.files.len(), 2);
+        assert!(result
+            .files
+            .iter()
+            .all(|f| f.reason == InclusionReason::ChangedFile));
     }
 }

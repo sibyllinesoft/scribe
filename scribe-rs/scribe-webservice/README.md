@@ -194,7 +194,7 @@ Response:
 ```json
 {
   "status": "healthy",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "uptime_seconds": 12345,
   "requests_processed": 42,
   "cache_hit_rate": 0.75

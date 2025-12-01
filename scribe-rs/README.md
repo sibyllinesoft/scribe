@@ -152,6 +152,22 @@ async fn main() -> scribe::Result<()> {
 }
 ```
 
+### CLI Covering Sets
+
+Scribe’s CLI can compute minimal covering sets:
+
+- `--covering-set <name>`: target a function/class/module by name.
+- `--covering-set-diff`: build a covering set for the current `git diff` (uses the dependency graph to include touched files plus related dependents/dependencies).
+- `--diff-against <ref>`: diff against a specific ref (defaults to `HEAD`).
+- Shared filters: `--include-dependents`, `--max-depth`, `--max-files`.
+- Output helper: add `--line-numbers` to prefix every line in the bundled files, making it easy for review agents to comment by line number.
+
+Example:
+
+```bash
+cargo run --bin scribe -- --covering-set-diff --include-dependents --max-depth 2
+```
+
 ## 🏗️ Architecture
 
 Scribe is built with a modular architecture where each crate provides specific functionality:
