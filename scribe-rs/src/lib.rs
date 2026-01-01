@@ -441,7 +441,7 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("🎯 Applying token budget: {} tokens", token_budget);
         }
-        files = apply_token_budget_selection(files, token_budget, config).await?;
+        files = apply_token_budget_selection(files, token_budget, config, None).await?;
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("✅ Token budget applied: {} files selected", files.len());
         }
@@ -1009,6 +1009,7 @@ async fn convert_scaling_result_to_analysis(
             char_count: None,
             is_binary: false,
             git_status: None,
+            weight: scribe_core::FileWeight::default(),
             centrality_score: None,
         });
     }

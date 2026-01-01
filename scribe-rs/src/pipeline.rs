@@ -109,7 +109,7 @@ pub async fn select_from_analysis(
     let mut selected_infos = if unlimited_budget {
         filtered_infos.clone()
     } else {
-        apply_token_budget_selection(filtered_infos.clone(), options.token_target, config).await?
+        apply_token_budget_selection(filtered_infos.clone(), options.token_target, config, None).await?
     };
 
     selected_infos.sort_by(|a, b| {

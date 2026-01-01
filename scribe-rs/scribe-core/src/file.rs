@@ -110,6 +110,21 @@ const TEXTUAL_APPLICATION_KEYWORDS: &[&str] = &[
     "matlab",
 ];
 
+/// Merged weight for a file, representing its priority/importance for selection.
+/// Higher values indicate files that should be prioritized for full content inclusion.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct FileWeight(pub f64);
+
+impl FileWeight {
+    pub fn new(weight: f64) -> Self {
+        Self(weight)
+    }
+
+    pub fn value(&self) -> f64 {
+        self.0
+    }
+}
+
 /// Decision about whether to include a file in analysis
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderDecision {
@@ -504,6 +519,10 @@ pub struct FileInfo {
     /// Git status information (if available)
     pub git_status: Option<GitStatus>,
 
+    /// Merged weight for prioritization during selection (higher = more important)
+    #[serde(default)]
+    pub weight: FileWeight,
+
     /// PageRank centrality score (0.0-1.0, higher means more important)
     pub centrality_score: Option<f64>,
 }
@@ -566,6 +585,7 @@ impl FileInfo {
             char_count: None,
             is_binary,
             git_status: None,
+            weight: FileWeight::default(),
             centrality_score: None,
         })
     }

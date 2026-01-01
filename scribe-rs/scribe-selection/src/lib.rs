@@ -14,6 +14,7 @@ pub mod selector;
 pub mod simple_router;
 pub mod token_budget;
 pub mod two_pass;
+pub mod weighting;
 
 // Re-export main types
 pub use ast_parser::{
@@ -37,6 +38,7 @@ pub use quota::{
 };
 pub use selector::{CodeSelector, SelectionCriteria, SelectionResult};
 pub use token_budget::apply_token_budget_selection;
+pub use weighting::FileWeights;
 pub use two_pass::{
     CoverageGap, FileInfo, SelectionContext, SelectionMetrics, SelectionRule, TwoPassConfig,
     TwoPassResult, TwoPassSelector,

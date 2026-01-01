@@ -3,6 +3,7 @@
 //! the multi-tier token budget logic from the legacy CLI.
 
 use crate::token_budget::apply_token_budget_selection;
+use crate::weighting::FileWeights;
 use scribe_core::{Config, FileInfo, Result};
 
 /// Input parameters for running the selector.
@@ -14,6 +15,8 @@ pub struct SelectionCriteria<'a> {
     pub token_budget: usize,
     /// Analyzer configuration that influences downstream decisions (e.g. demotion options).
     pub config: &'a Config,
+    /// Optional external weights for file prioritization.
+    pub weights: Option<&'a FileWeights>,
 }
 
 /// Result returned by the selector.
@@ -49,9 +52,13 @@ impl CodeSelector {
         let total_files_considered = criteria.files.len();
         let budget = criteria.token_budget;
 
-        let files =
-            apply_token_budget_selection(criteria.files, criteria.token_budget, criteria.config)
-                .await?;
+        let files = apply_token_budget_selection(
+            criteria.files,
+            criteria.token_budget,
+            criteria.config,
+            criteria.weights,
+        )
+        .await?;
 
         let total_tokens_used: usize = files.iter().filter_map(|f| f.token_estimate).sum();
         let unused_tokens = budget.saturating_sub(total_tokens_used);

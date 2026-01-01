@@ -44,8 +44,8 @@ pub mod utils;
 pub use error::{Result, ScribeError};
 
 pub use file::{
-    bytes_to_human, ConfigurationFormat, DocumentationFormat, FileInfo, FileType, GitFileStatus,
-    GitStatus, Language, RenderDecision, RenderDecisionCategory, BINARY_EXTENSIONS,
+    bytes_to_human, ConfigurationFormat, DocumentationFormat, FileInfo, FileType, FileWeight,
+    GitFileStatus, GitStatus, Language, RenderDecision, RenderDecisionCategory, BINARY_EXTENSIONS,
     MARKDOWN_EXTENSIONS,
 };
 

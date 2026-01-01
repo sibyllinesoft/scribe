@@ -104,6 +104,19 @@ impl CodeChunker {
             .parse_chunks(content, &temp_path)?;
 
         let mut chunks = Vec::new();
+        if let Some(module_doc) = extract_module_doc(content, file_path) {
+            let estimated_tokens = estimate_tokens_for_content(&module_doc, file_path);
+            chunks.push(ChunkInfo {
+                start_line: 1,
+                end_line: module_doc.lines().count().max(1),
+                chunk_type: "module_doc".to_string(),
+                content: module_doc,
+                importance_score: 1.0,
+                estimated_tokens,
+                dependencies: Vec::new(),
+            });
+        }
+
         for ast_chunk in ast_chunks {
             let chunk = ChunkInfo {
                 start_line: ast_chunk.start_line,
@@ -216,7 +229,13 @@ impl SignatureExtractor {
 
         Ok(signatures
             .into_iter()
-            .map(|sig| format!("{}:{} // {}", sig.name, sig.signature_type, sig.signature))
+            .map(|sig| {
+                let mut rendered = format!("{}:{} // {}", sig.name, sig.signature_type, sig.signature);
+                if let Some(doc) = sig.documentation {
+                    rendered = format!("{doc}\n{rendered}");
+                }
+                rendered
+            })
             .collect())
     }
 
@@ -398,7 +417,7 @@ impl DemotionEngine {
             .extract_signatures(content, file_path)?;
 
         // If no signatures extracted, fall back to basic fallback
-        let demoted_content = if signatures.is_empty() {
+        let mut demoted_content = if signatures.is_empty() {
             let mut fallback = extract_symbol_signatures(content, file_path);
             if fallback.is_empty() {
                 match self
@@ -428,6 +447,14 @@ impl DemotionEngine {
         } else {
             signatures.join("\n")
         };
+
+        if let Some(module_doc) = extract_module_doc(content, file_path) {
+            if demoted_content.is_empty() {
+                demoted_content = module_doc;
+            } else {
+                demoted_content = format!("{module_doc}\n{demoted_content}");
+            }
+        }
 
         // Better token estimation based on actual content
         let demoted_tokens = if demoted_content.is_empty() {
@@ -473,6 +500,111 @@ fn estimate_tokens_for_content(content: &str, file_path: &str) -> usize {
     TokenCounter::global()
         .estimate_file_tokens(content, path_hint)
         .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(content))
+}
+
+/// Extract a module-level docstring or doc comment block from the top of a file.
+fn extract_module_doc(content: &str, file_path: &str) -> Option<String> {
+    let extension = Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Python-style triple-quoted module docstring
+    let mut lines = content.lines().peekable();
+    while let Some(line) = lines.peek() {
+        if line.trim().is_empty() {
+            lines.next();
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.starts_with(r#""""#) || trimmed.starts_with("'''") {
+            let quote = if trimmed.starts_with(r#""""#) {
+                r#"""""#
+            } else {
+                "'''"
+            };
+            let mut doc = Vec::new();
+
+            // Capture remainder of the opening line (after quotes)
+            let mut opening = trimmed.trim_start_matches(quote).trim();
+            if !opening.is_empty() {
+                doc.push(opening.to_string());
+            }
+            lines.next();
+
+            while let Some(inner) = lines.next() {
+                let inner_trimmed = inner.trim();
+                if inner_trimmed.ends_with(quote) {
+                    let body = inner_trimmed.trim_end_matches(quote).trim();
+                    if !body.is_empty() {
+                        doc.push(body.to_string());
+                    }
+                    break;
+                } else {
+                    doc.push(inner_trimmed.to_string());
+                }
+            }
+
+            return Some(doc.join("\n"));
+        }
+
+        break; // First non-empty line was not a triple-quote
+    }
+
+    // Comment-style module docs at the top of the file
+    let mut comment_lines = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if comment_lines.is_empty() {
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        let parsed = if trimmed.starts_with("//!") || trimmed.starts_with("///") {
+            Some(trimmed.trim_start_matches('/').trim_start_matches('!').trim().to_string())
+        } else if trimmed.starts_with("//") || trimmed.starts_with("#!") {
+            Some(trimmed.trim_start_matches(&['/', '#'][..]).trim().to_string())
+        } else if trimmed.starts_with("/**") || trimmed.starts_with("/*") {
+            Some(
+                trimmed
+                    .trim_start_matches("/**")
+                    .trim_start_matches("/*")
+                    .trim_end_matches("*/")
+                    .trim()
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
+        if let Some(doc) = parsed {
+            comment_lines.push(doc);
+        } else if comment_lines.is_empty() {
+            break;
+        } else {
+            break;
+        }
+    }
+
+    if !comment_lines.is_empty() {
+        return Some(comment_lines.join("\n"));
+    }
+
+    // Markdown-style heading as first line can serve as module doc for some repos
+    if extension == "md" || extension == "markdown" {
+        if let Some(first) = content.lines().next() {
+            if first.trim_start().starts_with("#") {
+                return Some(first.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 fn extract_symbol_signatures(content: &str, file_path: &str) -> Vec<String> {

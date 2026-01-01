@@ -7,7 +7,7 @@
 use crate::compact_data::{CompactFileCollection, PackedFileType, PackedLanguage};
 use bincode;
 use fxhash::{FxHashMap, FxHashSet};
-use scribe_core::{FileInfo, Language, RenderDecision, Result, ScribeError};
+use scribe_core::{FileInfo, FileWeight, Language, RenderDecision, Result, ScribeError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::Metadata;
@@ -651,6 +651,7 @@ impl IncrementalScanner {
             char_count: Some(char_count as usize),
             is_binary,
             git_status: None,
+            weight: FileWeight::default(),
             centrality_score: None,
         };
 
@@ -725,6 +726,7 @@ impl IncrementalScanner {
             char_count: Some(cached.char_count as usize),
             is_binary,
             git_status: None,
+            weight: FileWeight::default(),
             centrality_score: None,
         })
     }

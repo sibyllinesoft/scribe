@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use scribe_core::{
-    FileInfo, GitFileStatus, GitStatus, RenderDecision, Result, ScribeError,
+    FileInfo, FileWeight, GitFileStatus, GitStatus, RenderDecision, Result, ScribeError,
 };
 use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 
@@ -609,6 +609,7 @@ impl OptimizedScanner {
             char_count: Some(char_count),
             is_binary: false,
             git_status: None,
+            weight: FileWeight::default(),
             centrality_score: None,
         };
 

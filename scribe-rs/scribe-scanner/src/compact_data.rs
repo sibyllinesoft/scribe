@@ -5,7 +5,7 @@
 //! data layouts for large-scale file scanning operations.
 
 use fxhash::FxHashMap;
-use scribe_core::{GitFileStatus, Language, RenderDecision, Result, ScribeError};
+use scribe_core::{FileWeight, GitFileStatus, Language, RenderDecision, Result, ScribeError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -299,6 +299,7 @@ impl CompactFileInfo {
             char_count: Some(self.char_count()),
             is_binary: self.flags.is_binary(),
             git_status: self.git_status.map(|s| s.into()),
+            weight: FileWeight::default(),
             centrality_score: None, // Not stored in compact format, calculated during analysis
         })
     }
@@ -756,7 +757,7 @@ impl Default for CompactFileCollection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scribe_core::{FileType, GitFileStatus, GitStatus, Language, RenderDecision};
+    use scribe_core::{FileType, FileWeight, GitFileStatus, GitStatus, Language, RenderDecision};
     use std::time::UNIX_EPOCH;
 
     fn create_test_file_info() -> scribe_core::FileInfo {
@@ -779,6 +780,8 @@ mod tests {
                 working_tree: GitFileStatus::Modified,
                 index: GitFileStatus::Unmodified,
             }),
+            weight: FileWeight::default(),
+            centrality_score: Some(0.2),
         }
     }
 

@@ -194,7 +194,7 @@ mod tests {
     use async_trait::async_trait;
     use axum_test::TestServer;
     use scribe_core::file::{FileType, Language};
-    use scribe_core::{FileInfo, RenderDecision};
+    use scribe_core::{FileInfo, FileWeight, RenderDecision};
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -220,6 +220,7 @@ mod tests {
                 char_count: Some(12),
                 is_binary: false,
                 git_status: None,
+                weight: FileWeight::default(),
                 centrality_score: Some(0.5),
             };
 

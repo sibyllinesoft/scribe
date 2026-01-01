@@ -105,6 +105,8 @@ pub struct AstSignature {
     pub is_public: bool,
     /// Line number
     pub line: usize,
+    /// Associated documentation (docstring or doc comment)
+    pub documentation: Option<String>,
 }
 
 /// Tree-sitter based AST parser and analyzer
@@ -532,10 +534,17 @@ impl AstParser {
         let start_position = node.start_position();
         let end_position = node.end_position();
 
-        let chunk_content = &content[start_byte..end_byte];
+        let raw_chunk = &content[start_byte..end_byte];
+        let doc_text = self.extract_documentation_for_node(*language, node, content);
+        let combined_chunk = if let Some(ref doc) = doc_text {
+            format!("{doc}\n{raw_chunk}")
+        } else {
+            raw_chunk.to_string()
+        };
+
         let estimated_tokens = TokenCounter::global()
-            .count_tokens(chunk_content)
-            .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(chunk_content));
+            .count_tokens(&combined_chunk)
+            .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&combined_chunk));
 
         // Calculate importance score based on chunk type and language
         let importance_score = self.calculate_importance_score(chunk_type, language, node, content);
@@ -547,13 +556,13 @@ impl AstParser {
         let is_public = self.is_node_public(node, content);
 
         // Check for documentation
-        let has_documentation = self.has_documentation(node, content);
+        let has_documentation = doc_text.is_some() || self.has_documentation(node, content);
 
         // Extract dependencies (simplified for now)
         let dependencies = self.extract_dependencies(node, content);
 
         Ok(AstChunk {
-            content: chunk_content.to_string(),
+            content: combined_chunk,
             chunk_type: chunk_type.to_string(),
             start_line: start_position.row + 1,
             end_line: end_position.row + 1,
@@ -655,6 +664,105 @@ impl AstParser {
         node_text.starts_with("export") || node_text.contains("export")
     }
 
+    /// Extract documentation (doc comment or docstring) associated with a node.
+    fn extract_documentation_for_node(
+        &self,
+        language: AstLanguage,
+        node: Node,
+        content: &str,
+    ) -> Option<String> {
+        if language == AstLanguage::Python {
+            if let Some(doc) = self.extract_python_docstring(node, content) {
+                return Some(doc);
+            }
+        }
+
+        self.collect_leading_comment_block(content, node.start_byte())
+    }
+
+    fn collect_leading_comment_block(&self, content: &str, start_byte: usize) -> Option<String> {
+        let prefix = &content[..start_byte];
+        let mut doc_lines = Vec::new();
+        for line in prefix.lines().rev() {
+            let trimmed = line.trim();
+
+            if trimmed.is_empty() {
+                if doc_lines.is_empty() {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
+            let stripped = if trimmed.starts_with("///") || trimmed.starts_with("//!") {
+                Some(trimmed.trim_start_matches('/').trim_start_matches('!').trim())
+            } else if trimmed.starts_with("//") {
+                Some(trimmed.trim_start_matches('/').trim())
+            } else if trimmed.starts_with('#') {
+                Some(trimmed.trim_start_matches('#').trim())
+            } else if trimmed.starts_with("/*") || trimmed.starts_with("*") {
+                Some(
+                    trimmed
+                        .trim_start_matches("/*")
+                        .trim_start_matches('*')
+                        .trim_end_matches("*/")
+                        .trim(),
+                )
+            } else {
+                None
+            };
+
+            if let Some(clean) = stripped {
+                doc_lines.push(clean.to_string());
+            } else if doc_lines.is_empty() {
+                // Keep scanning upward until we hit a real comment block
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        if doc_lines.is_empty() {
+            None
+        } else {
+            doc_lines.reverse();
+            Some(doc_lines.join("\n"))
+        }
+    }
+
+    fn extract_python_docstring(&self, node: Node, content: &str) -> Option<String> {
+        if node.kind() == "function_definition" || node.kind() == "class_definition" {
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    if child.kind() == "block" || child.kind() == "suite" || child.kind() == "colon" {
+                        continue;
+                    }
+                    if child.kind() == "expression_statement" {
+                        if let Some(grandchild) = child.child(0) {
+                            if grandchild.kind() == "string" {
+                                let raw = &content[grandchild.start_byte()..grandchild.end_byte()];
+                                return Some(Self::strip_string_quotes(raw));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn strip_string_quotes(raw: &str) -> String {
+        let mut trimmed = raw.trim().to_string();
+        let quotes = [r#""""#, "'''", "\"", "'"];
+        for q in quotes {
+            if trimmed.starts_with(q) && trimmed.ends_with(q) && trimmed.len() >= q.len() * 2 {
+                trimmed = trimmed[q.len()..trimmed.len() - q.len()].to_string();
+                break;
+            }
+        }
+        trimmed
+    }
+
     /// Check if a node has associated documentation
     fn has_documentation(&self, node: Node, content: &str) -> bool {
         // Look for comments before the node
@@ -751,7 +859,12 @@ impl AstParser {
         let captures = cursor.matches(&query, root_node, content.as_bytes());
 
         for match_ in captures {
-            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            let signature = self.extract_signature_from_match(
+                content,
+                &match_,
+                &query,
+                AstLanguage::Python,
+            )?;
             signatures.push(signature);
         }
 
@@ -790,7 +903,12 @@ impl AstParser {
 
         let mut signatures = Vec::new();
         for match_ in matches {
-            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            let signature = self.extract_signature_from_match(
+                content,
+                &match_,
+                &query,
+                AstLanguage::JavaScript,
+            )?;
             signatures.push(signature);
         }
 
@@ -834,7 +952,12 @@ impl AstParser {
 
         let mut signatures = Vec::new();
         for match_ in matches {
-            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            let signature = self.extract_signature_from_match(
+                content,
+                &match_,
+                &query,
+                AstLanguage::TypeScript,
+            )?;
             signatures.push(signature);
         }
 
@@ -866,7 +989,12 @@ impl AstParser {
 
         let mut signatures = Vec::new();
         for match_ in matches {
-            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            let signature = self.extract_signature_from_match(
+                content,
+                &match_,
+                &query,
+                AstLanguage::Go,
+            )?;
             signatures.push(signature);
         }
 
@@ -911,7 +1039,12 @@ impl AstParser {
 
         let mut signatures = Vec::new();
         for match_ in matches {
-            let signature = self.extract_signature_from_match(content, &match_, &query)?;
+            let signature = self.extract_signature_from_match(
+                content,
+                &match_,
+                &query,
+                AstLanguage::Rust,
+            )?;
             signatures.push(signature);
         }
 
@@ -924,11 +1057,13 @@ impl AstParser {
         content: &str,
         match_: &tree_sitter::QueryMatch,
         query: &Query,
+        language: AstLanguage,
     ) -> Result<AstSignature> {
         let mut signature_text = String::new();
         let mut signature_type = String::new();
         let mut name = String::new();
         let mut line = 0;
+        let mut primary_node: Option<Node> = None;
 
         for capture in match_.captures {
             let capture_name = &query.capture_names()[capture.index as usize];
@@ -940,6 +1075,7 @@ impl AstParser {
                     signature_text = node_text.lines().next().unwrap_or("").to_string();
                     signature_type = capture_name.to_string();
                     line = node.start_position().row + 1;
+                    primary_node = Some(node);
                 }
                 "func_name" | "class_name" => {
                     name = node_text.to_string();
@@ -947,6 +1083,10 @@ impl AstParser {
                 _ => {}
             }
         }
+
+        let documentation = primary_node.and_then(|n| {
+            self.extract_documentation_for_node(language, n, content)
+        });
 
         Ok(AstSignature {
             signature: signature_text,
@@ -956,6 +1096,7 @@ impl AstParser {
             return_type: None,      // Simplified
             is_public: false,       // Simplified
             line,
+            documentation,
         })
     }
 

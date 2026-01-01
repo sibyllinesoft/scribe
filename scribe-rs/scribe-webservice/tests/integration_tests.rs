@@ -11,7 +11,7 @@ use axum::{
 use axum_test::TestServer;
 use scribe_core::{
     file::{FileType, Language},
-    FileInfo, RenderDecision,
+    FileInfo, FileWeight, RenderDecision,
 };
 use scribe_webservice::Result as WebResult;
 use scribe_webservice::{
@@ -47,6 +47,7 @@ impl AnalysisProvider for StubAnalysisProvider {
             char_count: Some(12),
             is_binary: false,
             git_status: None,
+            weight: FileWeight::default(),
             centrality_score: Some(0.4),
         };
 

@@ -5,7 +5,7 @@
 
 use crate::{GitIntegrator, LanguageDetector, MetadataExtractor};
 use scribe_core::{
-    FileInfo, GitFileStatus, GitStatus, Language, RenderDecision, Result, ScribeError,
+    FileInfo, FileWeight, GitFileStatus, GitStatus, Language, RenderDecision, Result, ScribeError,
 };
 
 use std::path::{Path, PathBuf};
@@ -474,6 +474,7 @@ impl Scanner {
             char_count: None,
             is_binary: false, // Will be determined by binary detection
             git_status: None,
+            weight: FileWeight::default(),
             centrality_score: None, // Will be calculated during analysis phase
         };
 
