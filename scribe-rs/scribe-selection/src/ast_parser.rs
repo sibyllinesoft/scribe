@@ -1390,16 +1390,80 @@ pub struct EntityQuery {
     pub exact_match: bool,
     /// Only return public/exported entities
     pub public_only: Option<bool>,
+    /// File path pattern to filter by (None means any file)
+    pub file_pattern: Option<String>,
 }
 
 impl EntityQuery {
-    /// Create a query for any entity with a specific name
+    /// Parse a query string in the format "file" or "file:entity"
+    ///
+    /// The rightmost colon separates file from entity, with special handling
+    /// for Windows drive letters (single char before lone colon).
+    ///
+    /// Examples:
+    /// - "src/auth.rs" -> file only, no entity
+    /// - "src/auth.rs:login" -> file with entity
+    /// - "C:\path\file.rs" -> Windows path, file only (single colon after drive letter)
+    /// - "C:\path\file.rs:login" -> Windows path with entity (rightmost colon)
+    pub fn parse(query: &str) -> Self {
+        let colon_count = query.matches(':').count();
+
+        if colon_count == 0 {
+            // No colon: entire string is a file path
+            Self::for_file(query)
+        } else if colon_count == 1 {
+            // Single colon: check for Windows drive letter
+            if let Some((before, after)) = query.split_once(':') {
+                if before.len() == 1 && before.chars().next().unwrap().is_ascii_alphabetic() {
+                    // Windows drive letter (e.g., "C:\path") - whole thing is file
+                    Self::for_file(query)
+                } else {
+                    // file:entity format
+                    Self::for_file_entity(before, after)
+                }
+            } else {
+                Self::for_file(query)
+            }
+        } else {
+            // Multiple colons: rightmost colon is the separator
+            if let Some((file_part, entity_part)) = query.rsplit_once(':') {
+                Self::for_file_entity(file_part, entity_part)
+            } else {
+                Self::for_file(query)
+            }
+        }
+    }
+
+    /// Create a query for a file only (no specific entity)
+    pub fn for_file(file: &str) -> Self {
+        Self {
+            entity_type: None,
+            name_pattern: None,
+            exact_match: false,
+            public_only: None,
+            file_pattern: Some(file.to_string()),
+        }
+    }
+
+    /// Create a query for a specific entity within a file
+    pub fn for_file_entity(file: &str, entity: &str) -> Self {
+        Self {
+            entity_type: None,
+            name_pattern: Some(entity.to_string()),
+            exact_match: false,
+            public_only: None,
+            file_pattern: Some(file.to_string()),
+        }
+    }
+
+    /// Create a query for any entity with a specific name (searches all files)
     pub fn by_name(name: &str) -> Self {
         Self {
             entity_type: None,
             name_pattern: Some(name.to_string()),
             exact_match: false,
             public_only: None,
+            file_pattern: None,
         }
     }
 
@@ -1410,6 +1474,7 @@ impl EntityQuery {
             name_pattern: None,
             exact_match: false,
             public_only: None,
+            file_pattern: None,
         }
     }
 
@@ -1420,6 +1485,7 @@ impl EntityQuery {
             name_pattern: Some(name.to_string()),
             exact_match: false,
             public_only: None,
+            file_pattern: None,
         }
     }
 
@@ -1430,6 +1496,7 @@ impl EntityQuery {
             name_pattern: Some(name.to_string()),
             exact_match: false,
             public_only: None,
+            file_pattern: None,
         }
     }
 
@@ -1440,7 +1507,14 @@ impl EntityQuery {
             name_pattern: Some(path.to_string()),
             exact_match: false,
             public_only: None,
+            file_pattern: None,
         }
+    }
+
+    /// Filter to a specific file or file pattern
+    pub fn in_file(mut self, file_pattern: &str) -> Self {
+        self.file_pattern = Some(file_pattern.to_string());
+        self
     }
 
     /// Set whether to match exactly
@@ -1453,6 +1527,19 @@ impl EntityQuery {
     pub fn public(mut self) -> Self {
         self.public_only = Some(true);
         self
+    }
+
+    /// Check if a file path matches the file pattern (if any)
+    pub fn matches_file(&self, file_path: &str) -> bool {
+        match &self.file_pattern {
+            None => true, // No pattern means match all files
+            Some(pattern) => {
+                let pattern_lower = pattern.to_lowercase();
+                let path_lower = file_path.to_lowercase();
+                // Match if the file path contains the pattern
+                path_lower.contains(&pattern_lower)
+            }
+        }
     }
 }
 
@@ -1584,5 +1671,63 @@ class Calculator:
 
         let signatures = parser.extract_signatures(content, "test.py").unwrap();
         assert!(!signatures.is_empty());
+    }
+
+    #[test]
+    fn test_entity_query_parse_file_only() {
+        // No colon: entire string is a file path
+        let query = EntityQuery::parse("src/auth.rs");
+        assert!(query.name_pattern.is_none());
+        assert_eq!(query.file_pattern, Some("src/auth.rs".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_parse_file_entity() {
+        // file:entity format
+        let query = EntityQuery::parse("src/auth.rs:login");
+        assert_eq!(query.name_pattern, Some("login".to_string()));
+        assert_eq!(query.file_pattern, Some("src/auth.rs".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_parse_windows_file_only() {
+        // Windows path with single colon (drive letter) - file only
+        let query = EntityQuery::parse(r"C:\project\auth.rs");
+        assert!(query.name_pattern.is_none());
+        assert_eq!(query.file_pattern, Some(r"C:\project\auth.rs".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_parse_windows_file_entity() {
+        // Windows path with entity (multiple colons, rightmost is separator)
+        let query = EntityQuery::parse(r"C:\project\auth.rs:login");
+        assert_eq!(query.name_pattern, Some("login".to_string()));
+        assert_eq!(query.file_pattern, Some(r"C:\project\auth.rs".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_parse_simple_file_entity() {
+        // Simple file:entity without path separators
+        let query = EntityQuery::parse("auth:UserService");
+        assert_eq!(query.name_pattern, Some("UserService".to_string()));
+        assert_eq!(query.file_pattern, Some("auth".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_matches_file() {
+        let query = EntityQuery::parse("auth.rs:login");
+        assert!(query.matches_file("src/auth.rs"));
+        assert!(query.matches_file("/home/user/project/auth.rs"));
+        assert!(query.matches_file("AUTH.rs")); // case insensitive
+        assert!(!query.matches_file("src/user.rs"));
+    }
+
+    #[test]
+    fn test_entity_query_matches_file_with_pattern() {
+        // File pattern should match substring
+        let query = EntityQuery::parse("auth:login");
+        assert!(query.matches_file("src/auth/module.rs"));
+        assert!(query.matches_file("authentication.rs"));
+        assert!(!query.matches_file("src/user.rs"));
     }
 }

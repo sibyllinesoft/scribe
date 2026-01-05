@@ -2,7 +2,7 @@
 //! The selector consumes `FileInfo` records produced by the scanner and applies
 //! the multi-tier token budget logic from the legacy CLI.
 
-use crate::token_budget::apply_token_budget_selection;
+use crate::token_budget::{apply_token_budget_selection, SelectionConfig};
 use crate::weighting::FileWeights;
 use scribe_core::{Config, FileInfo, Result};
 
@@ -57,6 +57,7 @@ impl CodeSelector {
             criteria.token_budget,
             criteria.config,
             criteria.weights,
+            &SelectionConfig::default(),
         )
         .await?;
 

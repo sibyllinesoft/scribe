@@ -10,7 +10,6 @@ use std::time::SystemTime;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportFormat {
     Html,
-    Cxml,
     Repomix,
     Xml,
     Json,
@@ -55,7 +54,6 @@ pub fn generate_report(
 ) -> Result<String, Box<dyn Error>> {
     match format {
         ReportFormat::Html => generate_html_output(files, metrics),
-        ReportFormat::Cxml => generate_cxml_output(files, metrics),
         ReportFormat::Repomix => generate_repomix_output(files, metrics),
         ReportFormat::Xml => generate_xml_output(files, metrics),
         ReportFormat::Json => generate_json_output(files, metrics),
@@ -128,42 +126,6 @@ pub fn generate_html_output(
     Ok(html)
 }
 
-pub fn generate_cxml_output(
-    files: &[ReportFile],
-    metrics: &SelectionMetrics,
-) -> Result<String, Box<dyn Error>> {
-    let mut output = String::new();
-    writeln!(output, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
-    writeln!(output, "<context>")?;
-    writeln!(
-        output,
-        "  <metadata total_files=\"{}\" total_tokens=\"{}\" algorithm=\"{}\"/>",
-        files.len(),
-        metrics.total_tokens_estimated,
-        metrics.algorithm_used
-    )?;
-
-    for file in files {
-        let path = escape_cxml(&file.relative_path);
-        let modified = escape_cxml(&format_timestamp(file.modified));
-        writeln!(
-            output,
-            "  <file path=\"{}\" modified=\"{}\">",
-            path, modified
-        )?;
-        writeln!(output, "    <![CDATA[")?;
-        output.push_str(&file.content);
-        if !file.content.ends_with('\n') {
-            output.push('\n');
-        }
-        writeln!(output, "    ]]>")?;
-        writeln!(output, "  </file>")?;
-    }
-
-    writeln!(output, "</context>")?;
-    Ok(output)
-}
-
 pub fn generate_repomix_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -211,8 +173,8 @@ pub fn generate_xml_output(
     )?;
 
     for file in files {
-        let path = escape_cxml(&file.relative_path);
-        let modified = escape_cxml(&format_timestamp(file.modified));
+        let path = escape_xml(&file.relative_path);
+        let modified = escape_xml(&format_timestamp(file.modified));
         writeln!(
             output,
             "  <file path=\"{}\" modified=\"{}\">",
@@ -376,7 +338,7 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-fn escape_cxml(value: &str) -> String {
+fn escape_xml(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")

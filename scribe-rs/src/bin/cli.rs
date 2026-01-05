@@ -33,6 +33,31 @@ async fn clone_github_repo(
     Ok((temp_dir.path().to_path_buf(), Some(temp_dir)))
 }
 
+/// Simple struct for building dependency graph from file info
+struct CoveringScanFile {
+    path: String,
+    relative_path: String,
+    imports: Vec<String>,
+}
+
+impl scribe_analysis::heuristics::ScanResult for CoveringScanFile {
+    fn path(&self) -> &str { &self.path }
+    fn relative_path(&self) -> &str { &self.relative_path }
+    fn depth(&self) -> usize { self.relative_path.matches('/').count() }
+    fn is_docs(&self) -> bool { false }
+    fn is_readme(&self) -> bool { false }
+    fn is_test(&self) -> bool { false }
+    fn is_entrypoint(&self) -> bool { false }
+    fn has_examples(&self) -> bool { false }
+    fn priority_boost(&self) -> f64 { 0.0 }
+    fn churn_score(&self) -> f64 { 0.0 }
+    fn centrality_in(&self) -> f64 { 0.0 }
+    fn imports(&self) -> Option<&[String]> {
+        if self.imports.is_empty() { None } else { Some(&self.imports) }
+    }
+    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> { None }
+}
+
 async fn run_covering_set_mode(
     repo_dir: &Path,
     entity_name: &str,
@@ -41,16 +66,21 @@ async fn run_covering_set_mode(
     include_dependents: bool,
     max_depth: Option<usize>,
     max_files: Option<usize>,
+    granularity: &str,
+    stdout_mode: bool,
     verbose_level: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use scribe_selection::{CoveringSetComputer, CoveringSetOptions, EntityQuery, EntityType};
-    use scribe::analyze_and_select;
+    use scribe_selection::{CoveringSetComputer, CoveringSetGranularity, CoveringSetOptions, EntityQuery, EntityType};
+    use scribe::{analyze_and_select, extract_imports};
     use std::collections::HashMap;
 
-    if verbose_level > 0 {
-        info!("🎯 Covering set mode: finding '{}'", entity_name);
-    } else {
-        println!("🎯 Finding covering set for: {}", entity_name);
+    // In stdout mode, suppress progress output
+    if !stdout_mode {
+        if verbose_level > 0 {
+            info!("🎯 Covering set mode: finding '{}'", entity_name);
+        } else {
+            eprintln!("🎯 Finding covering set for: {}", entity_name);
+        }
     }
 
     // First, scan and analyze the repository to get file info and build dependency graph
@@ -65,70 +95,94 @@ async fn run_covering_set_mode(
         include_directory_map: false,
     };
 
-    if verbose_level > 0 {
-        info!("📊 Scanning repository...");
-    } else {
-        println!("📊 Scanning repository...");
+    if !stdout_mode {
+        if verbose_level > 0 {
+            info!("📊 Scanning repository...");
+        } else {
+            eprintln!("📊 Scanning repository...");
+        }
     }
 
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
-    // Collect file contents with String keys (required by covering set computer)
+    // Collect file contents and build scan files for dependency graph
     let mut file_contents = HashMap::new();
+    let mut scan_files = Vec::new();
+
     for file_info in &analysis_outcome.analysis.files {
         if let Ok(content) = std::fs::read_to_string(&file_info.path) {
-            // Convert PathBuf to String for the covering set API
-            file_contents.insert(file_info.path.display().to_string(), content);
+            let path_str = file_info.path.display().to_string();
+
+            // Extract imports for dependency graph building
+            let imports = extract_imports(&content, &file_info.language);
+
+            scan_files.push(CoveringScanFile {
+                path: path_str.clone(),
+                relative_path: file_info.relative_path.clone(),
+                imports,
+            });
+
+            file_contents.insert(path_str, content);
         }
     }
 
-    if verbose_level > 0 {
+    if !stdout_mode && verbose_level > 0 {
         info!("📁 Loaded {} files", file_contents.len());
     }
 
-    // Build dependency graph for covering set computation
-    // For now, create an empty graph - the covering set will primarily rely on
-    // AST-based entity search rather than dependency traversal
-    if verbose_level > 0 {
-        info!("🔗 Preparing dependency graph...");
+    // Build dependency graph from imports
+    if !stdout_mode && verbose_level > 0 {
+        info!("🔗 Building dependency graph...");
     }
 
-    use scribe_graph::DependencyGraph;
-    let graph = DependencyGraph::new();
+    use scribe_graph::CentralityCalculator;
+    let calculator = CentralityCalculator::new()?;
+    let graph = calculator.build_graph_only(&scan_files)?;
 
-    // TODO: Implement full dependency graph construction
-    // This would require import extraction from file contents
+    if !stdout_mode && verbose_level > 0 {
+        eprintln!("🔗 Graph built with {} nodes, {} edges", graph.node_count(), graph.edge_count());
+    }
 
-    // Build entity query
-    let parsed_entity_type = entity_type.and_then(|t| match t.to_lowercase().as_str() {
-        "function" => Some(EntityType::Function),
-        "class" => Some(EntityType::Class),
-        "module" => Some(EntityType::Module),
-        "interface" => Some(EntityType::Interface),
-        "constant" => Some(EntityType::Constant),
-        _ => None,
-    });
 
-    let query = EntityQuery {
-        entity_type: parsed_entity_type,
-        name_pattern: Some(entity_name.to_string()),
-        exact_match,
-        public_only: None,
-    };
+    // Build entity query using parse() for file:entity syntax support
+    let mut query = EntityQuery::parse(entity_name);
+
+    // Override exact_match from CLI flag
+    query.exact_match = exact_match;
+
+    // Override entity_type if explicitly specified via CLI
+    if let Some(t) = entity_type {
+        query.entity_type = match t.to_lowercase().as_str() {
+            "function" => Some(EntityType::Function),
+            "class" => Some(EntityType::Class),
+            "module" => Some(EntityType::Module),
+            "interface" => Some(EntityType::Interface),
+            "constant" => Some(EntityType::Constant),
+            _ => None,
+        };
+    }
 
     // Build covering set options
+    let granularity_option = match granularity {
+        "entity" => CoveringSetGranularity::Entity,
+        _ => CoveringSetGranularity::File,
+    };
+
     let options = CoveringSetOptions {
         include_dependencies: true,
         include_dependents,
         max_depth,
         max_files,
         min_importance: None,
+        granularity: granularity_option,
     };
 
-    if verbose_level > 0 {
-        info!("🔍 Computing covering set...");
-    } else {
-        println!("🔍 Computing covering set...");
+    if !stdout_mode {
+        if verbose_level > 0 {
+            info!("🔍 Computing covering set...");
+        } else {
+            eprintln!("🔍 Computing covering set...");
+        }
     }
 
     // Compute covering set
@@ -140,7 +194,29 @@ async fn run_covering_set_mode(
         &options,
     )?;
 
-    // Display results
+    // Handle stdout mode - output XML
+    if stdout_mode {
+        return output_covering_set_xml(&result, &file_contents, granularity_option);
+    }
+
+    // Display results (interactive mode)
+    if result.files.is_empty() && result.entities.is_empty() {
+        // Parse the target to show appropriate error
+        let has_entity = entity_name.contains(':') &&
+            !(entity_name.len() > 1 && entity_name.chars().nth(1) == Some(':') &&
+              entity_name.chars().next().unwrap().is_ascii_alphabetic());
+
+        if has_entity {
+            println!("\n❌ Target '{}' not found", entity_name);
+            println!("   The file may not exist or the entity wasn't found in the file.");
+        } else {
+            println!("\n❌ File '{}' not found", entity_name);
+            println!("   Try using a more specific path or check the file exists.");
+        }
+        return Ok(());
+    }
+
+    // Show target info
     if let Some(target) = &result.target_entity {
         println!("\n✅ Found target entity:");
         println!("  • File     : {}", target.file_path);
@@ -148,44 +224,141 @@ async fn run_covering_set_mode(
         println!("  • Name     : {}", target.entity_name);
         println!("  • Lines    : {}-{}", target.start_line, target.end_line);
         println!("  • Public   : {}", if target.is_public { "yes" } else { "no" });
+    } else if let Some(first_file) = result.files.first() {
+        println!("\n✅ Found target file: {}", first_file.path);
+    }
+
+    if granularity_option == CoveringSetGranularity::Entity {
+        println!("\n📦 Covering set ({} entities):", result.entities.len());
+        for (idx, entity) in result.entities.iter().enumerate() {
+            let explanation = result
+                .inclusion_reasons
+                .get(&format!("{}::{}", entity.file_path, entity.name))
+                .map(|s| s.as_str())
+                .unwrap_or("Included");
+
+            println!(
+                "  {}. {}::{} ({}, distance: {}, reason: {})",
+                idx + 1,
+                entity.file_path,
+                entity.name,
+                entity.entity_type,
+                entity.distance,
+                explanation
+            );
+        }
+        println!("\n📊 Statistics:");
+        println!("  • Files examined    : {}", result.statistics.files_examined);
+        println!("  • Entities selected : {}", result.statistics.entities_selected);
+        println!("  • Max depth         : {}", result.statistics.max_depth_reached);
+        println!("  • Limits reached    : {}", if result.statistics.limits_reached { "yes" } else { "no" });
     } else {
-        println!("\n❌ Entity '{}' not found", entity_name);
-        println!("   Try:");
-        println!("   - Using a different name pattern");
-        println!("   - Removing --exact-match flag for fuzzy search");
-        println!("   - Specifying --entity-type (function, class, module, etc.)");
-        return Ok(());
+        println!("\n📦 Covering set ({} files):", result.files.len());
+        for (idx, file) in result.files.iter().enumerate() {
+            let explanation = result
+                .inclusion_reasons
+                .get(&file.path)
+                .map(|s| s.as_str())
+                .unwrap_or("Included");
+
+            println!(
+                "  {}. {} (distance: {}, reason: {})",
+                idx + 1,
+                file.path,
+                file.distance,
+                explanation
+            );
+        }
+        println!("\n📊 Statistics:");
+        println!("  • Files examined  : {}", result.statistics.files_examined);
+        println!("  • Files selected  : {}", result.statistics.files_selected);
+        println!("  • Files excluded  : {}", result.statistics.files_excluded);
+        println!("  • Max depth       : {}", result.statistics.max_depth_reached);
+        println!("  • Limits reached  : {}", if result.statistics.limits_reached { "yes" } else { "no" });
     }
-
-    println!("\n📦 Covering set ({} files):", result.files.len());
-    for (idx, file) in result.files.iter().enumerate() {
-        let explanation = result
-            .inclusion_reasons
-            .get(&file.path)
-            .map(|s| s.as_str())
-            .unwrap_or("Included");
-
-        println!(
-            "  {}. {} (distance: {}, reason: {})",
-            idx + 1,
-            file.path,
-            file.distance,
-            explanation
-        );
-    }
-
-    println!("\n📊 Statistics:");
-    println!("  • Files examined  : {}", result.statistics.files_examined);
-    println!("  • Files selected  : {}", result.statistics.files_selected);
-    println!("  • Files excluded  : {}", result.statistics.files_excluded);
-    println!("  • Max depth       : {}", result.statistics.max_depth_reached);
-    println!("  • Limits reached  : {}", if result.statistics.limits_reached { "yes" } else { "no" });
 
     if verbose_level > 0 {
         info!("✨ Covering set computation complete");
     }
 
     Ok(())
+}
+
+/// Output covering set result as XML to stdout (for agent consumption)
+fn output_covering_set_xml(
+    result: &scribe_selection::CoveringSetResult,
+    file_contents: &std::collections::HashMap<String, String>,
+    granularity: scribe_selection::CoveringSetGranularity,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+
+    writeln!(handle, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
+    writeln!(handle, "<covering_set>")?;
+
+    // Output target entity info
+    if let Some(target) = &result.target_entity {
+        writeln!(handle, "  <target>")?;
+        writeln!(handle, "    <file>{}</file>", escape_xml(&target.file_path))?;
+        writeln!(handle, "    <name>{}</name>", escape_xml(&target.entity_name))?;
+        writeln!(handle, "    <type>{}</type>", escape_xml(&target.entity_type))?;
+        writeln!(handle, "    <lines start=\"{}\" end=\"{}\"/>", target.start_line, target.end_line)?;
+        writeln!(handle, "  </target>")?;
+    }
+
+    if granularity == scribe_selection::CoveringSetGranularity::Entity {
+        // Entity-level output
+        writeln!(handle, "  <entities count=\"{}\">", result.entities.len())?;
+        for entity in &result.entities {
+            writeln!(handle, "    <entity>")?;
+            writeln!(handle, "      <file>{}</file>", escape_xml(&entity.file_path))?;
+            writeln!(handle, "      <name>{}</name>", escape_xml(&entity.name))?;
+            writeln!(handle, "      <type>{}</type>", escape_xml(&entity.entity_type))?;
+            writeln!(handle, "      <lines start=\"{}\" end=\"{}\"/>", entity.start_line, entity.end_line)?;
+            writeln!(handle, "      <distance>{}</distance>", entity.distance)?;
+            writeln!(handle, "      <reason>{:?}</reason>", entity.reason)?;
+            writeln!(handle, "      <content><![CDATA[{}]]></content>", entity.content)?;
+            writeln!(handle, "    </entity>")?;
+        }
+        writeln!(handle, "  </entities>")?;
+    } else {
+        // File-level output
+        writeln!(handle, "  <files count=\"{}\">", result.files.len())?;
+        for file in &result.files {
+            let content = file_contents.get(&file.path).map(|s| s.as_str()).unwrap_or("");
+            writeln!(handle, "    <file>")?;
+            writeln!(handle, "      <path>{}</path>", escape_xml(&file.path))?;
+            writeln!(handle, "      <distance>{}</distance>", file.distance)?;
+            writeln!(handle, "      <reason>{:?}</reason>", file.reason)?;
+            writeln!(handle, "      <content><![CDATA[{}]]></content>", content)?;
+            writeln!(handle, "    </file>")?;
+        }
+        writeln!(handle, "  </files>")?;
+    }
+
+    // Statistics
+    writeln!(handle, "  <statistics>")?;
+    writeln!(handle, "    <files_examined>{}</files_examined>", result.statistics.files_examined)?;
+    writeln!(handle, "    <files_selected>{}</files_selected>", result.statistics.files_selected)?;
+    writeln!(handle, "    <entities_selected>{}</entities_selected>", result.statistics.entities_selected)?;
+    writeln!(handle, "    <max_depth_reached>{}</max_depth_reached>", result.statistics.max_depth_reached)?;
+    writeln!(handle, "    <limits_reached>{}</limits_reached>", result.statistics.limits_reached)?;
+    writeln!(handle, "  </statistics>")?;
+
+    writeln!(handle, "</covering_set>")?;
+
+    Ok(())
+}
+
+/// Escape special XML characters
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 async fn run_covering_set_diff_mode(
@@ -507,6 +680,7 @@ async fn run_covering_set_diff_mode(
         max_depth,
         max_files,
         min_importance: None,
+        granularity: scribe_selection::CoveringSetGranularity::File,
     };
 
     let computer = CoveringSetComputer::new()?;
@@ -703,7 +877,6 @@ async fn launch_editor_mode(
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Html,
-    Cxml,
     Repomix,
     Xml,
     Json,
@@ -715,7 +888,6 @@ impl From<OutputFormat> for ReportFormat {
     fn from(value: OutputFormat) -> Self {
         match value {
             OutputFormat::Html => ReportFormat::Html,
-            OutputFormat::Cxml => ReportFormat::Cxml,
             OutputFormat::Repomix => ReportFormat::Repomix,
             OutputFormat::Xml => ReportFormat::Xml,
             OutputFormat::Json => ReportFormat::Json,
@@ -770,7 +942,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .arg(
             Arg::new("output_format")
                 .long("output-format")
-                .help("Output format: html for web page, cxml for LLM, repomix for repomix format, xml for standard XML (default: html)")
+                .help("Output format: html, xml, json, text, markdown, repomix (default: html)")
                 .value_parser(clap::value_parser!(OutputFormat))
                 .default_value("html"),
         )
@@ -943,8 +1115,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .arg(
             Arg::new("covering_set")
                 .long("covering-set")
-                .help("Find covering set for a specific entity (function, class, module)")
-                .value_name("ENTITY_NAME"),
+                .help("Find covering set for a file or entity. Use 'file' or 'file:entity' syntax (e.g., 'src/auth.rs' or 'src/auth.rs:login')")
+                .value_name("TARGET"),
         )
         .arg(
             Arg::new("covering_set_diff")
@@ -993,7 +1165,59 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .help("Maximum number of files in covering set")
                 .value_name("COUNT")
                 .value_parser(clap::value_parser!(usize)),
-        );
+        )
+        .arg(
+            Arg::new("granularity")
+                .long("granularity")
+                .help("Covering set granularity: 'file' returns whole files, 'entity' returns only specific functions/classes")
+                .value_parser(["file", "entity"])
+                .default_value("file"),
+        )
+        // Agent/stdout mode
+        .arg(
+            Arg::new("stdout")
+                .long("stdout")
+                .help("Output directly to stdout (for agent/pipeline use). Defaults to XML format")
+                .action(ArgAction::SetTrue),
+        )
+        .after_help(r#"AGENT USAGE:
+  Scribe can be used by AI agents to quickly retrieve relevant code context.
+
+  EXAMPLES:
+    # Get covering set for a file (all dependencies)
+    scribe --covering-set "src/auth.rs" --stdout
+
+    # Get covering set for a specific function within a file
+    scribe --covering-set "src/auth.rs:login" --stdout
+
+    # Entity-level granularity (returns only specific functions/classes)
+    scribe --covering-set "src/service.rs:UserService" --granularity entity --stdout
+
+    # Windows paths work too (rightmost colon is the separator)
+    scribe --covering-set "C:\project\auth.rs:login" --stdout
+
+    # Analyze what code is affected by recent changes
+    scribe --covering-set-diff --stdout
+
+    # Get full repository context within token budget
+    scribe --token-target 50000 --stdout --output-format xml
+
+  COVERING SET OPTIONS:
+    --granularity file    Return whole files (default, faster)
+    --granularity entity  Return only specific functions/classes (more precise)
+    --include-dependents  Include code that depends on target (impact analysis)
+    --max-depth N         Limit dependency traversal depth
+    --max-files N         Limit number of results
+
+  TARGET FORMAT:
+    file                  Covering set for entire file
+    file:entity           Covering set for specific entity within file
+
+  OUTPUT FORMATS FOR AGENTS:
+    xml      Structured XML with metadata (recommended)
+    json     JSON array of files with content
+    text     Plain text with file separators
+"#);
 
     let matches = app.get_matches();
 
@@ -1058,6 +1282,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Check for covering set mode
     if let Some(entity_name) = matches.get_one::<String>("covering_set") {
+        let granularity = matches.get_one::<String>("granularity").map(|s| s.as_str()).unwrap_or("file");
+        let stdout_mode = matches.get_flag("stdout");
         return run_covering_set_mode(
             &repo_dir,
             entity_name,
@@ -1066,6 +1292,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             matches.get_flag("include_dependents"),
             matches.get_one::<usize>("max_depth").copied(),
             matches.get_one::<usize>("max_files_covering").copied(),
+            granularity,
+            stdout_mode,
             verbose_level,
         )
         .await;
@@ -1142,7 +1370,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
         let extension = match report_format {
             ReportFormat::Html => "html",
-            ReportFormat::Cxml => "cxml",
             ReportFormat::Repomix => "repomix",
             ReportFormat::Xml => "xml",
             ReportFormat::Json => "json",
@@ -1373,7 +1600,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate output
     let format_label = match report_format {
         ReportFormat::Html => "HTML",
-        ReportFormat::Cxml => "CXML",
         ReportFormat::Repomix => "Repomix",
         ReportFormat::Xml => "XML",
         ReportFormat::Json => "JSON",

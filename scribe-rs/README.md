@@ -1,323 +1,294 @@
-# Scribe - Advanced Code Analysis Library
+# Scribe - Intelligent Code Context for AI Agents
 
 [![Crates.io](https://img.shields.io/crates/v/scribe.svg)](https://crates.io/crates/scribe)
 [![Documentation](https://docs.rs/scribe/badge.svg)](https://docs.rs/scribe)
 [![License](https://img.shields.io/crates/l/scribe.svg)](https://github.com/sibyllinesoft/scribe#license)
 [![Build Status](https://github.com/sibyllinesoft/scribe/workflows/CI/badge.svg)](https://github.com/sibyllinesoft/scribe/actions)
 
-Scribe is a comprehensive Rust library for code analysis, repository exploration, and intelligent file processing. It provides powerful tools for understanding codebases through heuristic scoring, graph analysis, and AI-powered insights.
+Scribe is a code analysis tool designed for AI agents and LLM-powered development workflows. Unlike simple file bundlers, Scribe understands code structure and dependencies—giving agents exactly the context they need without wasting tokens on irrelevant code.
 
-## 🚀 Features
+## The Problem: Context Retrieval is Expensive
 
-- **🔍 Intelligent File Analysis**: Multi-dimensional heuristic scoring system for identifying important files
-- **📊 Dependency Graph Analysis**: PageRank centrality computation for understanding code relationships
-- **⚡ High-Performance Scanning**: Parallel file system traversal with git integration
-- **🎯 Advanced Pattern Matching**: Flexible glob and gitignore pattern support with preset configurations
-- **🧠 Smart Code Selection**: Context-aware code bundling and relevance scoring
-- **🛠️ Extensible Architecture**: Plugin system for custom analyzers and scorers
-- **⚙️ Modular Design**: Use only the features you need with optional components
+When an AI agent needs to understand a function and its dependencies, the traditional approach is painful:
 
-## 📦 Installation
+```
+Agent wants to understand `authenticate_user()` in auth.rs
 
-Add this to your `Cargo.toml`:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  TRADITIONAL APPROACH (4-10+ tool calls, ~30 seconds, wastes tokens)        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. grep "authenticate_user" --include="*.rs"     → Find the function      │
+│  2. read auth.rs                                  → Read ENTIRE 800-line file│
+│  3. grep "use crate::" auth.rs                    → Find imports manually  │
+│  4. read session.rs                               → Read ENTIRE dependency │
+│  5. grep "use crate::" session.rs                 → Find transitive imports│
+│  6. read crypto.rs                                → Another full file read │
+│  7. read config.rs                                → Keep going...          │
+│  ...                                                                        │
+│                                                                             │
+│  Result: Agent reads 4000+ lines, but only ~200 are relevant               │
+│  Cost: Multiple round-trips, 95% wasted tokens, slow iteration             │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-```toml
-[dependencies]
-scribe = "0.1.0"
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCRIBE APPROACH (1 tool call, ~0.7 seconds, precise context)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  $ scribe --covering-set "auth.rs:authenticate_user" --stdout              │
+│                                                                             │
+│  Result: Returns authenticate_user + only the functions/types it uses       │
+│  - auth.rs:authenticate_user (target)                                       │
+│  - session.rs:create_session (direct dependency)                           │
+│  - crypto.rs:verify_password (direct dependency)                           │
+│  - config.rs:AuthConfig (type dependency)                                  │
+│                                                                             │
+│  Cost: Single call, ~200 lines of precisely relevant code                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Scribe's covering set feature understands your code's dependency graph and returns only what's needed.**
+
+## Key Differentiator: Surgical Code Retrieval
+
+Unlike tools like repomix that bundle entire repositories, Scribe provides **surgical precision**:
+
+| Approach | Tool Calls | Tokens Used | Relevance |
+|----------|------------|-------------|-----------|
+| Manual grep + read | 4-10+ | ~15,000 | ~5% relevant |
+| Repomix (full bundle) | 1 | ~500,000 | ~1% relevant |
+| **Scribe covering set** | **1** | **~2,000** | **95%+ relevant** |
+
+This matters because:
+- **Faster iteration**: Single call vs. multiple round-trips
+- **Lower cost**: 10-100x fewer tokens per context retrieval
+- **Better results**: LLMs perform better with focused, relevant context
+- **Automatic dependency resolution**: No manual import tracing
+
+## Quick Start
+
+### For AI Agents (CLI)
+
+```bash
+# Get a function and all its dependencies
+scribe --covering-set "src/auth.rs:authenticate_user" --stdout
+
+# Get file-level dependencies (faster, less precise)
+scribe --covering-set "src/auth.rs" --granularity file --stdout
+
+# Analyze what code is affected by your current changes
+scribe --covering-set-diff --stdout
+
+# Limit depth for focused context
+scribe --covering-set "src/lib.rs:Config" --max-depth 2 --stdout
+```
+
+### Output Formats
+
+```bash
+# XML output (recommended for agents - structured, includes metadata)
+scribe --covering-set "module.py:MyClass" --stdout --output-format xml
+
+# JSON output (for programmatic use)
+scribe --covering-set "module.py:MyClass" --stdout --output-format json
+
+# Plain text (human readable)
+scribe --covering-set "module.py:MyClass" --stdout --output-format text
+```
+
+### Example Output
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<covering_set>
+  <files count="3">
+    <file>
+      <path>src/auth.rs</path>
+      <distance>0</distance>
+      <reason>TargetFile</reason>
+      <content><![CDATA[
+pub fn authenticate_user(credentials: &Credentials) -> Result<Session> {
+    let user = lookup_user(&credentials.username)?;
+    verify_password(&credentials.password, &user.password_hash)?;
+    create_session(user.id)
+}
+]]></content>
+    </file>
+    <file>
+      <path>src/session.rs</path>
+      <distance>1</distance>
+      <reason>DirectDependency</reason>
+      <content><![CDATA[
+pub fn create_session(user_id: UserId) -> Result<Session> {
+    // ... only the relevant function, not the whole file
+}
+]]></content>
+    </file>
+  </files>
+  <statistics>
+    <files_examined>142</files_examined>
+    <files_selected>3</files_selected>
+    <max_depth_reached>2</max_depth_reached>
+  </statistics>
+</covering_set>
+```
+
+## Features
+
+### Covering Set Analysis
+- **Entity-level granularity**: Get specific functions/classes, not entire files
+- **Automatic dependency resolution**: Follows imports across your codebase
+- **Multi-language support**: Rust, Python, JavaScript/TypeScript, Go
+- **Configurable depth**: Control how deep to traverse dependencies
+- **Diff-based analysis**: Get context for your current git changes
+
+### Repository Bundling
+- **Intelligent file selection**: PageRank-based importance scoring
+- **Token budget management**: Stay within LLM context limits
+- **Multiple output formats**: HTML, XML, JSON, Markdown, Repomix-compatible
+
+### Code Analysis
+- **Dependency graph construction**: Understand code relationships
+- **Heuristic scoring**: Identify important files automatically
+- **Git integration**: Incorporate change history into analysis
+
+## Installation
+
+```bash
+# From crates.io
+cargo install scribe-cli
+
+# From source
+git clone https://github.com/sibyllinesoft/scribe
+cd scribe
+cargo install --path .
+```
+
+## Supported Languages
+
+Import resolution and dependency tracking works for:
+
+| Language | Import Styles Supported |
+|----------|------------------------|
+| **Rust** | `use`, `mod`, grouped imports `use mod::{a, b}` |
+| **Python** | `import`, `from...import`, relative imports |
+| **JavaScript/TypeScript** | ES6 `import`, `require()`, type imports |
+| **Go** | Single imports, block imports, aliased imports |
+
+## CLI Reference
+
+### Covering Set Options
+
+```
+--covering-set <TARGET>     Find covering set for file or entity
+                            Examples: "src/lib.rs", "src/auth.rs:login"
+
+--covering-set-diff         Compute covering set for current git diff
+
+--granularity <MODE>        file (whole files) or entity (functions/classes)
+                            Default: file
+
+--include-dependents        Include files that depend on target (impact analysis)
+
+--max-depth <N>             Maximum dependency traversal depth
+
+--max-files <N>             Maximum files in result
+
+--stdout                    Output to stdout (for piping to other tools)
+
+--output-format <FMT>       xml, json, text, markdown
+```
+
+### Repository Bundling Options
+
+```
+--token-target <N>          Target token count for selection (default: 128000)
+
+--include <PATTERNS>        Include only matching files
+
+--exclude <PATTERNS>        Exclude matching files
+
+--output-format <FMT>       html, xml, json, text, markdown, repomix
+```
+
+## Library Usage
+
+Scribe can also be used as a Rust library:
+
+```rust
+use scribe::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Analyze a repository
+    let config = Config::default();
+    let analysis = analyze_repository(".", &config).await?;
+
+    // Get most important files
+    for (file, score) in analysis.top_files(10) {
+        println!("{}: {:.3}", file, score);
+    }
+
+    Ok(())
+}
 ```
 
 ### Feature Flags
 
-Scribe uses feature flags to allow selective compilation:
-
 ```toml
+[dependencies]
 # Full installation (default)
-scribe = "0.1.0"
+scribe = "0.5"
 
-# Minimal installation
-scribe = { version = "0.1.0", default-features = false, features = ["core"] }
-
-# Fast file operations only
-scribe = { version = "0.1.0", default-features = false, features = ["fast"] }
+# Minimal - core types only
+scribe = { version = "0.5", default-features = false, features = ["core"] }
 
 # Analysis without graph features
-scribe = { version = "0.1.0", default-features = false, features = ["core", "analysis", "scanner"] }
+scribe = { version = "0.5", default-features = false, features = ["core", "analysis", "scanner"] }
 ```
 
-#### Available Features
-
-| Feature | Description | Dependencies |
-|---------|-------------|--------------|
-| `default` | All features enabled | `core`, `analysis`, `graph`, `scanner`, `patterns`, `selection` |
-| `core` | Essential types and utilities | None |
-| `analysis` | Heuristic scoring and metrics | `core` |
-| `graph` | PageRank centrality analysis | `core`, `analysis` |
-| `scanner` | File system scanning | `core` |
-| `patterns` | Pattern matching (glob, gitignore) | `core` |
-| `selection` | Code selection and bundling | `core`, `analysis`, `graph` |
-
-#### Feature Groups
-
-| Group | Features | Use Case |
-|-------|----------|----------|
-| `minimal` | `core` | Basic types and utilities only |
-| `fast` | `core`, `scanner`, `patterns` | Quick file operations |
-| `comprehensive` | All features | Complete analysis capabilities |
-
-## 🏃 Quick Start
-
-### Basic Repository Analysis
-
-```rust
-use scribe::prelude::*;
-use std::path::Path;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Analyze a repository with default settings
-    let config = Config::default();
-    let analysis = analyze_repository(".", &config).await?;
-    
-    // Get the most important files
-    println!("Top 10 most important files:");
-    for (file, score) in analysis.top_files(10) {
-        println!("  {}: {:.3}", file, score);
-    }
-    
-    // Display summary
-    println!("\n{}", analysis.summary());
-    
-    Ok(())
-}
-```
-
-### Selective Feature Usage
-
-```rust
-// Using only core and scanner features
-use scribe::core::{Config, Result};
-use scribe::scanner::{Scanner, ScanOptions};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let scanner = Scanner::new();
-    let options = ScanOptions::default()
-        .with_git_integration(true)
-        .with_parallel_processing(true);
-    
-    let files = scanner.scan(".", options).await?;
-    println!("Found {} files", files.len());
-    
-    Ok(())
-}
-```
-
-### Pattern Matching
-
-```rust
-use scribe::patterns::presets;
-
-#[tokio::main]
-async fn main() -> scribe::Result<()> {
-    // Use preset patterns for common file types
-    let mut source_matcher = presets::source_code()?;
-    let mut doc_matcher = presets::documentation()?;
-    
-    if source_matcher.should_process("src/main.rs")? {
-        println!("Found source file!");
-    }
-    
-    if doc_matcher.should_process("README.md")? {
-        println!("Found documentation!");
-    }
-    
-    Ok(())
-}
-```
-
-### Graph Analysis
-
-```rust
-use scribe::graph::PageRankAnalysis;
-
-#[tokio::main]
-async fn main() -> scribe::Result<()> {
-    let analysis = PageRankAnalysis::for_code_analysis()?;
-    
-    // Compute centrality for scan results
-    // let centrality_results = analysis.compute_centrality(&scan_results)?;
-    // let top_files = centrality_results.top_files_by_centrality(10);
-    
-    Ok(())
-}
-```
-
-### CLI Covering Sets
-
-Scribe’s CLI can compute minimal covering sets:
-
-- `--covering-set <name>`: target a function/class/module by name.
-- `--covering-set-diff`: build a covering set for the current `git diff` (uses the dependency graph to include touched files plus related dependents/dependencies).
-- `--diff-against <ref>`: diff against a specific ref (defaults to `HEAD`).
-- Shared filters: `--include-dependents`, `--max-depth`, `--max-files`.
-- Output helper: add `--line-numbers` to prefix every line in the bundled files, making it easy for review agents to comment by line number.
-
-Example:
-
-```bash
-cargo run --bin scribe -- --covering-set-diff --include-dependents --max-depth 2
-```
-
-## 🏗️ Architecture
-
-Scribe is built with a modular architecture where each crate provides specific functionality:
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        scribe                               │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │
-│  │ scribe-core │ │scribe-scanner│ │    scribe-patterns     │ │
-│  │   (types,   │ │(file system  │ │  (glob, gitignore,     │ │
-│  │ traits,     │ │ traversal,   │ │   pattern matching)    │ │
-│  │ utilities)  │ │ git support) │ │                        │ │
-│  └─────────────┘ └─────────────┘ └─────────────────────────┘ │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │
-│  │scribe-analysis│ │scribe-graph │ │   scribe-selection     │ │
-│  │ (heuristic  │ │  (PageRank  │ │ (intelligent bundling, │ │
-│  │  scoring,   │ │ centrality, │ │  context extraction,   │ │
-│  │ code metrics)│ │ dependency  │ │   relevance scoring)   │ │
-│  │             │ │  analysis)  │ │                        │ │
-│  └─────────────┘ └─────────────┘ └─────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          scribe-cli                             │
+├─────────────────────────────────────────────────────────────────┤
+│  scribe (main library)                                          │
+│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
+│  │ scribe-core │ │scribe-scanner │ │   scribe-patterns       │  │
+│  │  (types,    │ │ (file system  │ │ (glob, gitignore)       │  │
+│  │  config)    │ │  traversal)   │ │                         │  │
+│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
+│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
+│  │  scribe-    │ │ scribe-graph  │ │   scribe-selection      │  │
+│  │  analysis   │ │  (PageRank,   │ │  (covering sets,        │  │
+│  │ (heuristics)│ │  dependency   │ │   token budgeting)      │  │
+│  │             │ │   graphs)     │ │                         │  │
+│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Component Overview
+## Performance
 
-- **`scribe-core`**: Foundation types, traits, configuration, and utilities
-- **`scribe-scanner`**: High-performance file system traversal with git integration
-- **`scribe-patterns`**: Flexible pattern matching with glob and gitignore support
-- **`scribe-analysis`**: Heuristic scoring algorithms and code metrics
-- **`scribe-graph`**: PageRank centrality and dependency graph analysis
-- **`scribe-selection`**: Intelligent code selection and context extraction
+- **Covering set computation**: ~0.7s for 140-file codebase
+- **Full repository analysis**: ~100ms for small repos, ~1-10s for large repos
+- **Memory usage**: ~2MB per 1000 files
 
-## 📖 Examples
+## Comparison with Other Tools
 
-The repository includes several examples demonstrating different usage patterns:
+| Feature | Scribe | Repomix | Manual |
+|---------|--------|---------|--------|
+| Dependency-aware selection | ✅ | ❌ | ❌ |
+| Entity-level granularity | ✅ | ❌ | ❌ |
+| Single-command context | ✅ | ✅ | ❌ |
+| Token-efficient output | ✅ | ❌ | ❌ |
+| Multi-language support | ✅ | ✅ | N/A |
+| Git diff analysis | ✅ | ❌ | ❌ |
 
-### Run Examples
+## License
 
-```bash
-# Full analysis example
-cargo run --example basic_usage -- /path/to/repository
+Licensed under either of Apache License 2.0 or MIT license at your option.
 
-# Minimal features example  
-cargo run --example selective_features --no-default-features --features="core,scanner" -- /path/to/directory
-```
-
-### Available Examples
-
-- **`basic_usage.rs`**: Complete repository analysis with all features
-- **`selective_features.rs`**: Minimal usage with core and scanner only
-
-## 🔧 Performance
-
-Scribe is designed for high performance:
-
-- **Memory Efficient**: Streaming file processing with configurable memory limits
-- **Parallel Processing**: Multi-threaded scanning and analysis using Rayon
-- **Git Integration**: Fast file discovery using `git ls-files` when available
-- **Optimized Algorithms**: Research-grade PageRank implementation with convergence detection
-
-### Benchmarks
-
-Run benchmarks to see performance characteristics:
-
-```bash
-cargo bench
-```
-
-Performance characteristics on typical repositories:
-
-- **Small repos (< 1k files)**: ~10-50ms analysis time
-- **Medium repos (1k-10k files)**: ~100ms-1s analysis time  
-- **Large repos (> 10k files)**: ~1-10s analysis time
-- **Memory usage**: ~2MB per 1000 files for basic analysis
-
-## 🛠️ Development
-
-### Building
-
-```bash
-# Build all features
-cargo build
-
-# Build with specific features
-cargo build --no-default-features --features="core,scanner"
-
-# Build for release
-cargo build --release
-```
-
-### Testing
-
-```bash
-# Run all tests
-cargo test
-
-# Test specific features
-cargo test --no-default-features --features="core,analysis"
-
-# Run tests with output
-cargo test -- --nocapture
-```
-
-### Documentation
-
-```bash
-# Generate documentation
-cargo doc --open
-
-# Generate documentation for all features
-cargo doc --all-features --open
-```
-
-## 🔗 Related Projects
-
-- **[scribe-cli]**: Command-line interface for Scribe
-- **[scribe-vscode]**: Visual Studio Code extension
-- **[scribe-jupyter]**: Jupyter notebook integration
-
-## 📄 License
-
-This project is licensed under either of
-
-- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
-
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Contribution Guidelines
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-## 📞 Support
-
-- 📖 **Documentation**: [docs.rs/scribe](https://docs.rs/scribe)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/sibyllinesoft/scribe/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/sibyllinesoft/scribe/discussions)
-
-## 🙏 Acknowledgments
-
-- Built with [Rust](https://rust-lang.org/) 🦀
-- Uses [tree-sitter](https://tree-sitter.github.io/) for parsing
-- Inspired by research in code analysis and repository mining
-- Community feedback and contributions

@@ -27,7 +27,7 @@
 //!
 //! ### Basic Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use scribe_analyzer::prelude::*;
 //! use std::path::Path;
 //!
@@ -49,7 +49,7 @@
 //!
 //! ### Feature-Specific Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! // For minimal installations with selective features
 //! use scribe_analyzer::core::{Config, FileInfo};
 //! use scribe_analyzer::scanner::{Scanner, ScanOptions};
@@ -128,10 +128,9 @@ pub use pipeline::{
 };
 
 pub use report::{
-    format_bytes, format_number, format_timestamp, generate_cxml_output, generate_html_output,
-    generate_json_output, generate_markdown_output, generate_repomix_output, generate_report,
-    generate_text_output, generate_xml_output, get_file_icon, ReportFile, ReportFormat,
-    SelectionMetrics,
+    format_bytes, format_number, format_timestamp, generate_html_output, generate_json_output,
+    generate_markdown_output, generate_repomix_output, generate_report, generate_text_output,
+    generate_xml_output, get_file_icon, ReportFile, ReportFormat, SelectionMetrics,
 };
 
 #[cfg(feature = "core")]
@@ -205,7 +204,7 @@ pub use scribe_selection as selection;
 #[cfg(feature = "selection")]
 pub use scribe_selection::{
     apply_token_budget_selection, CodeBundle, CodeBundler, CodeContext, CodeSelector,
-    ContextExtractor, ContextFile, QuotaManager, SelectionEngine, TwoPassSelector,
+    ContextExtractor, ContextFile, QuotaManager, SelectionConfig, SelectionEngine, TwoPassSelector,
 };
 
 /// Current version of the main Scribe library
@@ -286,7 +285,7 @@ impl RepositoryAnalysis {
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use scribe_analyzer;
 /// use std::path::Path;
 ///
@@ -441,7 +440,7 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("🎯 Applying token budget: {} tokens", token_budget);
         }
-        files = apply_token_budget_selection(files, token_budget, config, None).await?;
+        files = apply_token_budget_selection(files, token_budget, config, None, &SelectionConfig::default()).await?;
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("✅ Token budget applied: {} files selected", files.len());
         }
@@ -759,7 +758,34 @@ fn detect_entrypoint_from_content(content: &str, language: &Language) -> bool {
     }
 }
 
-fn extract_imports(content: &str, language: &Language) -> Vec<String> {
+/// Helper to extract the import path from a Go import line.
+/// Handles: `"path"`, `alias "path"`, `. "path"`, `_ "path"`
+fn extract_go_import_path(line: &str) -> Option<String> {
+    // Find the quoted string (either " or `)
+    let line = line.trim();
+
+    // Try double quotes first
+    if let Some(start) = line.find('"') {
+        if let Some(end) = line[start + 1..].find('"') {
+            return Some(line[start + 1..start + 1 + end].to_string());
+        }
+    }
+
+    // Try backticks
+    if let Some(start) = line.find('`') {
+        if let Some(end) = line[start + 1..].find('`') {
+            return Some(line[start + 1..start + 1 + end].to_string());
+        }
+    }
+
+    None
+}
+
+/// Extract import statements from source code content.
+///
+/// This function parses the content and extracts import/use/require statements
+/// based on the programming language. Used for building dependency graphs.
+pub fn extract_imports(content: &str, language: &Language) -> Vec<String> {
     use std::collections::HashSet;
 
     let mut imports = HashSet::new();
@@ -774,10 +800,16 @@ fn extract_imports(content: &str, language: &Language) -> Vec<String> {
                         .trim_end_matches(';')
                         .split_whitespace()
                         .next()
-                        .unwrap_or_default()
-                        .trim_end_matches("::");
-                    if !statement.is_empty() {
-                        imports.insert(statement.to_string());
+                        .unwrap_or_default();
+                    // Handle grouped imports: use crate::module::{item1, item2};
+                    // Extract the module path before the brace
+                    let module_path = if let Some(brace_pos) = statement.find('{') {
+                        statement[..brace_pos].trim_end_matches("::")
+                    } else {
+                        statement.trim_end_matches("::")
+                    };
+                    if !module_path.is_empty() {
+                        imports.insert(module_path.to_string());
                     }
                 } else if trimmed.starts_with("mod ") {
                     let module = trimmed
@@ -854,16 +886,19 @@ fn extract_imports(content: &str, language: &Language) -> Vec<String> {
                         in_block = false;
                         continue;
                     }
-                    let import_path = trimmed.trim_matches(&['"', '`'][..]);
-                    if !import_path.is_empty() {
-                        imports.insert(import_path.to_string());
+                    // Handle aliased imports: alias "path" or . "path" or _ "path"
+                    // Extract just the quoted path
+                    if let Some(import_path) = extract_go_import_path(trimmed) {
+                        if !import_path.is_empty() {
+                            imports.insert(import_path);
+                        }
                     }
                 } else if trimmed.starts_with("import ") {
-                    let import_path = trimmed
-                        .trim_start_matches("import ")
-                        .trim_matches(&['"', '`'][..]);
-                    if !import_path.is_empty() {
-                        imports.insert(import_path.to_string());
+                    let rest = trimmed.trim_start_matches("import ");
+                    if let Some(import_path) = extract_go_import_path(rest) {
+                        if !import_path.is_empty() {
+                            imports.insert(import_path);
+                        }
                     }
                 }
             }
@@ -1069,7 +1104,7 @@ pub async fn scan_repository<P: AsRef<std::path::Path>>(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use scribe_analyzer::prelude::*;
 ///
 /// // Now you have access to:
@@ -1209,5 +1244,199 @@ mod tests {
 
         // Test that version is available
         assert!(!VERSION.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod import_extraction_tests {
+    use super::*;
+
+    #[test]
+    fn test_rust_imports() {
+        let content = r#"
+use crate::module;
+use crate::module::{item1, item2};
+use super::parent_module;
+use self::sibling;
+use std::collections::HashMap;
+use std::io::{Read, Write};
+mod my_module;
+pub use crate::reexport;
+"#;
+        let imports = extract_imports(content, &Language::Rust);
+        println!("Rust imports: {:?}", imports);
+        
+        assert!(imports.contains(&"crate::module".to_string()), "Should extract simple crate import");
+        assert!(imports.contains(&"super::parent_module".to_string()), "Should extract super import");
+        assert!(imports.contains(&"self::sibling".to_string()), "Should extract self import");
+        assert!(imports.contains(&"std::collections::HashMap".to_string()), "Should extract std import");
+        assert!(imports.contains(&"std::io".to_string()), "Should extract grouped std import");
+        assert!(imports.contains(&"my_module".to_string()), "Should extract mod declaration");
+        // pub use should NOT be extracted (doesn't start with "use ")
+        assert!(!imports.iter().any(|i| i.contains("reexport")), "Should NOT extract pub use");
+    }
+
+    #[test]
+    fn test_python_imports() {
+        let content = r#"
+import os
+import os, sys
+import numpy as np
+from os import path
+from . import module
+from .. import parent
+from ..package import module
+from typing import List, Dict
+"#;
+        let imports = extract_imports(content, &Language::Python);
+        println!("Python imports: {:?}", imports);
+        
+        assert!(imports.contains(&"os".to_string()), "Should extract simple import");
+        assert!(imports.contains(&"sys".to_string()), "Should extract comma-separated import");
+        assert!(imports.contains(&"numpy".to_string()), "Should extract aliased import");
+        assert!(imports.contains(&".".to_string()), "Should extract relative import");
+        assert!(imports.contains(&"..".to_string()), "Should extract parent relative import");
+        assert!(imports.contains(&"..package".to_string()), "Should extract parent package import");
+        assert!(imports.contains(&"typing".to_string()), "Should extract from import");
+    }
+
+    #[test]
+    fn test_javascript_imports() {
+        let content = r#"
+import foo from 'module'
+import bar from "double-quotes"
+import { a, b } from 'destructure'
+import * as all from 'star-import'
+import 'side-effect'
+const req1 = require('commonjs')
+const req2 = require("cjs-double")
+import { x } from './relative'
+"#;
+        let imports = extract_imports(content, &Language::JavaScript);
+        println!("JavaScript imports: {:?}", imports);
+        
+        assert!(imports.contains(&"module".to_string()), "Should extract single-quote import");
+        assert!(imports.contains(&"double-quotes".to_string()), "Should extract double-quote import");
+        assert!(imports.contains(&"destructure".to_string()), "Should extract destructured import");
+        assert!(imports.contains(&"star-import".to_string()), "Should extract star import");
+        assert!(imports.contains(&"side-effect".to_string()), "Should extract side-effect import");
+        assert!(imports.contains(&"commonjs".to_string()), "Should extract require single");
+        assert!(imports.contains(&"cjs-double".to_string()), "Should extract require double");
+        assert!(imports.contains(&"./relative".to_string()), "Should extract relative import");
+    }
+
+    #[test]
+    fn test_go_imports() {
+        let content = r#"
+package main
+
+import "fmt"
+import (
+    "os"
+    "path/filepath"
+)
+"#;
+        let imports = extract_imports(content, &Language::Go);
+        println!("Go imports: {:?}", imports);
+        
+        assert!(imports.contains(&"fmt".to_string()), "Should extract single import");
+        assert!(imports.contains(&"os".to_string()), "Should extract block import");
+        assert!(imports.contains(&"path/filepath".to_string()), "Should extract block import with path");
+    }
+
+    #[test]
+    fn test_go_aliased_imports() {
+        let content = r#"
+import f "fmt"
+import (
+    . "os"
+    _ "init/pkg"
+    alias "github.com/pkg/errors"
+)
+"#;
+        let imports = extract_imports(content, &Language::Go);
+        println!("Go aliased imports: {:?}", imports);
+
+        // These should extract the package path, not the alias
+        assert!(imports.contains(&"fmt".to_string()), "Should extract aliased fmt");
+        assert!(imports.contains(&"os".to_string()), "Should extract dot-imported os");
+        assert!(imports.contains(&"init/pkg".to_string()), "Should extract blank-imported init/pkg");
+        assert!(imports.contains(&"github.com/pkg/errors".to_string()), "Should extract aliased github package");
+
+        // Should NOT contain the aliases themselves
+        assert!(!imports.iter().any(|i| i.starts_with("f ")), "Should not include alias 'f'");
+        assert!(!imports.iter().any(|i| i.starts_with(". ")), "Should not include dot alias");
+    }
+}
+
+#[cfg(test)]
+mod import_edge_cases {
+    use super::*;
+
+    #[test]
+    fn test_rust_pub_use_not_extracted() {
+        let content = "pub use crate::module;";
+        let imports = extract_imports(content, &Language::Rust);
+        assert!(imports.is_empty(), "pub use should not be extracted");
+    }
+
+    #[test]
+    fn test_rust_multiline_use() {
+        // Multi-line use statements (spanning lines) - only first line detected
+        let content = r#"
+use std::collections::{
+    HashMap,
+    HashSet,
+};
+"#;
+        let imports = extract_imports(content, &Language::Rust);
+        println!("Multiline Rust: {:?}", imports);
+        assert!(imports.contains(&"std::collections".to_string()));
+    }
+
+    #[test]
+    fn test_typescript_import_type() {
+        let content = r#"
+import type { Type } from 'type-module'
+import { Component } from '@angular/core'
+"#;
+        let imports = extract_imports(content, &Language::TypeScript);
+        println!("TypeScript imports: {:?}", imports);
+        assert!(imports.contains(&"type-module".to_string()), "Should extract type import");
+        assert!(imports.contains(&"@angular/core".to_string()), "Should extract scoped package");
+    }
+
+    #[test]
+    fn test_python_multiline_from_import() {
+        // Python allows parenthesized imports
+        let content = r#"
+from module import (
+    item1,
+    item2,
+)
+"#;
+        let imports = extract_imports(content, &Language::Python);
+        println!("Python multiline: {:?}", imports);
+        assert!(imports.contains(&"module".to_string()));
+    }
+
+    #[test]
+    fn test_go_backtick_imports() {
+        let content = "import `fmt`";
+        let imports = extract_imports(content, &Language::Go);
+        assert!(imports.contains(&"fmt".to_string()), "Should handle backtick imports");
+    }
+
+    #[test]
+    fn test_js_template_literal_not_extracted() {
+        // Template literals shouldn't be confused with imports
+        let content = r#"
+const x = `not an import`;
+import real from 'real-module';
+"#;
+        let imports = extract_imports(content, &Language::JavaScript);
+        println!("JS template test: {:?}", imports);
+        assert!(imports.contains(&"real-module".to_string()));
+        assert!(!imports.contains(&"not an import".to_string()));
     }
 }

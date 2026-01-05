@@ -10,49 +10,143 @@ use scribe_core::{
     Config, FileInfo, FileType, Result, ScribeError,
 };
 use scribe_graph::CentralityCalculator;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 
-/// Apply the library's tiered token budget selection to a set of files.
+/// Configuration for the coverage-optimized selection algorithm.
+///
+/// The boost factors control the trade-off between resolution (full file content)
+/// and coverage (more files represented via signatures).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionConfig {
+    /// Boost factor for signature scores (higher = prefer coverage).
+    /// - 1.0 = signatures valued same as full content (resolution mode)
+    /// - 1.5 = balanced mix of full and signatures (default)
+    /// - 2.0+ = strong preference for signatures (coverage mode)
+    pub signature_boost: f64,
+
+    /// Boost factor for chunk scores.
+    /// Should be between 1.0 and signature_boost.
+    pub chunk_boost: f64,
+}
+
+impl Default for SelectionConfig {
+    fn default() -> Self {
+        Self {
+            signature_boost: 1.5,
+            chunk_boost: 1.2,
+        }
+    }
+}
+
+impl SelectionConfig {
+    /// Resolution mode: prefer full file content over signatures.
+    pub fn resolution() -> Self {
+        Self {
+            signature_boost: 1.0,
+            chunk_boost: 1.0,
+        }
+    }
+
+    /// Coverage mode: prefer more files via signatures.
+    pub fn coverage() -> Self {
+        Self {
+            signature_boost: 2.0,
+            chunk_boost: 1.5,
+        }
+    }
+
+    /// Maximum coverage: strongly prefer signatures.
+    pub fn max_coverage() -> Self {
+        Self {
+            signature_boost: 3.0,
+            chunk_boost: 2.0,
+        }
+    }
+}
+
+/// A candidate for selection: a (file, fidelity mode) pair with computed scores.
+#[derive(Debug, Clone)]
+struct FidelityCandidate {
+    /// Index into the source files vector.
+    file_index: usize,
+    /// The fidelity mode for this candidate.
+    mode: FidelityMode,
+    /// The score for this candidate (base_score × boost).
+    score: f64,
+    /// Token cost for this mode.
+    tokens: usize,
+    /// Value density: score / tokens.
+    density: f64,
+    /// The content for this mode.
+    content: String,
+}
+
+/// Pre-computed fidelity options for a single file.
+#[derive(Debug)]
+struct FileFidelityOptions {
+    /// The original file info.
+    file: FileInfo,
+    /// Priority score (from centrality + external weights).
+    priority: f64,
+    /// Full content and token count.
+    full_content: String,
+    full_tokens: usize,
+    /// Chunk content and token count (None if chunking not applicable/failed).
+    chunk_content: Option<String>,
+    chunk_tokens: Option<usize>,
+    /// Signature content and token count.
+    signature_content: String,
+    signature_tokens: usize,
+}
+
+/// Apply the optimization-based token budget selection.
+///
+/// This function uses a multiple-choice knapsack approach to maximize coverage
+/// while respecting the token budget. The `selection_config` parameter controls the
+/// trade-off between resolution (full content) and coverage (signatures).
 ///
 /// The selector prioritizes files in multiple tiers:
-/// 1. Mandatory project metadata (README, config files, entrypoints)
-/// 2. Source files ordered by priority (centrality merged with external weights)
+/// 1. Mandatory project metadata (README, config files, entrypoints) - always full content
+/// 2. Source files - optimized selection based on value density (score / tokens)
 /// 3. Documentation with preference for design/architecture material
 /// 4. Any remaining files while budget remains
 ///
-/// The function loads file content and token estimates for the selected files
-/// and will attempt demotion (chunk/signature extraction) when a source file
-/// would otherwise exceed the available budget.
+/// For source files, the algorithm:
+/// 1. Pre-computes full/chunk/signature variants for each file
+/// 2. Scores each variant using boost factors (signatures get higher effective scores)
+/// 3. Computes value density (score / tokens) for each variant
+/// 4. Greedily selects highest-density variants that fit the budget
 ///
-/// Centrality analysis is always performed for source files. If `weights` is
-/// provided, external weights are merged with centrality scores by averaging
-/// to produce the final priority. Files without external weights use centrality alone.
+/// This approach maximizes coverage by naturally preferring signatures when
+/// they provide better value per token than full content.
 pub async fn apply_token_budget_selection(
     files: Vec<FileInfo>,
     token_budget: usize,
     config: &Config,
     weights: Option<&FileWeights>,
+    selection_config: &SelectionConfig,
 ) -> Result<Vec<FileInfo>> {
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
+    let debug = std::env::var("SCRIBE_DEBUG").is_ok();
+
+    if debug {
         eprintln!(
-            "🎯 Intelligent token budget selection: {} tokens across {} files{}",
+            "🎯 Token budget selection: {} tokens, boost={:.1}/{:.1}",
             token_budget,
-            files.len(),
-            if weights.is_some() { " (with external weights)" } else { "" }
+            selection_config.signature_boost,
+            selection_config.chunk_boost,
         );
     }
 
     let counter = TokenCounter::global();
     let mut selected_files = Vec::new();
+    let mut budget_tracker = TokenBudget::new(token_budget);
 
-    // Split files into categories for prioritized selection
-    let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files.clone());
+    // Split files into categories
+    let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files);
 
-    // Keep a reference to all files for final optimization pass
-    let all_files = files;
-
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
+    if debug {
         eprintln!(
             "📊 File categories: {} mandatory, {} source, {} docs, {} other",
             mandatory_files.len(),
@@ -62,17 +156,9 @@ pub async fn apply_token_budget_selection(
         );
     }
 
-    let mut budget_tracker = TokenBudget::new(token_budget);
-
-    // Tier 1: Mandatory files (README, project config, main/index files)
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
-        eprintln!("📌 Tier 1: Processing mandatory files");
-    }
+    // Tier 1: Mandatory files (always full content)
     for file in mandatory_files {
         if budget_tracker.available() < 1 {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("🛑 Budget exhausted, stopping mandatory file selection");
-            }
             break;
         }
         if let Some(selected_file) =
@@ -82,16 +168,9 @@ pub async fn apply_token_budget_selection(
         }
     }
 
-    // Tier 2: Source files (prioritized by centrality merged with external weights)
+    // Tier 2: Source files using optimization-based selection
     if !source_files.is_empty() && budget_tracker.available() > 0 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!(
-                "🧠 Tier 2: Processing source files with centrality{}",
-                if weights.is_some() { " + external weights" } else { "" }
-            );
-        }
-
-        // Always compute centrality for source files
+        // Compute centrality for source files
         let calculator = CentralityCalculator::new()?;
         let mock_scan_results: Vec<_> = source_files
             .iter()
@@ -99,8 +178,8 @@ pub async fn apply_token_budget_selection(
             .collect();
         let centrality_results = calculator.calculate_centrality(&mock_scan_results)?;
 
-        // Compute priority by merging centrality with external weights (if provided)
-        let mut source_with_priority: Vec<_> = source_files
+        // Compute priority for each file (centrality merged with external weights)
+        let source_with_priority: Vec<_> = source_files
             .into_iter()
             .map(|mut file| {
                 let centrality_score = centrality_results
@@ -110,7 +189,6 @@ pub async fn apply_token_budget_selection(
                     .unwrap_or(0.0);
                 file.centrality_score = Some(centrality_score);
 
-                // Merge with external weights if provided (average them)
                 let priority = if let Some(w) = weights {
                     let external_weight = w.get(&file.relative_path);
                     if external_weight > 0.0 {
@@ -122,65 +200,74 @@ pub async fn apply_token_budget_selection(
                     centrality_score
                 };
 
-                file.weight = scribe_core::FileWeight::new(priority);
                 (file, priority)
             })
             .collect();
 
-        // Sort by priority (highest first)
-        source_with_priority
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Pre-compute fidelity options for all source files
+        let fidelity_options = precompute_fidelity_options(source_with_priority, &counter)?;
 
-        if std::env::var("SCRIBE_DEBUG").is_ok() && !source_with_priority.is_empty() {
-            eprintln!("🔍 Top 10 source files by priority:");
-            for (i, (file, priority)) in source_with_priority.iter().enumerate().take(10) {
-                let centrality = file.centrality_score.unwrap_or(0.0);
-                let external = weights.map(|w| w.get(&file.relative_path)).unwrap_or(0.0);
-                eprintln!(
-                    "  {}. {} (priority: {:.6}, centrality: {:.6}, external: {:.6})",
-                    i + 1,
-                    file.relative_path,
-                    priority,
-                    centrality,
-                    external
-                );
-            }
+        if debug {
+            eprintln!(
+                "📦 Pre-computed fidelity options for {} source files",
+                fidelity_options.len()
+            );
         }
 
-        for (file, priority) in source_with_priority {
-            if budget_tracker.available() < 1 {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("🛑 Budget exhausted, stopping source selection");
-                }
-                break;
+        // Generate all candidates with boosted scores
+        let mut candidates = generate_fidelity_candidates(&fidelity_options, selection_config);
+
+        if debug {
+            eprintln!("🔢 Generated {} candidates", candidates.len());
+        }
+
+        // Run greedy knapsack optimization
+        let selected_indices = optimize_selection(&mut candidates, budget_tracker.available());
+
+        // Count selections by mode for debug output
+        let mut full_count = 0;
+        let mut chunk_count = 0;
+        let mut signature_count = 0;
+        let mut total_tokens = 0;
+
+        // Apply selections
+        for idx in selected_indices {
+            let candidate = &candidates[idx];
+            let opt = &fidelity_options[candidate.file_index];
+            let mut file = opt.file.clone();
+
+            file.content = Some(candidate.content.clone());
+            file.token_estimate = Some(candidate.tokens);
+            file.char_count = Some(candidate.content.chars().count());
+            file.line_count = Some(candidate.content.lines().count());
+            file.centrality_score = Some(opt.priority);
+
+            budget_tracker.allocate(candidate.tokens);
+            total_tokens += candidate.tokens;
+
+            match candidate.mode {
+                FidelityMode::Full => full_count += 1,
+                FidelityMode::Chunk => chunk_count += 1,
+                FidelityMode::Signature => signature_count += 1,
             }
 
-            if let Some(selected_file) = try_include_file_with_budget_and_demotion(
-                file,
-                &counter,
-                &mut budget_tracker,
-                priority,
-            )
-            .await?
-            {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "✅ Selected {} (priority: {:.4})",
-                        selected_file.relative_path, priority
-                    );
-                }
-                selected_files.push(selected_file);
-            }
+            selected_files.push(file);
+        }
+
+        if debug {
+            eprintln!(
+                "✅ Selected {} source files: {} full, {} chunk, {} signature ({} tokens)",
+                full_count + chunk_count + signature_count,
+                full_count,
+                chunk_count,
+                signature_count,
+                total_tokens
+            );
         }
     }
 
     // Tier 3: Documentation files
     if !doc_files.is_empty() && budget_tracker.available() > 0 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!("📚 Tier 3: Processing documentation files");
-        }
-
-        // Sort docs by importance - prioritize architecture/design docs
         let mut critical_docs = Vec::new();
         let mut other_docs = Vec::new();
 
@@ -199,15 +286,10 @@ pub async fn apply_token_budget_selection(
             }
         }
 
-        // Process critical docs first, then others
         for file in critical_docs.into_iter().chain(other_docs.into_iter()) {
             if budget_tracker.available() < 1 {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("🛑 Budget exhausted, stopping documentation selection");
-                }
                 break;
             }
-
             if let Some(selected_file) =
                 try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
             {
@@ -216,160 +298,16 @@ pub async fn apply_token_budget_selection(
         }
     }
 
-    // Tier 4: Other files (if budget remains)
+    // Tier 4: Other files
     if !other_files.is_empty() && budget_tracker.available() > 0 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!("📄 Tier 4: Processing other files");
-        }
-
         for file in other_files {
             if budget_tracker.available() < 1 {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("🛑 Budget exhausted, stopping other file selection");
-                }
                 break;
             }
-
             if let Some(selected_file) =
                 try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
             {
                 selected_files.push(selected_file);
-            }
-        }
-    }
-
-    // Signature coverage pass: prefer inexpensive signatures to improve coverage when budget is tight
-    if budget_tracker.available() > 0 {
-        let included_paths: HashSet<String> = selected_files
-            .iter()
-            .map(|f| f.relative_path.clone())
-            .collect();
-
-        let remaining_sources: Vec<_> = all_files
-            .iter()
-            .filter(|f| matches!(f.file_type, FileType::Source { .. }))
-            .filter(|f| !included_paths.contains(&f.relative_path))
-            .filter(|f| f.decision.should_include())
-            .cloned()
-            .collect();
-
-        if !remaining_sources.is_empty() {
-            if let Ok(mut demotion_engine) = DemotionEngine::new() {
-                let mut candidates = Vec::new();
-
-                for file in remaining_sources {
-                    if let Ok(content) = load_file_content_safe(&file.path) {
-                        let full_tokens = counter
-                            .estimate_file_tokens(&content, &file.path)
-                            .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&content));
-
-                        if let Ok(sig_result) = demotion_engine.demote_content(
-                            &content,
-                            &file.relative_path,
-                            FidelityMode::Signature,
-                            None,
-                        ) {
-                            if sig_result.demoted_tokens == 0 {
-                                continue;
-                            }
-
-                            // Use signature efficiency as priority (higher ratio = more efficient)
-                            let ratio = (full_tokens as f64
-                                / sig_result.demoted_tokens as f64)
-                                .clamp(1.0, 50.0);
-
-                            // Also consider external weights if provided
-                            let external_weight = weights.map(|w| w.get(&file.relative_path)).unwrap_or(0.0);
-                            let priority = ratio + external_weight;
-
-                            candidates.push((file, sig_result, priority, ratio));
-                        }
-                    }
-                }
-
-                candidates.sort_by(|a, b| {
-                    b.2.partial_cmp(&a.2)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-
-                if std::env::var("SCRIBE_DEBUG").is_ok() && !candidates.is_empty() {
-                    eprintln!(
-                        "✍️ Signature coverage: {} candidates, {} tokens remaining",
-                        candidates.len(),
-                        budget_tracker.available()
-                    );
-                }
-
-                for (mut file, sig_result, priority, ratio) in candidates {
-                    if budget_tracker.available() < 1 {
-                        break;
-                    }
-
-                    if !budget_tracker.can_allocate(sig_result.demoted_tokens) {
-                        continue;
-                    }
-
-                    budget_tracker.allocate(sig_result.demoted_tokens);
-                    file.content = Some(sig_result.content);
-                    file.token_estimate = Some(sig_result.demoted_tokens);
-                    file.char_count = Some(file.content.as_ref().unwrap().chars().count());
-                    file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "✍️ Added signature-only {} (priority {:.3}, ratio {:.1}x, {} tokens)",
-                            file.relative_path,
-                            priority,
-                            ratio,
-                            sig_result.demoted_tokens
-                        );
-                    }
-
-                    selected_files.push(file);
-                }
-            }
-        }
-    }
-
-    // Final optimization pass: try to fill remaining budget with smaller files
-    if budget_tracker.available() > 1 {
-        if std::env::var("SCRIBE_DEBUG").is_ok() {
-            eprintln!(
-                "🔧 Final optimization pass: {} tokens remaining, searching for small files",
-                budget_tracker.available()
-            );
-        }
-
-        let included_paths: HashSet<String> = selected_files
-            .iter()
-            .map(|f| f.relative_path.clone())
-            .collect();
-
-        // Try to find any remaining files that could fit
-        for file in &all_files {
-            if budget_tracker.available() < 1 {
-                break;
-            }
-
-            if included_paths.contains(&file.relative_path) || !file.decision.should_include() {
-                continue;
-            }
-
-            // Quick estimate - try small files that might fit
-            if file.size <= (budget_tracker.available() * 4) as u64 {
-                if let Some(selected_file) =
-                    try_include_file_with_budget(file.clone(), &counter, &mut budget_tracker)
-                        .await?
-                {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "🎯 Final pass: included {} ({} tokens)",
-                            selected_file.relative_path,
-                            selected_file.token_estimate.unwrap_or(0)
-                        );
-                    }
-                    selected_files.push(selected_file);
-                }
             }
         }
     }
@@ -377,21 +315,14 @@ pub async fn apply_token_budget_selection(
     let tokens_used = token_budget - budget_tracker.available();
     let utilization = (tokens_used as f64 / token_budget as f64) * 100.0;
 
-    if std::env::var("SCRIBE_DEBUG").is_ok() {
+    if debug {
         eprintln!(
-            "✅ Selected {} files ({} tokens / {} budget, {:.1}% utilized)",
+            "✅ Total: {} files ({} tokens / {} budget, {:.1}% utilized)",
             selected_files.len(),
             tokens_used,
             token_budget,
             utilization
         );
-
-        if utilization < 90.0 {
-            eprintln!(
-                "⚠️  Budget utilization below 90% - {} tokens unused",
-                budget_tracker.available()
-            );
-        }
     }
 
     Ok(selected_files)
@@ -531,120 +462,6 @@ async fn try_include_file_with_budget(
     }
 }
 
-async fn try_include_file_with_budget_and_demotion(
-    mut file: FileInfo,
-    counter: &TokenCounter,
-    budget_tracker: &mut TokenBudget,
-    priority: f64,
-) -> Result<Option<FileInfo>> {
-    match load_file_content_safe(&file.path) {
-        Ok(content) => match counter.estimate_file_tokens(&content, &file.path) {
-            Ok(full_tokens) => {
-                // Try full content first
-                if budget_tracker.can_allocate(full_tokens) {
-                    budget_tracker.allocate(full_tokens);
-                    file.content = Some(content);
-                    file.token_estimate = Some(full_tokens);
-                    file.char_count = Some(file.content.as_ref().unwrap().chars().count());
-                    file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-                    return Ok(Some(file));
-                }
-
-                // Full content doesn't fit - try demotion for source files
-                if matches!(file.file_type, FileType::Source { .. }) {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "🔧 Trying demotion for {} ({} tokens → chunks/signatures)",
-                            file.relative_path, full_tokens
-                        );
-                    }
-
-                    if let Ok(mut demotion_engine) = DemotionEngine::new() {
-                        if let Ok(chunk_result) = demotion_engine.demote_content(
-                            &content,
-                            &file.relative_path,
-                            FidelityMode::Chunk,
-                            Some(budget_tracker.available()),
-                        ) {
-                            if budget_tracker.can_allocate(chunk_result.demoted_tokens) {
-                                budget_tracker.allocate(chunk_result.demoted_tokens);
-                                file.content = Some(chunk_result.content);
-                                file.token_estimate = Some(chunk_result.demoted_tokens);
-                                file.char_count =
-                                    Some(file.content.as_ref().unwrap().chars().count());
-                                file.line_count =
-                                    Some(file.content.as_ref().unwrap().lines().count());
-                                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                    eprintln!(
-                                        "✅ Demoted {} to chunks ({} → {} tokens, {:.1}% compression, priority: {:.4})",
-                                        file.relative_path,
-                                        full_tokens,
-                                        chunk_result.demoted_tokens,
-                                        chunk_result.compression_ratio * 100.0,
-                                        priority
-                                    );
-                                }
-                                return Ok(Some(file));
-                            }
-                        }
-
-                        if let Ok(sig_result) = demotion_engine.demote_content(
-                            &content,
-                            &file.relative_path,
-                            FidelityMode::Signature,
-                            None,
-                        ) {
-                            if budget_tracker.can_allocate(sig_result.demoted_tokens) {
-                                budget_tracker.allocate(sig_result.demoted_tokens);
-                                file.content = Some(sig_result.content);
-                                file.token_estimate = Some(sig_result.demoted_tokens);
-                                file.char_count =
-                                    Some(file.content.as_ref().unwrap().chars().count());
-                                file.line_count =
-                                    Some(file.content.as_ref().unwrap().lines().count());
-                                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                    eprintln!(
-                                        "✅ Demoted {} to signatures ({} → {} tokens, {:.1}% compression, priority: {:.4})",
-                                        file.relative_path,
-                                        full_tokens,
-                                        sig_result.demoted_tokens,
-                                        sig_result.compression_ratio * 100.0,
-                                        priority
-                                    );
-                                }
-                                return Ok(Some(file));
-                            }
-                        }
-                    }
-                }
-
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "⚠️  Skipping {} ({} tokens) - no demotion method fits budget",
-                        file.relative_path, full_tokens
-                    );
-                }
-                Ok(None)
-            }
-            Err(e) => {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "⚠️  Failed to estimate tokens for {}: {}",
-                        file.relative_path, e
-                    );
-                }
-                Ok(None)
-            }
-        },
-        Err(e) => {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
-            }
-            Ok(None)
-        }
-    }
-}
-
 struct MockScanResult {
     path: String,
     relative_path: String,
@@ -718,4 +535,191 @@ impl ScanResult for MockScanResult {
 fn load_file_content_safe(path: &Path) -> Result<String> {
     std::fs::read_to_string(path)
         .map_err(|e| ScribeError::io(format!("Failed to read file {}: {}", path.display(), e), e))
+}
+
+// =============================================================================
+// Optimization-based selection algorithm
+// =============================================================================
+
+/// Pre-compute fidelity options (full, chunk, signature) for all source files.
+///
+/// This computes the token cost and content for each fidelity mode so we can
+/// make optimal selection decisions.
+fn precompute_fidelity_options(
+    source_files: Vec<(FileInfo, f64)>, // (file, priority)
+    counter: &TokenCounter,
+) -> Result<Vec<FileFidelityOptions>> {
+    let mut demotion_engine = DemotionEngine::new()?;
+    let mut options = Vec::with_capacity(source_files.len());
+
+    for (file, priority) in source_files {
+        // Load file content
+        let full_content = match load_file_content_safe(&file.path) {
+            Ok(content) => content,
+            Err(_) => continue, // Skip files we can't read
+        };
+
+        // Compute full token count
+        let full_tokens = counter
+            .estimate_file_tokens(&full_content, &file.path)
+            .unwrap_or_else(|_| token_utils::estimate_tokens_legacy(&full_content));
+
+        if full_tokens == 0 {
+            continue; // Skip empty files
+        }
+
+        // Compute chunk content and tokens
+        let (chunk_content, chunk_tokens) = match demotion_engine.demote_content(
+            &full_content,
+            &file.relative_path,
+            FidelityMode::Chunk,
+            None,
+        ) {
+            Ok(result) if result.demoted_tokens > 0 && result.demoted_tokens < full_tokens => {
+                (Some(result.content), Some(result.demoted_tokens))
+            }
+            _ => (None, None),
+        };
+
+        // Compute signature content and tokens
+        let (signature_content, signature_tokens) = match demotion_engine.demote_content(
+            &full_content,
+            &file.relative_path,
+            FidelityMode::Signature,
+            None,
+        ) {
+            Ok(result) if result.demoted_tokens > 0 => {
+                (result.content, result.demoted_tokens)
+            }
+            _ => {
+                // Fallback: use a minimal representation
+                let fallback = format!("// {}\n", file.relative_path);
+                let fallback_tokens = counter
+                    .count_tokens(&fallback)
+                    .unwrap_or(1);
+                (fallback, fallback_tokens.max(1))
+            }
+        };
+
+        options.push(FileFidelityOptions {
+            file,
+            priority,
+            full_content,
+            full_tokens,
+            chunk_content,
+            chunk_tokens,
+            signature_content,
+            signature_tokens,
+        });
+    }
+
+    Ok(options)
+}
+
+/// Generate all fidelity candidates from pre-computed options.
+///
+/// Each file produces up to 3 candidates (full, chunk, signature), each with
+/// a score computed using the boost factors.
+fn generate_fidelity_candidates(
+    options: &[FileFidelityOptions],
+    config: &SelectionConfig,
+) -> Vec<FidelityCandidate> {
+    let mut candidates = Vec::with_capacity(options.len() * 3);
+
+    for (index, opt) in options.iter().enumerate() {
+        // Full content candidate
+        let full_score = opt.priority;
+        let full_density = if opt.full_tokens > 0 {
+            full_score / opt.full_tokens as f64
+        } else {
+            0.0
+        };
+        candidates.push(FidelityCandidate {
+            file_index: index,
+            mode: FidelityMode::Full,
+            score: full_score,
+            tokens: opt.full_tokens,
+            density: full_density,
+            content: opt.full_content.clone(),
+        });
+
+        // Chunk candidate (if available and smaller than full)
+        if let (Some(ref chunk_content), Some(chunk_tokens)) = (&opt.chunk_content, opt.chunk_tokens) {
+            let chunk_score = opt.priority * config.chunk_boost;
+            let chunk_density = if chunk_tokens > 0 {
+                chunk_score / chunk_tokens as f64
+            } else {
+                0.0
+            };
+            candidates.push(FidelityCandidate {
+                file_index: index,
+                mode: FidelityMode::Chunk,
+                score: chunk_score,
+                tokens: chunk_tokens,
+                density: chunk_density,
+                content: chunk_content.clone(),
+            });
+        }
+
+        // Signature candidate
+        let signature_score = opt.priority * config.signature_boost;
+        let signature_density = if opt.signature_tokens > 0 {
+            signature_score / opt.signature_tokens as f64
+        } else {
+            0.0
+        };
+        candidates.push(FidelityCandidate {
+            file_index: index,
+            mode: FidelityMode::Signature,
+            score: signature_score,
+            tokens: opt.signature_tokens,
+            density: signature_density,
+            content: opt.signature_content.clone(),
+        });
+    }
+
+    candidates
+}
+
+/// Solve the multiple-choice knapsack problem using greedy approximation.
+///
+/// Returns the indices of selected candidates.
+fn optimize_selection(
+    candidates: &mut [FidelityCandidate],
+    budget: usize,
+) -> Vec<usize> {
+    // Sort by density (value per token) descending
+    candidates.sort_by(|a, b| {
+        b.density
+            .partial_cmp(&a.density)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut selected = Vec::new();
+    let mut selected_files: HashSet<usize> = HashSet::new();
+    let mut remaining_budget = budget;
+
+    for (idx, candidate) in candidates.iter().enumerate() {
+        // Skip if file already selected in a different mode
+        if selected_files.contains(&candidate.file_index) {
+            continue;
+        }
+
+        // Skip if doesn't fit budget
+        if candidate.tokens > remaining_budget {
+            continue;
+        }
+
+        // Select this candidate
+        selected.push(idx);
+        selected_files.insert(candidate.file_index);
+        remaining_budget -= candidate.tokens;
+
+        // Early termination if budget exhausted
+        if remaining_budget == 0 {
+            break;
+        }
+    }
+
+    selected
 }

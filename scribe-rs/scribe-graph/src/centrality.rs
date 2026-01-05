@@ -307,6 +307,18 @@ impl CentralityCalculator {
         })
     }
 
+    /// Build a dependency graph from scan results without computing PageRank.
+    ///
+    /// This is useful for covering set computation where you need the graph
+    /// structure but not the centrality scores.
+    pub fn build_graph_only<T>(&self, scan_results: &[T]) -> Result<DependencyGraph>
+    where
+        T: ScanResult + Sync,
+    {
+        let (graph, _stats) = self.build_dependency_graph(scan_results)?;
+        Ok(graph)
+    }
+
     /// Integrate centrality scores with existing heuristic scores
     pub fn integrate_with_heuristics(
         &self,

@@ -9,7 +9,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use crate::report::SelectionMetrics;
 use crate::{
     analyze_repository, apply_token_budget_selection, format_timestamp, report::ReportFile, Config,
-    RepositoryAnalysis,
+    RepositoryAnalysis, SelectionConfig,
 };
 use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{FileInfo, Result};
@@ -109,7 +109,13 @@ pub async fn select_from_analysis(
     let mut selected_infos = if unlimited_budget {
         filtered_infos.clone()
     } else {
-        apply_token_budget_selection(filtered_infos.clone(), options.token_target, config, None).await?
+        apply_token_budget_selection(
+            filtered_infos.clone(),
+            options.token_target,
+            config,
+            None,
+            &SelectionConfig::default(),
+        ).await?
     };
 
     selected_infos.sort_by(|a, b| {

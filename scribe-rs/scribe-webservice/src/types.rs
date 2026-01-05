@@ -29,7 +29,7 @@ pub enum BundleFormat {
     Html,
     Markdown,
     Json,
-    Cxml,
+    Xml,
     Repomix,
 }
 
@@ -39,7 +39,7 @@ impl std::fmt::Display for BundleFormat {
             BundleFormat::Html => write!(f, "html"),
             BundleFormat::Markdown => write!(f, "markdown"),
             BundleFormat::Json => write!(f, "json"),
-            BundleFormat::Cxml => write!(f, "cxml"),
+            BundleFormat::Xml => write!(f, "xml"),
             BundleFormat::Repomix => write!(f, "repomix"),
         }
     }
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(BundleFormat::Html.to_string(), "html");
         assert_eq!(BundleFormat::Markdown.to_string(), "markdown");
         assert_eq!(BundleFormat::Json.to_string(), "json");
-        assert_eq!(BundleFormat::Cxml.to_string(), "cxml");
+        assert_eq!(BundleFormat::Xml.to_string(), "xml");
         assert_eq!(BundleFormat::Repomix.to_string(), "repomix");
     }
 
@@ -202,7 +202,7 @@ mod tests {
             BundleFormat::Html,
             BundleFormat::Markdown,
             BundleFormat::Json,
-            BundleFormat::Cxml,
+            BundleFormat::Xml,
             BundleFormat::Repomix,
         ];
 

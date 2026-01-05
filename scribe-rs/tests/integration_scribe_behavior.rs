@@ -383,7 +383,7 @@ async fn test_cli_exclude_tests_flag() {
         .args([
             "run",
             "--package",
-            "scribe",
+            "scribe-cli",
             "--bin",
             "scribe",
             "--",
@@ -416,7 +416,7 @@ async fn test_cli_exclude_tests_flag() {
         .args([
             "run",
             "--package",
-            "scribe",
+            "scribe-cli",
             "--bin",
             "scribe",
             "--",

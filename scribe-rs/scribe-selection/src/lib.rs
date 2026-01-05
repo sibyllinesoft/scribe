@@ -23,8 +23,8 @@ pub use ast_parser::{
 pub use bundler::{BundleOptions, CodeBundle, CodeBundler};
 pub use context::{CodeContext, ContextExtractor, ContextFile, ContextOptions};
 pub use covering_set::{
-    CoveringSetComputer, CoveringSetFile, CoveringSetOptions, CoveringSetResult,
-    CoveringSetStatistics, InclusionReason,
+    CoveringSetComputer, CoveringSetEntity, CoveringSetFile, CoveringSetGranularity,
+    CoveringSetOptions, CoveringSetResult, CoveringSetStatistics, InclusionReason, LineRange,
 };
 pub use simple_router::{
     ProjectSize, RoutingDecision, SelectionStrategy, SimpleRouter, TimeConstraint,
@@ -37,7 +37,7 @@ pub use quota::{
     QuotaScanResult,
 };
 pub use selector::{CodeSelector, SelectionCriteria, SelectionResult};
-pub use token_budget::apply_token_budget_selection;
+pub use token_budget::{apply_token_budget_selection, SelectionConfig};
 pub use weighting::FileWeights;
 pub use two_pass::{
     CoverageGap, FileInfo, SelectionContext, SelectionMetrics, SelectionRule, TwoPassConfig,
