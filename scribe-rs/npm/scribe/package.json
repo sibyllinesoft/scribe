@@ -1,0 +1,38 @@
+{
+  "name": "@sibyllinesoft/scribe",
+  "version": "0.5.1",
+  "description": "Intelligent code context for AI agents - surgical code retrieval with dependency resolution",
+  "keywords": [
+    "code-analysis",
+    "ai-agents",
+    "llm",
+    "context",
+    "dependency-graph",
+    "rust"
+  ],
+  "homepage": "https://github.com/sibyllinesoft/scribe",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sibyllinesoft/scribe.git"
+  },
+  "license": "MIT OR Apache-2.0",
+  "author": "Sibylline Software",
+  "main": "index.js",
+  "bin": {
+    "scribe": "bin/scribe"
+  },
+  "files": [
+    "bin",
+    "index.js"
+  ],
+  "optionalDependencies": {
+    "@sibyllinesoft/scribe-darwin-arm64": "0.5.1",
+    "@sibyllinesoft/scribe-darwin-x64": "0.5.1",
+    "@sibyllinesoft/scribe-linux-arm64": "0.5.1",
+    "@sibyllinesoft/scribe-linux-x64": "0.5.1",
+    "@sibyllinesoft/scribe-win32-x64": "0.5.1"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}

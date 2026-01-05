@@ -1,0 +1,15 @@
+{
+  "name": "@sibyllinesoft/scribe-win32-x64",
+  "version": "0.5.1",
+  "description": "Scribe binary for Windows x64",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sibyllinesoft/scribe.git"
+  },
+  "license": "MIT OR Apache-2.0",
+  "author": "Sibylline Software",
+  "preferUnplugged": true,
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin"]
+}

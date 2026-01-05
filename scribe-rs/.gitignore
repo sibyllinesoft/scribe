@@ -5,6 +5,7 @@
 !templates/*.html
 *.xml
 *.json
+!npm/**/package.json
 perf.data*
 scribe-output.*
 scribe-analysis.*
