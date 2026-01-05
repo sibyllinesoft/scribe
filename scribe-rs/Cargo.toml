@@ -172,11 +172,11 @@ dashmap = "5.5"
 once_cell = "1.19"
 parking_lot = "0.12"
 
-# Git integration
-git2 = "0.18"
+# Git integration (vendored-openssl for cross-compilation)
+git2 = { version = "0.18", features = ["vendored-openssl"] }
 
 # HTTP client for GitHub cloning
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "native-tls-vendored"] }
 
 # HTML generation and templating
 handlebars = "4.5"
