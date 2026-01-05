@@ -1,0 +1,6 @@
+# Ignore binary files (added during CI build)
+*/bin/scribe
+*/bin/scribe.exe
+
+# Keep the bin directories
+!*/bin/.gitkeep

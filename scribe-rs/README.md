@@ -154,6 +154,18 @@ pub fn create_session(user_id: UserId) -> Result<Session> {
 
 ## Installation
 
+### npm (Recommended)
+
+```bash
+# Install globally
+npm install -g @sibyllinesoft/scribe
+
+# Or use directly with npx
+npx @sibyllinesoft/scribe --help
+```
+
+### Cargo
+
 ```bash
 # From crates.io
 cargo install scribe-cli

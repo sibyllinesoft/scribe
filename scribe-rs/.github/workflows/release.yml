@@ -49,18 +49,25 @@ jobs:
         prerelease: ${{ contains(steps.get_version.outputs.version, '-') }}
         body: |
           Release ${{ steps.get_version.outputs.version }}
-          
+
           ## What's Changed
-          
+
           - See commit history for detailed changes
-          
+
           ## Installation
-          
+
+          ### npm (Recommended)
+          ```bash
+          npm install -g @sibyllinesoft/scribe
+          # or use directly with npx
+          npx @sibyllinesoft/scribe --help
+          ```
+
           ### From Source
           ```bash
           cargo install --git https://github.com/sibyllinesoft/scribe --tag ${{ steps.get_version.outputs.version }}
           ```
-          
+
           ### Pre-built Binaries
           Download the appropriate binary for your platform from the assets below.
 
@@ -73,22 +80,32 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: scribe-linux-x86_64
-            
+            npm_pkg: scribe-linux-x64
+
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             name: scribe-linux-x86_64-musl
-            
+            npm_pkg: ""
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: scribe-linux-aarch64
+            npm_pkg: scribe-linux-arm64
+
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: scribe-windows-x86_64.exe
-            
+            npm_pkg: scribe-win32-x64
+
           - target: x86_64-apple-darwin
             os: macos-latest
             name: scribe-macos-x86_64
-            
+            npm_pkg: scribe-darwin-x64
+
           - target: aarch64-apple-darwin
             os: macos-latest
             name: scribe-macos-aarch64
+            npm_pkg: scribe-darwin-arm64
             
     runs-on: ${{ matrix.os }}
     steps:
@@ -103,6 +120,14 @@ jobs:
     - name: Install musl tools (Linux musl only)
       if: matrix.target == 'x86_64-unknown-linux-musl'
       run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+    - name: Install cross-compilation tools (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+        echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
+        echo "linker = \"aarch64-linux-gnu-gcc\"" >> ~/.cargo/config.toml
       
     - name: Cache Cargo registry
       uses: actions/cache@v4
@@ -165,6 +190,102 @@ jobs:
         asset_path: ./${{ matrix.name }}.zip
         asset_name: ${{ matrix.name }}.zip
         asset_content_type: application/zip
+
+    - name: Upload binary for npm (Unix)
+      if: matrix.npm_pkg != '' && matrix.os != 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.npm_pkg }}
+        path: target/${{ matrix.target }}/release/scribe
+        if-no-files-found: error
+
+    - name: Upload binary for npm (Windows)
+      if: matrix.npm_pkg != '' && matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.npm_pkg }}
+        path: target/${{ matrix.target }}/release/scribe.exe
+        if-no-files-found: error
+
+  publish-npm:
+    name: Publish to npm
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    if: ${{ !contains(needs.create-release.outputs.version, '-') }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Prepare npm packages
+      run: |
+        VERSION="${{ needs.create-release.outputs.version }}"
+        VERSION="${VERSION#v}"  # Remove 'v' prefix
+
+        echo "Preparing npm packages for version ${VERSION}"
+
+        # Update version in all package.json files
+        for pkg in scribe scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64; do
+          if [ -f "npm/${pkg}/package.json" ]; then
+            jq --arg v "$VERSION" '.version = $v' "npm/${pkg}/package.json" > tmp.json && mv tmp.json "npm/${pkg}/package.json"
+            # Also update optionalDependencies versions for main package
+            if [ "$pkg" = "scribe" ]; then
+              jq --arg v "$VERSION" '.optionalDependencies |= with_entries(.value = $v)' "npm/${pkg}/package.json" > tmp.json && mv tmp.json "npm/${pkg}/package.json"
+            fi
+          fi
+        done
+
+        # Copy binaries to npm packages
+        for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+          if [ -d "artifacts/scribe-${platform}" ]; then
+            cp "artifacts/scribe-${platform}/scribe" "npm/scribe-${platform}/bin/scribe"
+            chmod +x "npm/scribe-${platform}/bin/scribe"
+            echo "Copied binary for ${platform}"
+          fi
+        done
+
+        # Windows binary
+        if [ -d "artifacts/scribe-win32-x64" ]; then
+          cp "artifacts/scribe-win32-x64/scribe.exe" "npm/scribe-win32-x64/bin/scribe.exe"
+          echo "Copied binary for win32-x64"
+        fi
+
+        # List contents for verification
+        echo "Package contents:"
+        for pkg in scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64; do
+          echo "=== npm/${pkg} ==="
+          ls -la "npm/${pkg}/bin/" || echo "No bin directory"
+        done
+
+    - name: Publish platform packages to npm
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        for pkg in scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64; do
+          echo "Publishing @sibyllinesoft/${pkg}..."
+          cd "npm/${pkg}"
+          npm publish --access public || echo "Failed to publish ${pkg} (may already exist)"
+          cd ../..
+        done
+
+    - name: Publish main package to npm
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        echo "Publishing @sibyllinesoft/scribe..."
+        cd npm/scribe
+        npm publish --access public
+        cd ../..
 
   publish-crates:
     name: Publish to crates.io
@@ -256,7 +377,7 @@ jobs:
   release-summary:
     name: Release Summary
     runs-on: ubuntu-latest
-    needs: [create-release, build, publish-crates, docker]
+    needs: [create-release, build, publish-crates, publish-npm, docker]
     if: always()
     steps:
     - name: Release summary
@@ -268,6 +389,7 @@ jobs:
         echo "| Release Created | ${{ needs.create-release.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Binaries Built | ${{ needs.build.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Crates.io Publish | ${{ needs.publish-crates.result == 'success' && '✅ Success' || (needs.publish-crates.result == 'skipped' && '⏭️ Skipped (prerelease)' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| npm Publish | ${{ needs.publish-npm.result == 'success' && '✅ Success' || (needs.publish-npm.result == 'skipped' && '⏭️ Skipped (prerelease)' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Docker Image | ${{ needs.docker.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "🚀 Release ${{ needs.create-release.outputs.version }} completed!" >> $GITHUB_STEP_SUMMARY
