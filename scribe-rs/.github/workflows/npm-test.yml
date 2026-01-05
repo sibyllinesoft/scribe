@@ -1,0 +1,152 @@
+name: Test npm Publishing
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no actual publish)'
+        required: true
+        default: true
+        type: boolean
+      version:
+        description: 'Version to test (e.g., 0.5.1)'
+        required: true
+        default: '0.5.1'
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.npm_pkg }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_pkg: scribe-linux-x64
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_pkg: scribe-linux-arm64
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            npm_pkg: scribe-win32-x64
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            npm_pkg: scribe-darwin-x64
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            npm_pkg: scribe-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install cross-compilation tools (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+        echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
+        echo "linker = \"aarch64-linux-gnu-gcc\"" >> ~/.cargo/config.toml
+
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }} --bin scribe
+
+    - name: Upload binary (Unix)
+      if: matrix.os != 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.npm_pkg }}
+        path: target/${{ matrix.target }}/release/scribe
+
+    - name: Upload binary (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.npm_pkg }}
+        path: target/${{ matrix.target }}/release/scribe.exe
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Prepare packages
+      run: |
+        VERSION="${{ inputs.version }}"
+        echo "Preparing version ${VERSION}"
+
+        # Update versions
+        for pkg in scribe scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64; do
+          jq --arg v "$VERSION" '.version = $v' "npm/${pkg}/package.json" > tmp.json && mv tmp.json "npm/${pkg}/package.json"
+          if [ "$pkg" = "scribe" ]; then
+            jq --arg v "$VERSION" '.optionalDependencies |= with_entries(.value = $v)' "npm/${pkg}/package.json" > tmp.json && mv tmp.json "npm/${pkg}/package.json"
+          fi
+        done
+
+        # Copy binaries
+        for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+          cp "artifacts/scribe-${platform}/scribe" "npm/scribe-${platform}/bin/scribe"
+          chmod +x "npm/scribe-${platform}/bin/scribe"
+        done
+        cp "artifacts/scribe-win32-x64/scribe.exe" "npm/scribe-win32-x64/bin/scribe.exe"
+
+        # Show package contents
+        echo "=== Package sizes ==="
+        for pkg in scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64; do
+          size=$(du -sh "npm/${pkg}/bin/"* | cut -f1)
+          echo "${pkg}: ${size}"
+        done
+
+    - name: Publish (dry run)
+      if: inputs.dry_run
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        echo "=== DRY RUN - Not actually publishing ==="
+        for pkg in scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64 scribe; do
+          echo "Would publish @sibyllinesoft/${pkg}..."
+          cd "npm/${pkg}"
+          npm publish --access public --dry-run
+          cd ../..
+        done
+
+    - name: Publish (real)
+      if: ${{ !inputs.dry_run }}
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        for pkg in scribe-darwin-arm64 scribe-darwin-x64 scribe-linux-arm64 scribe-linux-x64 scribe-win32-x64; do
+          echo "Publishing @sibyllinesoft/${pkg}..."
+          cd "npm/${pkg}"
+          npm publish --access public || echo "Failed (may already exist)"
+          cd ../..
+        done
+
+        echo "Publishing @sibyllinesoft/scribe..."
+        cd npm/scribe
+        npm publish --access public
