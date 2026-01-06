@@ -295,14 +295,16 @@ fn apply_selected_candidates(
     }
 }
 
+/// Keywords indicating critical documentation files
+const CRITICAL_DOC_KEYWORDS: &[&str] = &["architecture", "design", "api", "spec"];
+
+/// Specific critical doc filenames
+const CRITICAL_DOC_FILES: &[&str] = &["changelog.md", "contributing.md"];
+
 /// Check if a documentation file is critical
 fn is_critical_doc(path_lower: &str) -> bool {
-    path_lower.contains("architecture")
-        || path_lower.contains("design")
-        || path_lower.contains("api")
-        || path_lower.contains("spec")
-        || path_lower.ends_with("changelog.md")
-        || path_lower.ends_with("contributing.md")
+    CRITICAL_DOC_KEYWORDS.iter().any(|kw| path_lower.contains(kw))
+        || CRITICAL_DOC_FILES.iter().any(|f| path_lower.ends_with(f))
 }
 
 /// Select documentation files with priority for critical docs

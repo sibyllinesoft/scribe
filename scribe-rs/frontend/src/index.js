@@ -116,11 +116,8 @@ class ScribeFileTree {
     return rootNodes;
   }
 
-  // Checkbox management methods
-  updateFolderCheckboxState(nodeMap, folderPath) {
-    const folder = nodeMap.get(folderPath);
-    if (!folder || !folder.children) return;
-
+  // Count checked children and check for indeterminate states
+  countChildrenCheckboxStates(folder) {
     let checkedCount = 0;
     let totalCount = 0;
     let hasIndeterminate = false;
@@ -128,7 +125,7 @@ class ScribeFileTree {
     for (const child of folder.children) {
       totalCount++;
       const childState = this.checkboxStates.get(child.path);
-      
+
       if (childState.checked) {
         checkedCount++;
       } else if (childState.indeterminate) {
@@ -136,17 +133,31 @@ class ScribeFileTree {
       }
     }
 
-    const folderState = this.checkboxStates.get(folderPath);
+    return { checkedCount, totalCount, hasIndeterminate };
+  }
+
+  // Calculate folder checkbox state based on children
+  calculateFolderState(checkedCount, totalCount, hasIndeterminate) {
     if (checkedCount === totalCount && totalCount > 0) {
-      folderState.checked = true;
-      folderState.indeterminate = false;
-    } else if (checkedCount > 0 || hasIndeterminate) {
-      folderState.checked = false;
-      folderState.indeterminate = true;
-    } else {
-      folderState.checked = false;
-      folderState.indeterminate = false;
+      return { checked: true, indeterminate: false };
     }
+    if (checkedCount > 0 || hasIndeterminate) {
+      return { checked: false, indeterminate: true };
+    }
+    return { checked: false, indeterminate: false };
+  }
+
+  // Checkbox management methods
+  updateFolderCheckboxState(nodeMap, folderPath) {
+    const folder = nodeMap.get(folderPath);
+    if (!folder || !folder.children) return;
+
+    const { checkedCount, totalCount, hasIndeterminate } = this.countChildrenCheckboxStates(folder);
+    const folderState = this.checkboxStates.get(folderPath);
+    const newState = this.calculateFolderState(checkedCount, totalCount, hasIndeterminate);
+
+    folderState.checked = newState.checked;
+    folderState.indeterminate = newState.indeterminate;
   }
 
   updateAllParentStates(nodeMap, path) {

@@ -11,7 +11,8 @@ pub use positioning::{
     ContextPositioner, ContextPositioning, ContextPositioningConfig, PositionedSelection,
 };
 pub use selector::{
-    ScalingSelectionConfig, ScalingSelectionResult, ScalingSelector, SelectionAlgorithm,
+    FileCategory, ScalingSelectionConfig, ScalingSelectionResult, ScalingSelector,
+    SelectionAlgorithm,
 };
 pub use signatures::{SignatureConfig, SignatureLevel};
 pub use utils::classify_file_type_string;

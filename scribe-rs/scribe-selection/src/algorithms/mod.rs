@@ -17,8 +17,8 @@ pub use demotion::{
     ChunkInfo, CodeChunker, DemotionEngine, DemotionResult, FidelityMode, SignatureExtractor,
 };
 pub use quota::{
-    create_quota_manager, CategoryQuota, FileCategory, QuotaAllocation, QuotaManager,
-    QuotaScanResult,
+    create_quota_manager, CategoryDetector, CategoryQuota, FileCategory, QuotaAllocation,
+    QuotaManager, QuotaScanResult,
 };
 pub use simple_router::{
     ProjectSize, RoutingDecision, SelectionStrategy, SimpleRouter, TimeConstraint,

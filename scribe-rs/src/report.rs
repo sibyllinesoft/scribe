@@ -1,3 +1,9 @@
+//! Report generation utilities for Scribe output.
+//!
+//! This module provides functionality to generate reports in multiple formats
+//! including HTML, JSON, XML, Markdown, and plain text. Reports contain
+//! file selection results along with associated metrics and scores.
+
 use chrono::{DateTime, Local, Utc};
 use handlebars::Handlebars;
 use serde_json::json;
@@ -47,6 +53,15 @@ pub struct SelectionMetrics {
     pub relevance_score: f64,
 }
 
+/// Generates a report in the specified format from selected files and metrics.
+///
+/// # Arguments
+/// * `format` - The output format (HTML, JSON, XML, Markdown, or Text)
+/// * `files` - The list of selected files with their content and scores
+/// * `metrics` - Summary metrics about the selection process
+///
+/// # Returns
+/// The generated report as a string, or an error if generation fails.
 pub fn generate_report(
     format: ReportFormat,
     files: &[ReportFile],
@@ -128,6 +143,9 @@ fn build_html_template_data(files: &[ReportFile], metrics: &SelectionMetrics) ->
     })
 }
 
+/// Generates an HTML report with syntax highlighting and interactive features.
+///
+/// Uses a CDN-based template for smaller output size by loading highlight.js externally.
 pub fn generate_html_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -160,6 +178,9 @@ fn write_repomix_file(output: &mut String, file: &ReportFile) -> Result<(), Box<
     Ok(())
 }
 
+/// Generates output in Repomix-compatible markdown format.
+///
+/// Each file is wrapped in a markdown section with code blocks.
 pub fn generate_repomix_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -197,6 +218,9 @@ fn write_xml_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Generates an XML report with structured file and score information.
+///
+/// File content is wrapped in CDATA sections to preserve formatting.
 pub fn generate_xml_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -221,6 +245,9 @@ pub fn generate_xml_output(
     Ok(output)
 }
 
+/// Generates a JSON report suitable for programmatic consumption.
+///
+/// Contains summary metrics and full file details with all score fields.
 pub fn generate_json_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -264,6 +291,9 @@ fn write_text_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Generates a plain text report with simple formatting.
+///
+/// Suitable for terminal output or simple file processing.
 pub fn generate_text_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -298,6 +328,9 @@ fn write_markdown_file(output: &mut String, file: &ReportFile) -> Result<(), Box
     Ok(())
 }
 
+/// Generates a Markdown report with fenced code blocks.
+///
+/// Includes file metadata and content in a readable format.
 pub fn generate_markdown_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -316,6 +349,9 @@ pub fn generate_markdown_output(
     Ok(output)
 }
 
+/// Formats a SystemTime as a human-readable local timestamp string.
+///
+/// Returns "N/A" if the time is None.
 pub fn format_timestamp(time: Option<SystemTime>) -> String {
     match time {
         Some(ts) => {
@@ -326,6 +362,9 @@ pub fn format_timestamp(time: Option<SystemTime>) -> String {
     }
 }
 
+/// Formats a byte count as a human-readable string (e.g., "1.23 KB").
+///
+/// Uses base-1000 units (KB, MB, GB, TB).
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     if bytes == 0 {
@@ -339,6 +378,7 @@ pub fn format_bytes(bytes: u64) -> String {
     format!("{:.2} {}", value, UNITS[idx])
 }
 
+/// Formats a number with comma separators (e.g., 1,234,567).
 pub fn format_number(value: usize) -> String {
     let mut s = value.to_string();
     let mut i = s.len() as isize - 3;
@@ -437,6 +477,10 @@ fn get_extension_icon(ext: &str) -> &'static str {
     }
 }
 
+/// Returns an appropriate icon name for a file based on its name and extension.
+///
+/// Recognizes special files (README, LICENSE, Dockerfile, etc.) and common
+/// programming language extensions.
 pub fn get_file_icon(file_path: &str) -> &'static str {
     let path = Path::new(file_path);
     let ext = path

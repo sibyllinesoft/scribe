@@ -53,39 +53,57 @@ export class SimpleDebugger {
 }
 
 /**
+ * Validate required node fields
+ */
+const validateRequiredFields = (node, path, issues) => {
+  if (!node.id) issues.push(`Missing 'id' at ${path}`);
+  if (!node.name) issues.push(`Missing 'name' at ${path}`);
+  if (typeof node.isFolder !== 'boolean') issues.push(`Missing 'isFolder' at ${path}`);
+};
+
+/**
+ * Validate folder structure
+ */
+const validateFolderStructure = (node, path, warnings, validateNode, depth) => {
+  if (!Array.isArray(node.children)) {
+    warnings.push(`Folder at ${path} missing children array`);
+    return;
+  }
+  node.children.forEach((child, index) => {
+    validateNode(child, `${path}[${index}]`, depth + 1);
+  });
+};
+
+/**
+ * Validate file structure
+ */
+const validateFileStructure = (node, path, warnings) => {
+  if (node.children) {
+    warnings.push(`File at ${path} has children array (should be undefined)`);
+  }
+};
+
+/**
  * Tree data structure validator
  */
 export const validateTreeStructure = (treeData) => {
   const issues = [];
   const warnings = [];
-  
+
   if (!Array.isArray(treeData)) {
     issues.push('Tree data must be an array');
     return { valid: false, issues, warnings };
   }
 
   const validateNode = (node, path = '', depth = 0) => {
-    // Required fields
-    if (!node.id) issues.push(`Missing 'id' at ${path}`);
-    if (!node.name) issues.push(`Missing 'name' at ${path}`);
-    if (typeof node.isFolder !== 'boolean') issues.push(`Missing 'isFolder' at ${path}`);
-    
-    // Structure validation
+    validateRequiredFields(node, path, issues);
+
     if (node.isFolder) {
-      if (!Array.isArray(node.children)) {
-        warnings.push(`Folder at ${path} missing children array`);
-      } else {
-        node.children.forEach((child, index) => {
-          validateNode(child, `${path}[${index}]`, depth + 1);
-        });
-      }
+      validateFolderStructure(node, path, warnings, validateNode, depth);
     } else {
-      if (node.children) {
-        warnings.push(`File at ${path} has children array (should be undefined)`);
-      }
+      validateFileStructure(node, path, warnings);
     }
-    
-    // Depth warning
+
     if (depth > 10) {
       warnings.push(`Very deep nesting at ${path} (depth: ${depth})`);
     }
@@ -146,6 +164,47 @@ export const validateCheckboxStates = (checkboxStates, selectedFiles) => {
 };
 
 /**
+ * Check browser dependencies
+ */
+const checkBrowserDependencies = () => {
+  return {
+    React: typeof window.React !== 'undefined',
+    ReactDOM: typeof window.ReactDOM !== 'undefined',
+    ReactArborist: typeof window.ReactArborist !== 'undefined',
+    LucideReact: typeof window.LucideReact !== 'undefined',
+    ScribeFileTree: typeof window.ScribeFileTree !== 'undefined'
+  };
+};
+
+/**
+ * Check DOM capabilities
+ */
+const checkDOMCapabilities = (results) => {
+  if (typeof document === 'undefined') {
+    results.issues.push('document object not available');
+    return;
+  }
+  results.dependencies.document = true;
+  results.dependencies.getElementById = typeof document.getElementById === 'function';
+  results.dependencies.createElement = typeof document.createElement === 'function';
+};
+
+/**
+ * Report missing dependencies
+ */
+const reportMissingDependencies = (dependencies, issues, warnings) => {
+  Object.entries(dependencies).forEach(([name, available]) => {
+    if (available) return;
+
+    if (name === 'ScribeFileTree') {
+      warnings.push(`${name} not available (may be expected if not loaded yet)`);
+    } else {
+      issues.push(`${name} not available`);
+    }
+  });
+};
+
+/**
  * DOM integration checker
  */
 export const checkDOMIntegration = () => {
@@ -155,38 +214,12 @@ export const checkDOMIntegration = () => {
     warnings: [],
     dependencies: {}
   };
-  
-  // Detect environment
+
   if (typeof window !== 'undefined') {
     results.environment = 'browser';
-    
-    // Check for required globals
-    results.dependencies.React = typeof window.React !== 'undefined';
-    results.dependencies.ReactDOM = typeof window.ReactDOM !== 'undefined';
-    results.dependencies.ReactArborist = typeof window.ReactArborist !== 'undefined';
-    results.dependencies.LucideReact = typeof window.LucideReact !== 'undefined';
-    results.dependencies.ScribeFileTree = typeof window.ScribeFileTree !== 'undefined';
-    
-    // Check DOM capabilities
-    if (typeof document !== 'undefined') {
-      results.dependencies.document = true;
-      results.dependencies.getElementById = typeof document.getElementById === 'function';
-      results.dependencies.createElement = typeof document.createElement === 'function';
-    } else {
-      results.issues.push('document object not available');
-    }
-    
-    // Report missing dependencies
-    Object.entries(results.dependencies).forEach(([name, available]) => {
-      if (!available) {
-        if (name === 'ScribeFileTree') {
-          results.warnings.push(`${name} not available (may be expected if not loaded yet)`);
-        } else {
-          results.issues.push(`${name} not available`);
-        }
-      }
-    });
-    
+    results.dependencies = checkBrowserDependencies();
+    checkDOMCapabilities(results);
+    reportMissingDependencies(results.dependencies, results.issues, results.warnings);
   } else if (typeof global !== 'undefined') {
     results.environment = 'node';
     results.warnings.push('Running in Node.js environment - DOM features not available');
@@ -194,7 +227,7 @@ export const checkDOMIntegration = () => {
     results.environment = 'unknown';
     results.issues.push('Unknown JavaScript environment');
   }
-  
+
   return results;
 };
 

@@ -5,109 +5,13 @@
 
 use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{Result, ScribeError};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
+use tree_sitter::{Node, Parser, Query, QueryCursor, Tree};
 
-/// Supported programming languages for AST parsing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AstLanguage {
-    Python,
-    JavaScript,
-    TypeScript,
-    Go,
-    Rust,
-}
-
-impl AstLanguage {
-    /// Get the tree-sitter language for this language
-    pub fn tree_sitter_language(&self) -> Language {
-        match self {
-            AstLanguage::Python => tree_sitter_python::language(),
-            AstLanguage::JavaScript => tree_sitter_javascript::language(),
-            AstLanguage::TypeScript => tree_sitter_typescript::language_typescript(),
-            AstLanguage::Go => tree_sitter_go::language(),
-            AstLanguage::Rust => tree_sitter_rust::language(),
-        }
-    }
-
-    /// Detect language from file extension
-    pub fn from_extension(ext: &str) -> Option<Self> {
-        match ext.to_lowercase().as_str() {
-            "py" | "pyi" | "pyw" => Some(AstLanguage::Python),
-            "js" | "mjs" | "cjs" => Some(AstLanguage::JavaScript),
-            "ts" | "mts" | "cts" => Some(AstLanguage::TypeScript),
-            "go" => Some(AstLanguage::Go),
-            "rs" => Some(AstLanguage::Rust),
-            _ => None,
-        }
-    }
-}
-
-/// Import information extracted from AST
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AstImport {
-    /// The module being imported
-    pub module: String,
-    /// Optional alias for the import
-    pub alias: Option<String>,
-    /// Specific items being imported (for from-imports)
-    pub items: Vec<String>,
-    /// Line number where the import appears
-    pub line_number: usize,
-    /// Whether this is a relative import
-    pub is_relative: bool,
-}
-
-/// A parsed code chunk with semantic information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AstChunk {
-    /// The text content of this chunk
-    pub content: String,
-    /// Type of the chunk (function, class, import, etc.)
-    pub chunk_type: String,
-    /// Start line (1-indexed)
-    pub start_line: usize,
-    /// End line (1-indexed)  
-    pub end_line: usize,
-    /// Start byte offset
-    pub start_byte: usize,
-    /// End byte offset
-    pub end_byte: usize,
-    /// Semantic importance score (0.0-1.0)
-    pub importance_score: f64,
-    /// Estimated token count
-    pub estimated_tokens: usize,
-    /// Dependencies (other chunks this depends on)
-    pub dependencies: Vec<String>,
-    /// Name/identifier of this chunk (if applicable)
-    pub name: Option<String>,
-    /// Whether this is publicly visible
-    pub is_public: bool,
-    /// Whether this has documentation
-    pub has_documentation: bool,
-}
-
-/// Extracted signature information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AstSignature {
-    /// The signature text
-    pub signature: String,
-    /// Type of signature (function, class, interface, etc.)
-    pub signature_type: String,
-    /// Name/identifier
-    pub name: String,
-    /// Parameters (for functions/methods)
-    pub parameters: Vec<String>,
-    /// Return type (if available)
-    pub return_type: Option<String>,
-    /// Whether this is public/exported
-    pub is_public: bool,
-    /// Line number
-    pub line: usize,
-    /// Associated documentation (docstring or doc comment)
-    pub documentation: Option<String>,
-}
+// Re-export types from submodules for API compatibility
+pub use super::entity::{EntityLocation, EntityQuery, EntityType};
+pub use super::queries::{chunk_query_for_language, signature_query_for_language};
+pub use super::types::{AstChunk, AstImport, AstLanguage, AstSignature};
 
 /// Tree-sitter based AST parser and analyzer
 pub struct AstParser {
@@ -150,15 +54,7 @@ impl AstParser {
             .parse(content, None)
             .ok_or_else(|| ScribeError::parse("Failed to parse source code".to_string()))?;
 
-        let chunks = match language {
-            AstLanguage::Python => self.parse_python_chunks(content, &tree)?,
-            AstLanguage::JavaScript => self.parse_javascript_chunks(content, &tree)?,
-            AstLanguage::TypeScript => self.parse_typescript_chunks(content, &tree)?,
-            AstLanguage::Go => self.parse_go_chunks(content, &tree)?,
-            AstLanguage::Rust => self.parse_rust_chunks(content, &tree)?,
-        };
-
-        Ok(chunks)
+        self.parse_language_chunks(content, &tree, language)
     }
 
     /// Extract signatures using tree-sitter AST
@@ -288,15 +184,7 @@ impl AstParser {
             .parse(content, None)
             .ok_or_else(|| ScribeError::parse("Failed to parse source code".to_string()))?;
 
-        let signatures = match language {
-            AstLanguage::Python => self.extract_python_signatures(content, &tree)?,
-            AstLanguage::JavaScript => self.extract_javascript_signatures(content, &tree)?,
-            AstLanguage::TypeScript => self.extract_typescript_signatures(content, &tree)?,
-            AstLanguage::Go => self.extract_go_signatures(content, &tree)?,
-            AstLanguage::Rust => self.extract_rust_signatures(content, &tree)?,
-        };
-
-        Ok(signatures)
+        self.extract_language_signatures(content, &tree, language)
     }
 
     /// Detect language from file path
@@ -310,209 +198,27 @@ impl AstParser {
             .ok_or_else(|| ScribeError::parse(format!("Unsupported file extension: {}", extension)))
     }
 
-    /// Parse Python code chunks using tree-sitter
-    fn parse_python_chunks(&self, content: &str, tree: &Tree) -> Result<Vec<AstChunk>> {
-        let mut chunks = Vec::new();
+    /// Parse code chunks for a given language using tree-sitter
+    fn parse_language_chunks(
+        &self,
+        content: &str,
+        tree: &Tree,
+        language: AstLanguage,
+    ) -> Result<Vec<AstChunk>> {
+        let query_str = chunk_query_for_language(language);
+        let query = Query::new(language.tree_sitter_language(), query_str)
+            .map_err(|e| ScribeError::parse(format!("Invalid {:?} query: {}", language, e)))?;
+
         let root_node = tree.root_node();
-
-        // Query for Python constructs
-        let query_str = r#"
-            (import_statement) @import
-            (import_from_statement) @import_from
-            (function_definition) @function
-            (class_definition) @class
-            (assignment 
-                left: (identifier) @const_name
-                right: (_) @const_value
-                (#match? @const_name "^[A-Z_][A-Z0-9_]*$")
-            ) @constant
-        "#;
-
-        let query = Query::new(AstLanguage::Python.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid Python query: {}", e)))?;
-
         let mut cursor = QueryCursor::new();
         let captures = cursor.matches(&query, root_node, content.as_bytes());
 
+        let mut chunks = Vec::new();
         for match_ in captures {
             for capture in match_.captures {
                 let node = capture.node;
                 let chunk_type = &query.capture_names()[capture.index as usize];
-
-                let chunk =
-                    self.create_chunk_from_node(content, node, chunk_type, &AstLanguage::Python)?;
-                chunks.push(chunk);
-            }
-        }
-
-        // Sort by start position
-        chunks.sort_by_key(|c| c.start_byte);
-        Ok(chunks)
-    }
-
-    /// Parse JavaScript code chunks using tree-sitter
-    fn parse_javascript_chunks(&self, content: &str, tree: &Tree) -> Result<Vec<AstChunk>> {
-        let mut chunks = Vec::new();
-        let root_node = tree.root_node();
-
-        let query_str = r#"
-            (import_statement) @import
-            (export_statement) @export
-            (function_declaration) @function
-            (arrow_function) @arrow_function
-            (class_declaration) @class
-            (interface_declaration) @interface
-            (type_alias_declaration) @type_alias
-            (variable_declaration
-                declarations: (variable_declarator
-                    name: (identifier) @const_name
-                    value: (_) @const_value
-                ) @const_declarator
-                (#match? @const_name "^[A-Z_][A-Z0-9_]*$")
-            ) @constant
-        "#;
-
-        let query = Query::new(AstLanguage::JavaScript.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid JavaScript query: {}", e)))?;
-
-        let mut cursor = QueryCursor::new();
-        let captures = cursor.matches(&query, root_node, content.as_bytes());
-
-        for match_ in captures {
-            for capture in match_.captures {
-                let node = capture.node;
-                let chunk_type = &query.capture_names()[capture.index as usize];
-
-                let chunk = self.create_chunk_from_node(
-                    content,
-                    node,
-                    chunk_type,
-                    &AstLanguage::JavaScript,
-                )?;
-                chunks.push(chunk);
-            }
-        }
-
-        chunks.sort_by_key(|c| c.start_byte);
-        Ok(chunks)
-    }
-
-    /// Parse TypeScript code chunks using tree-sitter
-    fn parse_typescript_chunks(&self, content: &str, tree: &Tree) -> Result<Vec<AstChunk>> {
-        let mut chunks = Vec::new();
-        let root_node = tree.root_node();
-
-        let query_str = r#"
-            (import_statement) @import
-            (export_statement) @export
-            (function_declaration) @function
-            (arrow_function) @arrow_function
-            (class_declaration) @class
-            (interface_declaration) @interface
-            (type_alias_declaration) @type_alias
-            (enum_declaration) @enum
-            (module_declaration) @module
-            (variable_declaration
-                declarations: (variable_declarator
-                    name: (identifier) @const_name
-                    value: (_) @const_value
-                ) @const_declarator
-                (#match? @const_name "^[A-Z_][A-Z0-9_]*$")
-            ) @constant
-        "#;
-
-        let query = Query::new(AstLanguage::TypeScript.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid TypeScript query: {}", e)))?;
-
-        let mut cursor = QueryCursor::new();
-        let captures = cursor.matches(&query, root_node, content.as_bytes());
-
-        for match_ in captures {
-            for capture in match_.captures {
-                let node = capture.node;
-                let chunk_type = &query.capture_names()[capture.index as usize];
-
-                let chunk = self.create_chunk_from_node(
-                    content,
-                    node,
-                    chunk_type,
-                    &AstLanguage::TypeScript,
-                )?;
-                chunks.push(chunk);
-            }
-        }
-
-        chunks.sort_by_key(|c| c.start_byte);
-        Ok(chunks)
-    }
-
-    /// Parse Go code chunks using tree-sitter
-    fn parse_go_chunks(&self, content: &str, tree: &Tree) -> Result<Vec<AstChunk>> {
-        let mut chunks = Vec::new();
-        let root_node = tree.root_node();
-
-        let query_str = r#"
-            (package_clause) @package
-            (import_declaration) @import
-            (function_declaration) @function
-            (method_declaration) @method
-            (type_declaration) @type
-            (const_declaration) @const
-            (var_declaration) @var
-        "#;
-
-        let query = Query::new(AstLanguage::Go.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid Go query: {}", e)))?;
-
-        let mut cursor = QueryCursor::new();
-        let captures = cursor.matches(&query, root_node, content.as_bytes());
-
-        for match_ in captures {
-            for capture in match_.captures {
-                let node = capture.node;
-                let chunk_type = &query.capture_names()[capture.index as usize];
-
-                let chunk =
-                    self.create_chunk_from_node(content, node, chunk_type, &AstLanguage::Go)?;
-                chunks.push(chunk);
-            }
-        }
-
-        chunks.sort_by_key(|c| c.start_byte);
-        Ok(chunks)
-    }
-
-    /// Parse Rust code chunks using tree-sitter
-    fn parse_rust_chunks(&self, content: &str, tree: &Tree) -> Result<Vec<AstChunk>> {
-        let mut chunks = Vec::new();
-        let root_node = tree.root_node();
-
-        let query_str = r#"
-            (use_declaration) @use
-            (mod_item) @mod
-            (struct_item) @struct
-            (enum_item) @enum
-            (trait_item) @trait
-            (impl_item) @impl
-            (function_item) @function
-            (const_item) @const
-            (static_item) @static
-            (type_item) @type_alias
-        "#;
-
-        let query = Query::new(AstLanguage::Rust.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid Rust query: {}", e)))?;
-
-        let mut cursor = QueryCursor::new();
-        let captures = cursor.matches(&query, root_node, content.as_bytes());
-
-        for match_ in captures {
-            for capture in match_.captures {
-                let node = capture.node;
-                let chunk_type = &query.capture_names()[capture.index as usize];
-
-                let chunk =
-                    self.create_chunk_from_node(content, node, chunk_type, &AstLanguage::Rust)?;
+                let chunk = self.create_chunk_from_node(content, node, chunk_type, &language)?;
                 chunks.push(chunk);
             }
         }
@@ -846,216 +552,24 @@ impl AstParser {
         dependencies
     }
 
-    /// Extract signatures for Python
-    fn extract_python_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        let mut signatures = Vec::new();
+    /// Extract signatures for a given language using tree-sitter
+    fn extract_language_signatures(
+        &self,
+        content: &str,
+        tree: &Tree,
+        language: AstLanguage,
+    ) -> Result<Vec<AstSignature>> {
+        let query_str = signature_query_for_language(language);
+        let query = Query::new(language.tree_sitter_language(), query_str)
+            .map_err(|e| ScribeError::parse(format!("Invalid {:?} signature query: {}", language, e)))?;
+
         let root_node = tree.root_node();
-
-        let query_str = r#"
-            (function_definition 
-                name: (identifier) @func_name
-                parameters: (parameters) @func_params
-            ) @function
-            (class_definition 
-                name: (identifier) @class_name
-            ) @class
-            (import_statement) @import
-            (import_from_statement) @import_from
-        "#;
-
-        let query = Query::new(AstLanguage::Python.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid Python signature query: {}", e)))?;
-
         let mut cursor = QueryCursor::new();
-        let captures = cursor.matches(&query, root_node, content.as_bytes());
-
-        for match_ in captures {
-            let signature = self.extract_signature_from_match(
-                content,
-                &match_,
-                &query,
-                AstLanguage::Python,
-            )?;
-            signatures.push(signature);
-        }
-
-        Ok(signatures)
-    }
-
-    /// Extract signatures for other languages (similar pattern)
-    fn extract_javascript_signatures(
-        &self,
-        content: &str,
-        tree: &Tree,
-    ) -> Result<Vec<AstSignature>> {
-        let query_str = r#"
-            (function_declaration
-                name: (identifier) @name
-            ) @function
-
-            (arrow_function) @function
-
-            (class_declaration
-                name: (identifier) @name
-            ) @class
-
-            (import_statement) @import
-            (export_statement) @export
-        "#;
-
-        let query =
-            Query::new(AstLanguage::JavaScript.tree_sitter_language(), query_str).map_err(|e| {
-                ScribeError::parse(format!("Invalid JavaScript signature query: {}", e))
-            })?;
-
-        let root_node = tree.root_node();
-        let mut cursor = tree_sitter::QueryCursor::new();
         let matches = cursor.matches(&query, root_node, content.as_bytes());
 
         let mut signatures = Vec::new();
         for match_ in matches {
-            let signature = self.extract_signature_from_match(
-                content,
-                &match_,
-                &query,
-                AstLanguage::JavaScript,
-            )?;
-            signatures.push(signature);
-        }
-
-        Ok(signatures)
-    }
-
-    fn extract_typescript_signatures(
-        &self,
-        content: &str,
-        tree: &Tree,
-    ) -> Result<Vec<AstSignature>> {
-        let query_str = r#"
-            (function_declaration
-                name: (identifier) @name
-            ) @function
-
-            (interface_declaration
-                name: (type_identifier) @name
-            ) @interface
-
-            (type_alias_declaration
-                name: (type_identifier) @name
-            ) @type
-
-            (class_declaration
-                name: (identifier) @name
-            ) @class
-
-            (import_statement) @import
-            (export_statement) @export
-        "#;
-
-        let query =
-            Query::new(AstLanguage::TypeScript.tree_sitter_language(), query_str).map_err(|e| {
-                ScribeError::parse(format!("Invalid TypeScript signature query: {}", e))
-            })?;
-
-        let root_node = tree.root_node();
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let matches = cursor.matches(&query, root_node, content.as_bytes());
-
-        let mut signatures = Vec::new();
-        for match_ in matches {
-            let signature = self.extract_signature_from_match(
-                content,
-                &match_,
-                &query,
-                AstLanguage::TypeScript,
-            )?;
-            signatures.push(signature);
-        }
-
-        Ok(signatures)
-    }
-
-    fn extract_go_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        let query_str = r#"
-            (function_declaration
-                name: (identifier) @name
-            ) @function
-
-            (type_declaration
-                (type_spec
-                    name: (type_identifier) @name
-                )
-            ) @type
-
-            (import_declaration) @import
-            (package_clause) @package
-        "#;
-
-        let query = Query::new(AstLanguage::Go.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid Go signature query: {}", e)))?;
-
-        let root_node = tree.root_node();
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let matches = cursor.matches(&query, root_node, content.as_bytes());
-
-        let mut signatures = Vec::new();
-        for match_ in matches {
-            let signature = self.extract_signature_from_match(
-                content,
-                &match_,
-                &query,
-                AstLanguage::Go,
-            )?;
-            signatures.push(signature);
-        }
-
-        Ok(signatures)
-    }
-
-    fn extract_rust_signatures(&self, content: &str, tree: &Tree) -> Result<Vec<AstSignature>> {
-        let query_str = r#"
-            (function_item
-                name: (identifier) @name
-            ) @function
-
-            (impl_item
-                type: (type_identifier) @type_name
-            ) @impl
-
-            (struct_item
-                name: (type_identifier) @name
-            ) @struct
-
-            (enum_item
-                name: (type_identifier) @name
-            ) @enum
-
-            (trait_item
-                name: (type_identifier) @name
-            ) @trait
-
-            (mod_item
-                name: (identifier) @name
-            ) @module
-
-            (use_declaration) @use
-        "#;
-
-        let query = Query::new(AstLanguage::Rust.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid Rust signature query: {}", e)))?;
-
-        let root_node = tree.root_node();
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let matches = cursor.matches(&query, root_node, content.as_bytes());
-
-        let mut signatures = Vec::new();
-        for match_ in matches {
-            let signature = self.extract_signature_from_match(
-                content,
-                &match_,
-                &query,
-                AstLanguage::Rust,
-            )?;
+            let signature = self.extract_signature_from_match(content, &match_, &query, language)?;
             signatures.push(signature);
         }
 
@@ -1111,204 +625,25 @@ impl AstParser {
         })
     }
 
-    /// Create an AstImport from a node with name field
-    fn create_import_from_named_node(&self, child: Node, content: &str) -> Option<AstImport> {
-        let name_node = child.child_by_field_name("name")?;
-        let module = self.node_text(name_node, content);
-        let alias = child
-            .child_by_field_name("alias")
-            .map(|alias_node| self.node_text(alias_node, content));
-        let line_number = name_node.start_position().row + 1;
-
-        Some(AstImport {
-            module,
-            alias,
-            items: vec![],
-            line_number,
-            is_relative: false,
-        })
+    // Delegate to import_extractors module
+    fn extract_python_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+        super::import_extractors::extract_python_import_node(node, content, imports)
     }
 
-    /// Extract import items from an import_list node
-    fn extract_import_items(&self, list_node: Node, content: &str) -> Vec<String> {
-        let mut items = Vec::new();
-        for j in 0..list_node.child_count() {
-            if let Some(item) = list_node.child(j) {
-                if item.kind() == "dotted_name" || item.kind() == "identifier" {
-                    items.push(self.node_text(item, content));
-                }
-            }
-        }
-        items
+    fn extract_js_ts_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+        super::import_extractors::extract_js_ts_import_node(node, content, imports)
     }
 
-    /// Extract Python import from a single node (optimized, no recursion)
-    fn extract_python_import_node(
-        &self,
-        node: Node,
-        content: &str,
-        imports: &mut Vec<AstImport>,
-    ) -> Result<()> {
-        match node.kind() {
-            "import_statement" => {
-                self.extract_python_simple_import(node, content, imports);
-            }
-            "import_from_statement" => {
-                self.extract_python_from_import(node, content, imports);
-            }
-            _ => {}
-        }
-        Ok(())
+    fn extract_go_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+        super::import_extractors::extract_go_import_node(node, content, imports)
     }
 
-    /// Extract simple Python import statement (import os, import sys as system)
-    fn extract_python_simple_import(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) {
-        for i in 0..node.child_count() {
-            let Some(child) = node.child(i) else { continue };
-
-            match child.kind() {
-                "aliased_import" | "dotted_as_name" => {
-                    if let Some(import) = self.create_import_from_named_node(child, content) {
-                        imports.push(import);
-                    }
-                }
-                "dotted_name" | "identifier" => {
-                    let module = self.node_text(child, content);
-                    let line_number = child.start_position().row + 1;
-                    imports.push(AstImport {
-                        module,
-                        alias: None,
-                        items: vec![],
-                        line_number,
-                        is_relative: false,
-                    });
-                }
-                _ => {}
-            }
-        }
+    fn extract_rust_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+        super::import_extractors::extract_rust_import_node(node, content, imports)
     }
 
-    /// Extract Python from-import statement (from x import y)
-    fn extract_python_from_import(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) {
-        let mut module = String::new();
-        let mut is_relative = false;
-
-        if let Some(module_node) = node.child_by_field_name("module_name") {
-            module = self.node_text(module_node, content);
-            is_relative = module.starts_with('.');
-        }
-
-        let mut items = Vec::new();
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                if child.kind() == "import_list" {
-                    items = self.extract_import_items(child, content);
-                    break;
-                }
-            }
-        }
-
-        let line_number = node.start_position().row + 1;
-        imports.push(AstImport {
-            module,
-            alias: None,
-            items,
-            line_number,
-            is_relative,
-        });
-    }
-
-    /// Extract JavaScript/TypeScript import from a single node (optimized, no recursion)
-    fn extract_js_ts_import_node(
-        &self,
-        node: Node,
-        content: &str,
-        imports: &mut Vec<AstImport>,
-    ) -> Result<()> {
-        if node.kind() == "import_statement" {
-            let mut module = String::new();
-            let items = Vec::new();
-
-            // Find the source
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    if child.kind() == "string" {
-                        module = self.node_text(child, content);
-                        // Remove quotes
-                        module = module.trim_matches('"').trim_matches('\'').to_string();
-                        break;
-                    }
-                }
-            }
-
-            let line_number = node.start_position().row + 1;
-            imports.push(AstImport {
-                module,
-                alias: None,
-                items,
-                line_number,
-                is_relative: false,
-            });
-        }
-        Ok(())
-    }
-
-    /// Extract Go import from a single node (optimized, no recursion)
-    fn extract_go_import_node(
-        &self,
-        node: Node,
-        content: &str,
-        imports: &mut Vec<AstImport>,
-    ) -> Result<()> {
-        if node.kind() == "import_spec" {
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    if child.kind() == "interpreted_string_literal" {
-                        let module = self.node_text(child, content);
-                        let module = module.trim_matches('"').to_string();
-                        let line_number = child.start_position().row + 1;
-
-                        imports.push(AstImport {
-                            module,
-                            alias: None,
-                            items: vec![],
-                            line_number,
-                            is_relative: false,
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Extract Rust import from a single node (optimized, no recursion)
-    fn extract_rust_import_node(
-        &self,
-        node: Node,
-        content: &str,
-        imports: &mut Vec<AstImport>,
-    ) -> Result<()> {
-        if node.kind() == "use_declaration" {
-            if let Some(use_tree) = node.child_by_field_name("argument") {
-                let module = self.node_text(use_tree, content);
-                let line_number = node.start_position().row + 1;
-
-                imports.push(AstImport {
-                    module,
-                    alias: None,
-                    items: vec![],
-                    line_number,
-                    is_relative: false,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Helper to extract text from a node
     fn node_text(&self, node: Node, content: &str) -> String {
-        content[node.start_byte()..node.end_byte()].to_string()
+        super::import_extractors::node_text(node, content)
     }
 
     /// Search for entities (functions, classes, etc.) by name within parsed content
@@ -1387,207 +722,6 @@ impl AstParser {
     }
 }
 
-/// Entity type for search queries
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EntityType {
-    Function,
-    Class,
-    Module,
-    Interface,
-    Constant,
-    Any,
-}
-
-/// Query for finding entities
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityQuery {
-    /// Type of entity to search for (None means any type)
-    pub entity_type: Option<EntityType>,
-    /// Name pattern to match (None means any name)
-    pub name_pattern: Option<String>,
-    /// Whether to match name exactly (vs substring)
-    pub exact_match: bool,
-    /// Only return public/exported entities
-    pub public_only: Option<bool>,
-    /// File path pattern to filter by (None means any file)
-    pub file_pattern: Option<String>,
-}
-
-impl EntityQuery {
-    /// Parse a query string in the format "file" or "file:entity"
-    ///
-    /// The rightmost colon separates file from entity, with special handling
-    /// for Windows drive letters (single char before lone colon).
-    ///
-    /// Examples:
-    /// - "src/auth.rs" -> file only, no entity
-    /// - "src/auth.rs:login" -> file with entity
-    /// - "C:\path\file.rs" -> Windows path, file only (single colon after drive letter)
-    /// - "C:\path\file.rs:login" -> Windows path with entity (rightmost colon)
-    pub fn parse(query: &str) -> Self {
-        let colon_count = query.matches(':').count();
-
-        if colon_count == 0 {
-            // No colon: entire string is a file path
-            Self::for_file(query)
-        } else if colon_count == 1 {
-            // Single colon: check for Windows drive letter
-            if let Some((before, after)) = query.split_once(':') {
-                if before.len() == 1 && before.chars().next().unwrap().is_ascii_alphabetic() {
-                    // Windows drive letter (e.g., "C:\path") - whole thing is file
-                    Self::for_file(query)
-                } else {
-                    // file:entity format
-                    Self::for_file_entity(before, after)
-                }
-            } else {
-                Self::for_file(query)
-            }
-        } else {
-            // Multiple colons: rightmost colon is the separator
-            if let Some((file_part, entity_part)) = query.rsplit_once(':') {
-                Self::for_file_entity(file_part, entity_part)
-            } else {
-                Self::for_file(query)
-            }
-        }
-    }
-
-    /// Create a query for a file only (no specific entity)
-    pub fn for_file(file: &str) -> Self {
-        Self {
-            entity_type: None,
-            name_pattern: None,
-            exact_match: false,
-            public_only: None,
-            file_pattern: Some(file.to_string()),
-        }
-    }
-
-    /// Create a query for a specific entity within a file
-    pub fn for_file_entity(file: &str, entity: &str) -> Self {
-        Self {
-            entity_type: None,
-            name_pattern: Some(entity.to_string()),
-            exact_match: false,
-            public_only: None,
-            file_pattern: Some(file.to_string()),
-        }
-    }
-
-    /// Create a query for any entity with a specific name (searches all files)
-    pub fn by_name(name: &str) -> Self {
-        Self {
-            entity_type: None,
-            name_pattern: Some(name.to_string()),
-            exact_match: false,
-            public_only: None,
-            file_pattern: None,
-        }
-    }
-
-    /// Create a query for a specific entity type
-    pub fn by_type(entity_type: EntityType) -> Self {
-        Self {
-            entity_type: Some(entity_type),
-            name_pattern: None,
-            exact_match: false,
-            public_only: None,
-            file_pattern: None,
-        }
-    }
-
-    /// Create a query for a specific function by name
-    pub fn function(name: &str) -> Self {
-        Self {
-            entity_type: Some(EntityType::Function),
-            name_pattern: Some(name.to_string()),
-            exact_match: false,
-            public_only: None,
-            file_pattern: None,
-        }
-    }
-
-    /// Create a query for a specific class/struct by name
-    pub fn class(name: &str) -> Self {
-        Self {
-            entity_type: Some(EntityType::Class),
-            name_pattern: Some(name.to_string()),
-            exact_match: false,
-            public_only: None,
-            file_pattern: None,
-        }
-    }
-
-    /// Create a query for a specific module by path
-    pub fn module(path: &str) -> Self {
-        Self {
-            entity_type: Some(EntityType::Module),
-            name_pattern: Some(path.to_string()),
-            exact_match: false,
-            public_only: None,
-            file_pattern: None,
-        }
-    }
-
-    /// Filter to a specific file or file pattern
-    pub fn in_file(mut self, file_pattern: &str) -> Self {
-        self.file_pattern = Some(file_pattern.to_string());
-        self
-    }
-
-    /// Set whether to match exactly
-    pub fn exact(mut self) -> Self {
-        self.exact_match = true;
-        self
-    }
-
-    /// Only match public/exported entities
-    pub fn public(mut self) -> Self {
-        self.public_only = Some(true);
-        self
-    }
-
-    /// Check if a file path matches the file pattern (if any)
-    pub fn matches_file(&self, file_path: &str) -> bool {
-        match &self.file_pattern {
-            None => true, // No pattern means match all files
-            Some(pattern) => {
-                let pattern_lower = pattern.to_lowercase();
-                let path_lower = file_path.to_lowercase();
-                // Match if the file path contains the pattern
-                path_lower.contains(&pattern_lower)
-            }
-        }
-    }
-}
-
-/// Location of an entity in the codebase
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityLocation {
-    /// File path containing the entity
-    pub file_path: String,
-    /// Type of entity (function, class, etc.)
-    pub entity_type: String,
-    /// Name of the entity
-    pub entity_name: String,
-    /// Start line number (1-indexed)
-    pub start_line: usize,
-    /// End line number (1-indexed)
-    pub end_line: usize,
-    /// Whether this entity is public/exported
-    pub is_public: bool,
-    /// Full content of the entity
-    pub content: String,
-}
-
-impl EntityLocation {
-    /// Get a unique identifier for this entity
-    pub fn identifier(&self) -> String {
-        format!("{}::{}", self.file_path, self.entity_name)
-    }
-}
-
 impl Default for AstParser {
     fn default() -> Self {
         Self::new().expect("Failed to create AstParser")
@@ -1595,158 +729,5 @@ impl Default for AstParser {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ast_parser_creation() {
-        let parser = AstParser::new();
-        assert!(parser.is_ok());
-    }
-
-    #[test]
-    fn test_language_detection() {
-        assert_eq!(AstLanguage::from_extension("py"), Some(AstLanguage::Python));
-        assert_eq!(
-            AstLanguage::from_extension("js"),
-            Some(AstLanguage::JavaScript)
-        );
-        assert_eq!(
-            AstLanguage::from_extension("ts"),
-            Some(AstLanguage::TypeScript)
-        );
-        assert_eq!(AstLanguage::from_extension("go"), Some(AstLanguage::Go));
-        assert_eq!(AstLanguage::from_extension("rs"), Some(AstLanguage::Rust));
-        assert_eq!(AstLanguage::from_extension("unknown"), None);
-    }
-
-    #[test]
-    fn test_python_parsing() {
-        let mut parser = AstParser::new().unwrap();
-        let content = r#"
-import os
-import sys
-
-def hello_world():
-    """A simple function."""
-    print("Hello, world!")
-
-class Calculator:
-    """A simple calculator."""
-    
-    def add(self, a, b):
-        return a + b
-"#;
-
-        let chunks = parser.parse_chunks(content, "test.py").unwrap();
-        assert!(!chunks.is_empty());
-
-        // Should find imports, function, and class
-        let chunk_types: Vec<&str> = chunks.iter().map(|c| c.chunk_type.as_str()).collect();
-        assert!(chunk_types.contains(&"import"));
-        assert!(chunk_types.contains(&"function"));
-        assert!(chunk_types.contains(&"class"));
-    }
-
-    #[test]
-    fn test_rust_parsing() {
-        let mut parser = AstParser::new().unwrap();
-        let content = r#"
-use std::collections::HashMap;
-
-pub struct DataProcessor {
-    data: HashMap<String, i32>,
-}
-
-impl DataProcessor {
-    pub fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-        }
-    }
-}
-"#;
-
-        let chunks = parser.parse_chunks(content, "test.rs").unwrap();
-        assert!(!chunks.is_empty());
-
-        let chunk_types: Vec<&str> = chunks.iter().map(|c| c.chunk_type.as_str()).collect();
-        assert!(chunk_types.contains(&"use"));
-        assert!(chunk_types.contains(&"struct"));
-        assert!(chunk_types.contains(&"impl"));
-    }
-
-    #[test]
-    fn test_signature_extraction() {
-        let mut parser = AstParser::new().unwrap();
-        let content = r#"
-def calculate(a: int, b: int) -> int:
-    return a + b
-
-class Calculator:
-    def multiply(self, x, y):
-        return x * y
-"#;
-
-        let signatures = parser.extract_signatures(content, "test.py").unwrap();
-        assert!(!signatures.is_empty());
-    }
-
-    #[test]
-    fn test_entity_query_parse_file_only() {
-        // No colon: entire string is a file path
-        let query = EntityQuery::parse("src/auth.rs");
-        assert!(query.name_pattern.is_none());
-        assert_eq!(query.file_pattern, Some("src/auth.rs".to_string()));
-    }
-
-    #[test]
-    fn test_entity_query_parse_file_entity() {
-        // file:entity format
-        let query = EntityQuery::parse("src/auth.rs:login");
-        assert_eq!(query.name_pattern, Some("login".to_string()));
-        assert_eq!(query.file_pattern, Some("src/auth.rs".to_string()));
-    }
-
-    #[test]
-    fn test_entity_query_parse_windows_file_only() {
-        // Windows path with single colon (drive letter) - file only
-        let query = EntityQuery::parse(r"C:\project\auth.rs");
-        assert!(query.name_pattern.is_none());
-        assert_eq!(query.file_pattern, Some(r"C:\project\auth.rs".to_string()));
-    }
-
-    #[test]
-    fn test_entity_query_parse_windows_file_entity() {
-        // Windows path with entity (multiple colons, rightmost is separator)
-        let query = EntityQuery::parse(r"C:\project\auth.rs:login");
-        assert_eq!(query.name_pattern, Some("login".to_string()));
-        assert_eq!(query.file_pattern, Some(r"C:\project\auth.rs".to_string()));
-    }
-
-    #[test]
-    fn test_entity_query_parse_simple_file_entity() {
-        // Simple file:entity without path separators
-        let query = EntityQuery::parse("auth:UserService");
-        assert_eq!(query.name_pattern, Some("UserService".to_string()));
-        assert_eq!(query.file_pattern, Some("auth".to_string()));
-    }
-
-    #[test]
-    fn test_entity_query_matches_file() {
-        let query = EntityQuery::parse("auth.rs:login");
-        assert!(query.matches_file("src/auth.rs"));
-        assert!(query.matches_file("/home/user/project/auth.rs"));
-        assert!(query.matches_file("AUTH.rs")); // case insensitive
-        assert!(!query.matches_file("src/user.rs"));
-    }
-
-    #[test]
-    fn test_entity_query_matches_file_with_pattern() {
-        // File pattern should match substring
-        let query = EntityQuery::parse("auth:login");
-        assert!(query.matches_file("src/auth/module.rs"));
-        assert!(query.matches_file("authentication.rs"));
-        assert!(!query.matches_file("src/user.rs"));
-    }
-}
+#[path = "ast_parser_tests.rs"]
+mod tests;

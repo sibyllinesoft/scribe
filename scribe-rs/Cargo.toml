@@ -110,7 +110,7 @@ comprehensive = ["core", "analysis", "graph", "scanner", "patterns", "selection"
 
 [[bin]]
 name = "scribe"
-path = "src/bin/cli.rs"
+path = "src/bin/scribe.rs"
 
 [[bin]]
 name = "test_budget_utilization"

@@ -77,3 +77,4 @@ install-*.sh
 ../test-installed.xml
 ../test_optimizations.rs
 ../tiktoken_test.rs
+.valknut/

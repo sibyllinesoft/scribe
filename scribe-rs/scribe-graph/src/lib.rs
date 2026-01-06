@@ -89,7 +89,9 @@
 
 // Core modules
 pub mod centrality;
+pub mod centrality_types;
 pub mod graph;
+pub mod import_detector;
 pub mod pagerank;
 pub mod statistics;
 

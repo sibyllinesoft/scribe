@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
+pub mod handler_helpers;
 pub mod handlers;
 pub mod server;
 pub mod types;

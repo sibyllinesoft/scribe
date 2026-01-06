@@ -42,7 +42,7 @@ pub use core::metadata::{FileMetadata, MetadataExtractor, SizeStats};
 pub use core::scanner::{ScanOptions, ScanProgress, ScanResult, Scanner};
 
 // Re-export git types
-pub use git::git_integration::{GitCommitInfo, GitFileInfo, GitIntegrator};
+pub use git::{GitCommitInfo, GitFileInfo, GitIntegrator};
 
 // Re-export analysis types
 pub use analysis::aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};

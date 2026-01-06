@@ -191,17 +191,51 @@ impl PatternMatcher {
         Ok(result)
     }
 
+    /// Check if a path is a hidden file that should be excluded
+    fn is_excluded_hidden_file(path: &Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|name| name.starts_with('.') && name != ".." && name != ".")
+            .unwrap_or(false)
+    }
+
+    /// Check gitignore patterns
+    fn check_gitignore(&mut self, path: &Path) -> Result<Option<MatchResult>> {
+        if let Some(ref mut gitignore_matcher) = self.gitignore_matcher {
+            if gitignore_matcher.is_ignored(path)? {
+                return Ok(Some(MatchResult::Ignore));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Check exclude patterns
+    fn check_exclude(&mut self, path: &Path) -> Result<Option<MatchResult>> {
+        if let Some(ref mut exclude_matcher) = self.exclude_matcher {
+            if exclude_matcher.matches(path)? {
+                return Ok(Some(MatchResult::Exclude));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Check include patterns
+    fn check_include(&mut self, path: &Path) -> Result<Option<MatchResult>> {
+        if let Some(ref mut include_matcher) = self.include_matcher {
+            if include_matcher.matches(path)? {
+                return Ok(Some(MatchResult::Include));
+            }
+            // If we have include patterns but no match, exclude by default
+            return Ok(Some(MatchResult::Exclude));
+        }
+        Ok(None)
+    }
+
     /// Compute the match result for a path
     fn compute_match(&mut self, path: &Path) -> Result<MatchResult> {
-        // Check if it's a hidden file and we're not including hidden files
-        if !self.options.include_hidden {
-            if let Some(name) = path.file_name() {
-                if let Some(name_str) = name.to_str() {
-                    if name_str.starts_with('.') && name_str != ".." && name_str != "." {
-                        return Ok(MatchResult::Exclude);
-                    }
-                }
-            }
+        // Check hidden file exclusion
+        if !self.options.include_hidden && Self::is_excluded_hidden_file(path) {
+            return Ok(MatchResult::Exclude);
         }
 
         // Priority order:
@@ -210,30 +244,18 @@ impl PatternMatcher {
         // 3. Explicit include patterns - can include
         // 4. Default behavior based on options
 
-        // Check gitignore first (highest priority)
-        if let Some(ref mut gitignore_matcher) = self.gitignore_matcher {
-            if gitignore_matcher.is_ignored(path)? {
-                return Ok(MatchResult::Ignore);
-            }
+        if let Some(result) = self.check_gitignore(path)? {
+            return Ok(result);
         }
 
-        // Check explicit exclude patterns
-        if let Some(ref mut exclude_matcher) = self.exclude_matcher {
-            if exclude_matcher.matches(path)? {
-                return Ok(MatchResult::Exclude);
-            }
+        if let Some(result) = self.check_exclude(path)? {
+            return Ok(result);
         }
 
-        // Check explicit include patterns
-        if let Some(ref mut include_matcher) = self.include_matcher {
-            if include_matcher.matches(path)? {
-                return Ok(MatchResult::Include);
-            }
-            // If we have include patterns but no match, exclude by default
-            return Ok(MatchResult::Exclude);
+        if let Some(result) = self.check_include(path)? {
+            return Ok(result);
         }
 
-        // No explicit patterns matched
         Ok(MatchResult::NoMatch)
     }
 
