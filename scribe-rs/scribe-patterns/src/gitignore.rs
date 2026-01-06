@@ -186,36 +186,9 @@ impl GitignorePattern {
         is_directory: bool,
         case_sensitive: bool,
     ) -> bool {
-        // This is a simplified implementation
-        // A full implementation would use proper gitignore pattern matching
-
+        // Handle recursive patterns with **
         if pattern.contains("**") {
-            // Handle recursive patterns
-            let parts: Vec<&str> = pattern.split("**").collect();
-            if parts.len() == 2 {
-                let prefix = parts[0];
-                let suffix = parts[1].trim_start_matches('/');
-
-                if prefix.is_empty() {
-                    // Pattern like **/suffix
-                    if suffix.contains('*') {
-                        // If suffix has wildcards, match it against path components
-                        let path_parts: Vec<&str> = path.split('/').collect();
-                        return path_parts
-                            .iter()
-                            .any(|part| self.wildcard_match(suffix, part, case_sensitive));
-                    } else {
-                        return path.ends_with(suffix) || path.contains(&format!("/{}", suffix));
-                    }
-                } else if suffix.is_empty() {
-                    // Pattern like prefix/**
-                    return path.starts_with(prefix.trim_end_matches('/'));
-                } else {
-                    // Pattern like prefix/**/suffix
-                    return path.starts_with(prefix.trim_end_matches('/'))
-                        && (path.ends_with(suffix) || path.contains(&format!("/{}", suffix)));
-                }
-            }
+            return self.matches_recursive_pattern(pattern, path, case_sensitive);
         }
 
         // Simple wildcard matching
@@ -223,53 +196,82 @@ impl GitignorePattern {
             return self.wildcard_match(pattern, path, case_sensitive);
         }
 
-        // For directory patterns, only match directories or paths inside directories
+        // Directory or exact matching
         if self.directory_only {
-            // Directory-only patterns (ending with /) should only match:
-            // 1. If the path is a directory AND matches the pattern exactly (anywhere in path for unanchored)
-            // 2. If the path is inside a directory that matches the pattern
-
-            if case_sensitive {
-                if self.anchored {
-                    // Anchored: must start with pattern/ or be exactly pattern (if directory)
-                    let dir_pattern = format!("{}/", pattern);
-                    path.starts_with(&dir_pattern) || (path == pattern && is_directory)
-                } else {
-                    // Unanchored: can match anywhere in the path
-                    let dir_pattern = format!("{}/", pattern);
-                    let component_pattern = format!("/{}", pattern);
-                    path.starts_with(&dir_pattern)
-                        || (path == pattern && is_directory)
-                        || path.contains(&dir_pattern)
-                        || (path.ends_with(&component_pattern) && is_directory)
-                }
-            } else {
-                let path_lower = path.to_ascii_lowercase();
-                let pattern_lower = pattern.to_ascii_lowercase();
-                let dir_pattern_lower = format!("{}/", pattern_lower);
-                let component_pattern_lower = format!("/{}", pattern_lower);
-
-                if self.anchored {
-                    path_lower.starts_with(&dir_pattern_lower)
-                        || (path_lower == pattern_lower && is_directory)
-                } else {
-                    path_lower.starts_with(&dir_pattern_lower)
-                        || (path_lower == pattern_lower && is_directory)
-                        || path_lower.contains(&dir_pattern_lower)
-                        || (path_lower.ends_with(&component_pattern_lower) && is_directory)
-                }
-            }
+            self.matches_directory_pattern(pattern, path, is_directory, case_sensitive)
         } else {
-            // Exact match or path component match
-            let component_pattern = format!("/{}", pattern);
-            if case_sensitive {
-                path == pattern || path.ends_with(&component_pattern)
-            } else {
-                path.to_ascii_lowercase() == pattern.to_ascii_lowercase()
-                    || path
-                        .to_ascii_lowercase()
-                        .ends_with(&component_pattern.to_ascii_lowercase())
-            }
+            self.matches_exact_pattern(pattern, path, case_sensitive)
+        }
+    }
+
+    /// Match patterns containing **
+    fn matches_recursive_pattern(&self, pattern: &str, path: &str, case_sensitive: bool) -> bool {
+        let parts: Vec<&str> = pattern.split("**").collect();
+        if parts.len() != 2 {
+            return false;
+        }
+
+        let prefix = parts[0];
+        let suffix = parts[1].trim_start_matches('/');
+
+        if prefix.is_empty() {
+            // Pattern like **/suffix
+            self.matches_suffix_anywhere(suffix, path, case_sensitive)
+        } else if suffix.is_empty() {
+            // Pattern like prefix/**
+            path.starts_with(prefix.trim_end_matches('/'))
+        } else {
+            // Pattern like prefix/**/suffix
+            path.starts_with(prefix.trim_end_matches('/'))
+                && (path.ends_with(suffix) || path.contains(&format!("/{}", suffix)))
+        }
+    }
+
+    /// Match a suffix pattern anywhere in path
+    fn matches_suffix_anywhere(&self, suffix: &str, path: &str, case_sensitive: bool) -> bool {
+        if suffix.contains('*') {
+            let path_parts: Vec<&str> = path.split('/').collect();
+            path_parts.iter().any(|part| self.wildcard_match(suffix, part, case_sensitive))
+        } else {
+            path.ends_with(suffix) || path.contains(&format!("/{}", suffix))
+        }
+    }
+
+    /// Match directory-only patterns
+    fn matches_directory_pattern(
+        &self,
+        pattern: &str,
+        path: &str,
+        is_directory: bool,
+        case_sensitive: bool,
+    ) -> bool {
+        let (path_cmp, pattern_cmp) = if case_sensitive {
+            (path.to_string(), pattern.to_string())
+        } else {
+            (path.to_ascii_lowercase(), pattern.to_ascii_lowercase())
+        };
+
+        let dir_pattern = format!("{}/", pattern_cmp);
+        let component_pattern = format!("/{}", pattern_cmp);
+
+        if self.anchored {
+            path_cmp.starts_with(&dir_pattern) || (path_cmp == pattern_cmp && is_directory)
+        } else {
+            path_cmp.starts_with(&dir_pattern)
+                || (path_cmp == pattern_cmp && is_directory)
+                || path_cmp.contains(&dir_pattern)
+                || (path_cmp.ends_with(&component_pattern) && is_directory)
+        }
+    }
+
+    /// Match exact or component patterns
+    fn matches_exact_pattern(&self, pattern: &str, path: &str, case_sensitive: bool) -> bool {
+        let component_pattern = format!("/{}", pattern);
+        if case_sensitive {
+            path == pattern || path.ends_with(&component_pattern)
+        } else {
+            path.to_ascii_lowercase() == pattern.to_ascii_lowercase()
+                || path.to_ascii_lowercase().ends_with(&component_pattern.to_ascii_lowercase())
         }
     }
 
