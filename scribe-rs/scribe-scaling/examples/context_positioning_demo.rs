@@ -6,9 +6,93 @@
 //! - MIDDLE (60%): Low centrality supporting files  
 //! - TAIL (20%): Core functionality, high centrality files
 
-use scribe_scaling::{ContextPositioningConfig, ScalingSelectionConfig, ScalingSelector};
+use scribe_scaling::{ContextPositioningConfig, ScalingSelectionConfig, ScalingSelector, ScalingSelectionResult};
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
+
+/// Get filename from a path, defaulting to "?" if not available
+fn get_filename(path: &Path) -> &str {
+    path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+}
+
+/// Print file list with indices
+fn print_file_list(files: &[scribe_scaling::ScalingFileInfo]) {
+    for (i, file) in files.iter().enumerate() {
+        println!("  {}. {}", i + 1, get_filename(&file.path));
+    }
+}
+
+/// Print positioned files section
+fn print_positioned_section(
+    title: &str,
+    files: &[scribe_scaling::PositionedFile],
+    show_relevance: bool,
+    max_display: Option<usize>,
+) {
+    println!("\n  {}:", title);
+    let display_count = max_display.unwrap_or(files.len()).min(files.len());
+
+    for (i, file) in files.iter().take(display_count).enumerate() {
+        let filename = get_filename(&file.metadata.path);
+        if show_relevance {
+            println!(
+                "    {}. {} (centrality: {:.3}, relevance: {:.3})",
+                i + 1, filename, file.centrality.combined, file.query_relevance
+            );
+        } else {
+            println!(
+                "    {}. {} (centrality: {:.3})",
+                i + 1, filename, file.centrality.combined
+            );
+        }
+    }
+
+    if let Some(max) = max_display {
+        if files.len() > max {
+            println!("    ... and {} more files", files.len() - max);
+        }
+    }
+}
+
+/// Print performance comparison results
+fn print_performance_comparison(no_positioning_time: std::time::Duration, positioning_time: std::time::Duration) {
+    println!("Performance comparison:");
+    println!("  Without positioning: {:?}", no_positioning_time);
+    println!("  With positioning: {:?}", positioning_time);
+
+    if positioning_time > no_positioning_time {
+        let overhead = positioning_time - no_positioning_time;
+        let percent_increase =
+            ((positioning_time.as_micros() as f64 / no_positioning_time.as_micros() as f64) - 1.0) * 100.0;
+        println!("  Overhead: {:?} ({:.1}% increase)", overhead, percent_increase);
+    } else {
+        println!("  Positioning was actually faster in this case (likely due to measurement variance)");
+    }
+}
+
+/// Print context positioning results
+fn print_positioning_results(result: &ScalingSelectionResult) {
+    if !result.has_context_positioning() {
+        println!("❌ Context positioning was not applied");
+        return;
+    }
+
+    let (head, middle, tail) = result.get_positioning_stats().unwrap();
+    println!("Context positioning applied:");
+    println!("  HEAD files (query-relevant): {}", head);
+    println!("  MIDDLE files (supporting): {}", middle);
+    println!("  TAIL files (core functionality): {}", tail);
+    println!("\n📍 Optimal file order:");
+
+    let positioned = result.positioned_selection.as_ref().unwrap();
+    print_positioned_section("HEAD Section (Query-Specific High Centrality)", &positioned.positioning.head_files, true, None);
+    print_positioned_section("MIDDLE Section (Supporting Files)", &positioned.positioning.middle_files, false, Some(3));
+    print_positioned_section("TAIL Section (Core Functionality)", &positioned.positioning.tail_files, false, None);
+
+    println!("\n📝 Positioning Reasoning:");
+    println!("{}", result.get_positioning_reasoning().unwrap());
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,18 +119,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = selector.select_and_process(repo_path).await?;
 
     println!("Selected {} files:", result.selected_files.len());
-    for (i, file) in result.selected_files.iter().enumerate() {
-        let filename = file
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("?");
-        println!("  {}. {}", i + 1, filename);
-    }
-    println!(
-        "Token utilization: {:.1}%\n",
-        result.token_utilization * 100.0
-    );
+    print_file_list(&result.selected_files);
+    println!("Token utilization: {:.1}%\n", result.token_utilization * 100.0);
 
     // Demo 2: With context positioning and query hint
     println!("🚀 Demo 2: Context-positioned selection with query hint");
@@ -61,89 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .select_and_process_with_query(repo_path, Some(query_hint))
         .await?;
 
-    if result.has_context_positioning() {
-        let (head, middle, tail) = result.get_positioning_stats().unwrap();
-        println!("Context positioning applied:");
-        println!("  HEAD files (query-relevant): {}", head);
-        println!("  MIDDLE files (supporting): {}", middle);
-        println!("  TAIL files (core functionality): {}", tail);
-
-        println!("\n📍 Optimal file order:");
-        let ordered_files = result.get_optimally_ordered_files();
-
-        let positioned = result.positioned_selection.as_ref().unwrap();
-
-        println!("\n  HEAD Section (Query-Specific High Centrality):");
-        for (i, file) in positioned.positioning.head_files.iter().enumerate() {
-            let filename = file
-                .metadata
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
-            println!(
-                "    {}. {} (centrality: {:.3}, relevance: {:.3})",
-                i + 1,
-                filename,
-                file.centrality.combined,
-                file.query_relevance
-            );
-        }
-
-        println!("\n  MIDDLE Section (Supporting Files):");
-        for (i, file) in positioned
-            .positioning
-            .middle_files
-            .iter()
-            .take(3)
-            .enumerate()
-        {
-            let filename = file
-                .metadata
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
-            println!(
-                "    {}. {} (centrality: {:.3})",
-                i + 1,
-                filename,
-                file.centrality.combined
-            );
-        }
-        if positioned.positioning.middle_files.len() > 3 {
-            println!(
-                "    ... and {} more files",
-                positioned.positioning.middle_files.len() - 3
-            );
-        }
-
-        println!("\n  TAIL Section (Core Functionality):");
-        for (i, file) in positioned.positioning.tail_files.iter().enumerate() {
-            let filename = file
-                .metadata
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
-            println!(
-                "    {}. {} (centrality: {:.3})",
-                i + 1,
-                filename,
-                file.centrality.combined
-            );
-        }
-
-        println!("\n📝 Positioning Reasoning:");
-        println!("{}", result.get_positioning_reasoning().unwrap());
-    } else {
-        println!("❌ Context positioning was not applied");
-    }
-
-    println!(
-        "Token utilization: {:.1}%\n",
-        result.token_utilization * 100.0
-    );
+    print_positioning_results(&result);
+    println!("Token utilization: {:.1}%\n", result.token_utilization * 100.0);
 
     // Demo 3: Configuration options
     println!("⚙️  Demo 3: Configuration Options");
@@ -192,24 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let positioning_time = start_time.elapsed();
 
-    println!("Performance comparison:");
-    println!("  Without positioning: {:?}", no_positioning_time);
-    println!("  With positioning: {:?}", positioning_time);
-
-    if positioning_time > no_positioning_time {
-        let overhead = positioning_time - no_positioning_time;
-        let percent_increase =
-            ((positioning_time.as_micros() as f64 / no_positioning_time.as_micros() as f64) - 1.0)
-                * 100.0;
-        println!(
-            "  Overhead: {:?} ({:.1}% increase)",
-            overhead, percent_increase
-        );
-    } else {
-        println!(
-            "  Positioning was actually faster in this case (likely due to measurement variance)"
-        );
-    }
+    print_performance_comparison(no_positioning_time, positioning_time);
 
     println!("\n✅ Context positioning demo complete!");
     println!("This optimization improves model reasoning by leveraging attention patterns.");
