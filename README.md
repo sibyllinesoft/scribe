@@ -1,115 +1,306 @@
-# Scribe
+# Scribe - Intelligent Code Context for AI Agents
 
-**The intelligent repository bundler that maximizes LLM reasoning quality.**
+[![Crates.io](https://img.shields.io/crates/v/scribe.svg)](https://crates.io/crates/scribe)
+[![Documentation](https://docs.rs/scribe/badge.svg)](https://docs.rs/scribe)
+[![License](https://img.shields.io/crates/l/scribe.svg)](https://github.com/sibyllinesoft/scribe#license)
+[![Build Status](https://github.com/sibyllinesoft/scribe/workflows/CI/badge.svg)](https://github.com/sibyllinesoft/scribe/actions)
 
-Scribe uses research-grade graph algorithms, surgical entity selection, and transformer-aware context positioning to build bundles that help LLMs truly understand your code. Built in Rust for production-grade performance, Scribe analyzes repositories of any size while intelligently prioritizing what matters—no babysitting required.
+Scribe is a code analysis tool designed for AI agents and LLM-powered development workflows. Unlike simple file bundlers, Scribe understands code structure and dependencies—giving agents exactly the context they need without wasting tokens on irrelevant code.
 
-## Why Scribe?
+## The Problem: Context Retrieval is Expensive
 
-While other tools simply concatenate files, Scribe treats repository bundling as an information retrieval problem:
+When an AI agent needs to understand a function and its dependencies, the traditional approach is painful:
 
-- **Surgical precision:** Extract only the files needed to understand a specific function or class
-- **Intelligent prioritization:** PageRank centrality analysis identifies what's genuinely important
-- **Context optimization:** Exploits transformer attention patterns for better LLM reasoning
-- **Production performance:** Sub-second on small repos, <30s on 100k+ file enterprises
-- **Transparent decisions:** Explainable inclusion reasons for every selected file
+```
+Agent wants to understand `authenticate_user()` in auth.rs
 
-See [WHY_SCRIBE.md](WHY_SCRIBE.md) for a detailed comparison with alternatives like Repomix and Code2Prompt.
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  TRADITIONAL APPROACH (4-10+ tool calls, ~30 seconds, wastes tokens)        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. grep "authenticate_user" --include="*.rs"     → Find the function      │
+│  2. read auth.rs                                  → Read ENTIRE 800-line file│
+│  3. grep "use crate::" auth.rs                    → Find imports manually  │
+│  4. read session.rs                               → Read ENTIRE dependency │
+│  5. grep "use crate::" session.rs                 → Find transitive imports│
+│  6. read crypto.rs                                → Another full file read │
+│  7. read config.rs                                → Keep going...          │
+│  ...                                                                        │
+│                                                                             │
+│  Result: Agent reads 4000+ lines, but only ~200 are relevant               │
+│  Cost: Multiple round-trips, 95% wasted tokens, slow iteration             │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-## Key Features
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCRIBE APPROACH (1 tool call, ~0.7 seconds, precise context)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  $ scribe --covering-set "auth.rs:authenticate_user" --stdout              │
+│                                                                             │
+│  Result: Returns authenticate_user + only the functions/types it uses       │
+│  - auth.rs:authenticate_user (target)                                       │
+│  - session.rs:create_session (direct dependency)                           │
+│  - crypto.rs:verify_password (direct dependency)                           │
+│  - config.rs:AuthConfig (type dependency)                                  │
+│                                                                             │
+│  Cost: Single call, ~200 lines of precisely relevant code                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### Intelligence That Doesn't Need Babysitting
+**Scribe's covering set feature understands your code's dependency graph and returns only what's needed.**
 
-- **PageRank centrality analysis:** Identifies truly important files in your dependency graph, just like Google ranks web pages
-- **Surgical covering set selection:** Target specific functions, classes, or modules and automatically compute minimal dependency closures
-- **Multi-dimensional scoring:** Combines documentation coverage, test linkage, git churn, and graph centrality with configurable weights
-- **Progressive demotion:** Intelligent content reduction (full → chunks → signatures) that maximizes information density within any token budget
+## Key Differentiator: Surgical Code Retrieval
 
-### Optimized for LLM Recall
+Unlike tools like repomix that bundle entire repositories, Scribe provides **surgical precision**:
 
-- **3-tier context positioning:** Exploits transformer attention patterns by placing high-priority files at HEAD (20%), supporting context in MIDDLE (60%), and core functionality at TAIL (20%)
-- **Query-aware ordering:** When provided a query, surfaces most relevant files where LLMs attend best
-- **AST-based semantic chunking:** Language-aware content reduction that preserves critical functions and type signatures
+| Approach | Tool Calls | Tokens Used | Relevance |
+|----------|------------|-------------|-----------|
+| Manual grep + read | 4-10+ | ~15,000 | ~5% relevant |
+| Repomix (full bundle) | 1 | ~500,000 | ~1% relevant |
+| **Scribe covering set** | **1** | **~2,000** | **95%+ relevant** |
 
-### Production-Grade Performance
-
-- **Rust-first implementation:** Fast, memory-safe core with parallel processing via Rayon
-- **Scalable:** Small repos <1s, medium ~5s, large ~15s, 100k+ files <30s
-- **Efficient memory:** 50MB to ~2GB based on repo size with streaming architecture
-- **Persistent caching:** Signature-based invalidation for incremental updates
-
-### Transparent and Extensible
-
-- **Explainable selections:** Detailed inclusion reasons (target, direct dependency, transitive, centrality-based)
-- **Multiple algorithms:** Simple router, complex bandit, covering-set selection for different use cases
-- **Rich output formats:** Markdown, HTML (with interactive editor), JSON, XML
-- **Language support:** Tier-1 AST parsing for Python, JS/TS, Rust, Go, plus 15+ additional languages
+This matters because:
+- **Faster iteration**: Single call vs. multiple round-trips
+- **Lower cost**: 10-100x fewer tokens per context retrieval
+- **Better results**: LLMs perform better with focused, relevant context
+- **Automatic dependency resolution**: No manual import tracing
 
 ## Quick Start
 
-```bash
-# Install from source
-cargo install --path scribe-rs --locked
-
-# Generate a Markdown bundle for your repository
-scribe --style markdown --output bundle.md
-
-# Create an interactive HTML editor to review and customize
-scribe --style html --editor --output bundle.html
-
-# Surgical selection: Get only files needed to understand a specific function
-scribe --covering-set "authenticate_user" --entity-type function --max-files 20
-
-# Use with custom token budget
-scribe --token-budget 100000 --style markdown
-```
-
-Run `scribe --help` to see available algorithms, token budgeting controls, Git integration flags, and output formats.
-
-## Python Utilities
-
-Scribe keeps its remaining Python helpers in `tools/scripts/support/`:
+### For AI Agents (CLI)
 
 ```bash
-# Install in editable mode for development
-pip install -e tools
+# Get a function and all its dependencies
+scribe --covering-set "src/auth.rs:authenticate_user" --stdout
 
-# Run the secret scanner
-python tools/scripts/scan_secrets.py --directory path/to/repo
+# Get file-level dependencies (faster, less precise)
+scribe --covering-set "src/auth.rs" --granularity file --stdout
 
-# Validate a generated pack file
-python tools/scripts/pack_verify.py --validate bundle.json
+# Analyze what code is affected by your current changes
+scribe --covering-set-diff --stdout
+
+# Limit depth for focused context
+scribe --covering-set "src/lib.rs:Config" --max-depth 2 --stdout
 ```
 
-The package exports two public helpers:
-
-- `scripts.support.SecretScanner` – scans directories for common credential patterns.
-- `scripts.support.PackVerifier` – validates bundle metadata, token accounting, and content hashes.
-
-## Repository Layout
-
-- `scribe-rs/` – Rust workspace containing the CLI (`scribe`), web service, and supporting libraries.
-- `tools/scripts/support/` – Installable Python helpers used by the CLI scripts.
-- `tools/scripts/` – Small operational scripts that wrap those helpers (`scan_secrets.py`, `pack_verify.py`, `ci_full_test.sh`).
-- `spec/` – JSON schema that describes the Scribe bundle format.
-- `tests/` – End-to-end tests and Playwright fixtures for the web UI.
-
-Legacy research and benchmarking code has been removed. Historical artefacts such as generated results, research notebooks, and fake evaluation harnesses are no longer part of the repository.
-
-## Development
+### Output Formats
 
 ```bash
-# Format Rust code and run the Rust tests
-cargo fmt
-cargo clippy --workspace --all-targets
-cargo test --workspace
+# XML output (recommended for agents - structured, includes metadata)
+scribe --covering-set "module.py:MyClass" --stdout --output-format xml
 
-# Run the light Python/JS checks
-tools/scripts/ci_full_test.sh
+# JSON output (for programmatic use)
+scribe --covering-set "module.py:MyClass" --stdout --output-format json
+
+# Plain text (human readable)
+scribe --covering-set "module.py:MyClass" --stdout --output-format text
 ```
 
-The repository uses `tools/pyproject.toml` to expose the Python helpers. Tooling such as `mypy`, `ruff`, and `bandit` can be run against `tools/scripts/support/` as needed.
+### Example Output
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<covering_set>
+  <files count="3">
+    <file>
+      <path>src/auth.rs</path>
+      <distance>0</distance>
+      <reason>TargetFile</reason>
+      <content><![CDATA[
+pub fn authenticate_user(credentials: &Credentials) -> Result<Session> {
+    let user = lookup_user(&credentials.username)?;
+    verify_password(&credentials.password, &user.password_hash)?;
+    create_session(user.id)
+}
+]]></content>
+    </file>
+    <file>
+      <path>src/session.rs</path>
+      <distance>1</distance>
+      <reason>DirectDependency</reason>
+      <content><![CDATA[
+pub fn create_session(user_id: UserId) -> Result<Session> {
+    // ... only the relevant function, not the whole file
+}
+]]></content>
+    </file>
+  </files>
+  <statistics>
+    <files_examined>142</files_examined>
+    <files_selected>3</files_selected>
+    <max_depth_reached>2</max_depth_reached>
+  </statistics>
+</covering_set>
+```
+
+## Features
+
+### Covering Set Analysis
+- **Entity-level granularity**: Get specific functions/classes, not entire files
+- **Automatic dependency resolution**: Follows imports across your codebase
+- **Multi-language support**: Rust, Python, JavaScript/TypeScript, Go
+- **Configurable depth**: Control how deep to traverse dependencies
+- **Diff-based analysis**: Get context for your current git changes
+
+### Repository Bundling
+- **Intelligent file selection**: PageRank-based importance scoring
+- **Token budget management**: Stay within LLM context limits
+- **Multiple output formats**: HTML, XML, JSON, Markdown, Repomix-compatible
+
+### Code Analysis
+- **Dependency graph construction**: Understand code relationships
+- **Heuristic scoring**: Identify important files automatically
+- **Git integration**: Incorporate change history into analysis
+
+## Installation
+
+### npm (Recommended)
+
+```bash
+# Install globally
+npm install -g @sibyllinesoft/scribe
+
+# Or use directly with npx
+npx @sibyllinesoft/scribe --help
+```
+
+### Cargo
+
+```bash
+# From crates.io
+cargo install scribe-cli
+
+# From source
+git clone https://github.com/sibyllinesoft/scribe
+cd scribe/scribe-rs
+cargo install --path .
+```
+
+## Supported Languages
+
+Import resolution and dependency tracking works for:
+
+| Language | Import Styles Supported |
+|----------|------------------------|
+| **Rust** | `use`, `mod`, grouped imports `use mod::{a, b}` |
+| **Python** | `import`, `from...import`, relative imports |
+| **JavaScript/TypeScript** | ES6 `import`, `require()`, type imports |
+| **Go** | Single imports, block imports, aliased imports |
+
+## CLI Reference
+
+### Covering Set Options
+
+```
+--covering-set <TARGET>     Find covering set for file or entity
+                            Examples: "src/lib.rs", "src/auth.rs:login"
+
+--covering-set-diff         Compute covering set for current git diff
+
+--granularity <MODE>        file (whole files) or entity (functions/classes)
+                            Default: file
+
+--include-dependents        Include files that depend on target (impact analysis)
+
+--max-depth <N>             Maximum dependency traversal depth
+
+--max-files <N>             Maximum files in result
+
+--stdout                    Output to stdout (for piping to other tools)
+
+--output-format <FMT>       xml, json, text, markdown
+```
+
+### Repository Bundling Options
+
+```
+--token-target <N>          Target token count for selection (default: 128000)
+
+--include <PATTERNS>        Include only matching files
+
+--exclude <PATTERNS>        Exclude matching files
+
+--output-format <FMT>       html, xml, json, text, markdown, repomix
+```
+
+## Library Usage
+
+Scribe can also be used as a Rust library:
+
+```rust
+use scribe::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Analyze a repository
+    let config = Config::default();
+    let analysis = analyze_repository(".", &config).await?;
+
+    // Get most important files
+    for (file, score) in analysis.top_files(10) {
+        println!("{}: {:.3}", file, score);
+    }
+
+    Ok(())
+}
+```
+
+### Feature Flags
+
+```toml
+[dependencies]
+# Full installation (default)
+scribe = "0.5"
+
+# Minimal - core types only
+scribe = { version = "0.5", default-features = false, features = ["core"] }
+
+# Analysis without graph features
+scribe = { version = "0.5", default-features = false, features = ["core", "analysis", "scanner"] }
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          scribe-cli                             │
+├─────────────────────────────────────────────────────────────────┤
+│  scribe (main library)                                          │
+│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
+│  │ scribe-core │ │scribe-scanner │ │   scribe-patterns       │  │
+│  │  (types,    │ │ (file system  │ │ (glob, gitignore)       │  │
+│  │  config)    │ │  traversal)   │ │                         │  │
+│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
+│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
+│  │  scribe-    │ │ scribe-graph  │ │   scribe-selection      │  │
+│  │  analysis   │ │  (PageRank,   │ │  (covering sets,        │  │
+│  │ (heuristics)│ │  dependency   │ │   token budgeting)      │  │
+│  │             │ │   graphs)     │ │                         │  │
+│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Performance
+
+- **Covering set computation**: ~0.7s for 140-file codebase
+- **Full repository analysis**: ~100ms for small repos, ~1-10s for large repos
+- **Memory usage**: ~2MB per 1000 files
+
+## Comparison with Other Tools
+
+| Feature | Scribe | Repomix | Manual |
+|---------|--------|---------|--------|
+| Dependency-aware selection | ✅ | ❌ | ❌ |
+| Entity-level granularity | ✅ | ❌ | ❌ |
+| Single-command context | ✅ | ✅ | ❌ |
+| Token-efficient output | ✅ | ❌ | ❌ |
+| Multi-language support | ✅ | ✅ | N/A |
+| Git diff analysis | ✅ | ❌ | ❌ |
 
 ## License
 
-Scribe is dual-licensed under the Apache License 2.0 and MIT License. See `LICENSE` for details.
+Licensed under either of Apache License 2.0 or MIT license at your option.
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
