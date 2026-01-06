@@ -302,82 +302,52 @@ async fn test_configuration_options() {
 }
 
 /// Create a realistic repository structure with known centrality patterns
-fn create_realistic_repository(
-    repo_path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Create directory structure
-    fs::create_dir_all(repo_path.join("src"))?;
-    fs::create_dir_all(repo_path.join("src/auth"))?;
-    fs::create_dir_all(repo_path.join("src/api"))?;
-    fs::create_dir_all(repo_path.join("src/utils"))?;
-    fs::create_dir_all(repo_path.join("tests"))?;
+/// Write a test file at path
+fn write_test_file(repo_path: &std::path::Path, relative_path: &str, content: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fs::write(repo_path.join(relative_path), content)?;
+    Ok(())
+}
 
-    // High centrality files (entry points)
-    fs::write(
-        repo_path.join("src/main.rs"),
-        "mod auth;\nmod api;\nmod utils;\n\nfn main() {\n    println!(\"Starting app\");\n}",
-    )?;
+/// Create realistic repository entry point files
+fn create_realistic_entry_points(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_test_file(repo_path, "src/main.rs", "mod auth;\nmod api;\nmod utils;\n\nfn main() {\n    println!(\"Starting app\");\n}")?;
+    write_test_file(repo_path, "src/lib.rs", "pub mod auth;\npub mod api;\npub mod utils;\n")?;
+    Ok(())
+}
 
-    fs::write(
-        repo_path.join("src/lib.rs"),
-        "pub mod auth;\npub mod api;\npub mod utils;\n",
-    )?;
+/// Create realistic repository auth module files
+fn create_realistic_auth_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_test_file(repo_path, "src/auth/mod.rs", "pub mod middleware;\npub mod handlers;\n")?;
+    write_test_file(repo_path, "src/auth/middleware.rs", "pub fn authenticate() {}\npub fn authorize() {}\n")?;
+    write_test_file(repo_path, "src/auth/handlers.rs", "pub fn login() {}\npub fn logout() {}\n")?;
+    Ok(())
+}
 
-    // Auth module (should be relevant to authentication queries)
-    fs::write(
-        repo_path.join("src/auth/mod.rs"),
-        "pub mod middleware;\npub mod handlers;\n",
-    )?;
+/// Create realistic repository API module files
+fn create_realistic_api_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_test_file(repo_path, "src/api/mod.rs", "pub mod routes;\npub mod handlers;\n")?;
+    write_test_file(repo_path, "src/api/routes.rs", "use crate::auth;\npub fn setup_routes() {}\n")?;
+    write_test_file(repo_path, "src/api/handlers.rs", "pub fn handle_request() {}\n")?;
+    Ok(())
+}
 
-    fs::write(
-        repo_path.join("src/auth/middleware.rs"),
-        "pub fn authenticate() {}\npub fn authorize() {}\n",
-    )?;
+/// Create realistic repository project files
+fn create_realistic_project_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_test_file(repo_path, "src/utils.rs", "pub fn helper_function() {}\npub fn format_data() {}\n")?;
+    write_test_file(repo_path, "tests/integration_test.rs", "use my_app::*;\n#[test]\nfn test_something() {}\n")?;
+    write_test_file(repo_path, "Cargo.toml", "[package]\nname = \"my_app\"\nversion = \"0.1.0\"\n")?;
+    write_test_file(repo_path, "README.md", "# My App\n\nAn application with authentication and API features.\n")?;
+    Ok(())
+}
 
-    fs::write(
-        repo_path.join("src/auth/handlers.rs"),
-        "pub fn login() {}\npub fn logout() {}\n",
-    )?;
-
-    // API module
-    fs::write(
-        repo_path.join("src/api/mod.rs"),
-        "pub mod routes;\npub mod handlers;\n",
-    )?;
-
-    fs::write(
-        repo_path.join("src/api/routes.rs"),
-        "use crate::auth;\npub fn setup_routes() {}\n",
-    )?;
-
-    fs::write(
-        repo_path.join("src/api/handlers.rs"),
-        "pub fn handle_request() {}\n",
-    )?;
-
-    // Utils module (should have lower centrality)
-    fs::write(
-        repo_path.join("src/utils.rs"),
-        "pub fn helper_function() {}\npub fn format_data() {}\n",
-    )?;
-
-    // Test files (should have low centrality)
-    fs::write(
-        repo_path.join("tests/integration_test.rs"),
-        "use my_app::*;\n#[test]\nfn test_something() {}\n",
-    )?;
-
-    // Configuration files
-    fs::write(
-        repo_path.join("Cargo.toml"),
-        "[package]\nname = \"my_app\"\nversion = \"0.1.0\"\n",
-    )?;
-
-    fs::write(
-        repo_path.join("README.md"),
-        "# My App\n\nAn application with authentication and API features.\n",
-    )?;
-
+fn create_realistic_repository(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    for dir in ["src", "src/auth", "src/api", "src/utils", "tests"] {
+        fs::create_dir_all(repo_path.join(dir))?;
+    }
+    create_realistic_entry_points(repo_path)?;
+    create_realistic_auth_files(repo_path)?;
+    create_realistic_api_files(repo_path)?;
+    create_realistic_project_files(repo_path)?;
     Ok(())
 }
 
