@@ -2,7 +2,7 @@
 //! consumable artifacts. The implementation focuses on two lightweight
 //! formats (JSON and plain-text) to unblock the web service and CLI.
 
-use crate::context::CodeContext;
+use crate::core::context::CodeContext;
 use scribe_core::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

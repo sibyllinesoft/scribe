@@ -2,8 +2,8 @@
 //! This module provides a shared implementation that can be reused by both the
 //! library pipeline and external consumers without duplicating complex logic.
 
-use crate::demotion::{DemotionEngine, FidelityMode};
-use crate::weighting::FileWeights;
+use crate::algorithms::demotion::{DemotionEngine, FidelityMode};
+use crate::budget::weighting::FileWeights;
 use scribe_analysis::heuristics::ScanResult;
 use scribe_core::{
     tokenization::{utils as token_utils, TokenBudget, TokenCounter},

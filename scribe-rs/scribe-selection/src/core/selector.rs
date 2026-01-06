@@ -2,8 +2,8 @@
 //! The selector consumes `FileInfo` records produced by the scanner and applies
 //! the multi-tier token budget logic from the legacy CLI.
 
-use crate::token_budget::{apply_token_budget_selection, SelectionConfig};
-use crate::weighting::FileWeights;
+use crate::budget::token_budget::{apply_token_budget_selection, SelectionConfig};
+use crate::budget::weighting::FileWeights;
 use scribe_core::{Config, FileInfo, Result};
 
 /// Input parameters for running the selector.

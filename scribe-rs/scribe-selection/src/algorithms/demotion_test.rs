@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::algorithms::demotion::*;
 
     const SAMPLE_PYTHON_CODE: &str = r#"
 """Module docstring"""

@@ -4,45 +4,45 @@
 //! This crate provides advanced algorithms for selecting relevant code sections based on
 //! semantic understanding, dependency analysis, and contextual relevance.
 
-pub mod ast_parser;
-pub mod bundler;
-pub mod context;
-pub mod covering_set;
-pub mod demotion;
-pub mod quota;
-pub mod selector;
-pub mod simple_router;
-pub mod token_budget;
-pub mod two_pass;
-pub mod weighting;
+// Module organization
+pub mod algorithms;
+pub mod ast;
+pub mod budget;
+pub mod core;
 
-// Re-export main types
-pub use ast_parser::{
+// Re-export AST types
+pub use ast::ast_parser::{
     AstChunk, AstLanguage, AstParser, AstSignature, EntityLocation, EntityQuery, EntityType,
 };
-pub use bundler::{BundleOptions, CodeBundle, CodeBundler};
-pub use context::{CodeContext, ContextExtractor, ContextFile, ContextOptions};
-pub use covering_set::{
+
+// Re-export core types
+pub use core::bundler::{BundleOptions, CodeBundle, CodeBundler};
+pub use core::context::{CodeContext, ContextExtractor, ContextFile, ContextOptions};
+pub use core::selector::{CodeSelector, SelectionCriteria, SelectionResult};
+
+// Re-export algorithm types
+pub use algorithms::covering_set::{
     CoveringSetComputer, CoveringSetEntity, CoveringSetFile, CoveringSetGranularity,
     CoveringSetOptions, CoveringSetResult, CoveringSetStatistics, InclusionReason, LineRange,
 };
-pub use simple_router::{
-    ProjectSize, RoutingDecision, SelectionStrategy, SimpleRouter, TimeConstraint,
-};
-pub use demotion::{
+pub use algorithms::demotion::{
     ChunkInfo, CodeChunker, DemotionEngine, DemotionResult, FidelityMode, SignatureExtractor,
 };
-pub use quota::{
+pub use algorithms::quota::{
     create_quota_manager, CategoryQuota, FileCategory, QuotaAllocation, QuotaManager,
     QuotaScanResult,
 };
-pub use selector::{CodeSelector, SelectionCriteria, SelectionResult};
-pub use token_budget::{apply_token_budget_selection, SelectionConfig};
-pub use weighting::FileWeights;
-pub use two_pass::{
+pub use algorithms::simple_router::{
+    ProjectSize, RoutingDecision, SelectionStrategy, SimpleRouter, TimeConstraint,
+};
+pub use algorithms::two_pass::{
     CoverageGap, FileInfo, SelectionContext, SelectionMetrics, SelectionRule, TwoPassConfig,
     TwoPassResult, TwoPassSelector,
 };
+
+// Re-export budget types
+pub use budget::token_budget::{apply_token_budget_selection, SelectionConfig};
+pub use budget::weighting::FileWeights;
 
 use scribe_core::Result;
 

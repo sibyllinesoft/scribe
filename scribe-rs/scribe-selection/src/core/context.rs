@@ -1,6 +1,6 @@
 //! Context extraction module that prepares selected files for bundling.
 
-use crate::selector::SelectionResult;
+use crate::core::selector::SelectionResult;
 use scribe_core::Result;
 use serde::{Deserialize, Serialize};
 

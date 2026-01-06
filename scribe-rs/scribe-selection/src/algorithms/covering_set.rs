@@ -13,7 +13,7 @@
 //! Entity-level mode analyzes what symbols a target entity uses and resolves
 //! them to their source definitions, returning only the relevant code chunks.
 
-use crate::ast_parser::{AstChunk, AstLanguage, AstParser, EntityLocation, EntityQuery};
+use crate::ast::ast_parser::{AstChunk, AstLanguage, AstParser, EntityLocation, EntityQuery};
 use scribe_core::{Result, ScribeError};
 use scribe_graph::{DependencyGraph, TraversalDirection};
 use serde::{Deserialize, Serialize};
@@ -928,7 +928,7 @@ fn is_common_type(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast_parser::EntityQuery;
+    use crate::ast::ast_parser::EntityQuery;
 
     #[test]
     fn test_covering_set_options() {

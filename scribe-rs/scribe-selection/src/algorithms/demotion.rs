@@ -6,7 +6,7 @@
 //! - Progressive degradation preserves critical functionality
 //! - Language-specific semantic chunking and signature extraction using tree-sitter AST parsing
 
-use crate::ast_parser::{AstLanguage, AstParser};
+use crate::ast::ast_parser::{AstLanguage, AstParser};
 use regex::Regex;
 use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{Result, ScribeError};
