@@ -228,3 +228,4 @@ test-installed.xml
 test_optimizations.rs
 tiktoken_test.rs
 scribe-rs/.valknut/
+.valknut/
