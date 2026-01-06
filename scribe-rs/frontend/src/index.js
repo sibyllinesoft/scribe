@@ -217,80 +217,107 @@ class ScribeFileTree {
     }
   }
 
+  // File extensions that use FileText icon
+  static CODE_EXTENSIONS = new Set([
+    'js', 'jsx', 'ts', 'tsx', 'py', 'rs', 'go', 'java',
+    'cpp', 'c', 'h', 'css', 'html', 'json', 'md',
+    'yml', 'yaml', 'xml', 'sql', 'sh', 'bash', 'dockerfile',
+    'gitignore', 'toml', 'lock'
+  ]);
+
   // Get file icon based on extension
   getFileIcon(filename) {
     const ext = filename.split('.').pop().toLowerCase();
-    const iconMap = {
-      'js': FileText, 'jsx': FileText, 'ts': FileText, 'tsx': FileText,
-      'py': FileText, 'rs': FileText, 'go': FileText, 'java': FileText,
-      'cpp': FileText, 'c': FileText, 'h': FileText, 'css': FileText,
-      'html': FileText, 'json': FileText, 'md': FileText,
-      'yml': FileText, 'yaml': FileText, 'xml': FileText, 'sql': FileText,
-      'sh': FileText, 'bash': FileText, 'dockerfile': FileText,
-      'gitignore': FileText, 'toml': FileText, 'lock': FileText
+    return ScribeFileTree.CODE_EXTENSIONS.has(ext) ? FileText : File;
+  }
+
+  // Build a node map from tree data for checkbox operations
+  buildNodeMapFromTree(treeData) {
+    const nodeMap = new Map();
+    const addNodes = (nodes) => {
+      nodes.forEach(n => {
+        nodeMap.set(n.path, n);
+        if (n.children) {
+          addNodes(n.children);
+        }
+      });
     };
-    return iconMap[ext] || File;
+    addNodes(treeData);
+    return nodeMap;
+  }
+
+  // Get the appropriate icon for a node's current state
+  getNodeIcon(isFolder, isOpen, filename) {
+    if (isFolder) {
+      return isOpen ? FolderOpen : Folder;
+    }
+    return this.getFileIcon(filename);
+  }
+
+  // Get checkbox icon based on checkbox state
+  static getCheckboxIcon(checkboxState) {
+    if (checkboxState.indeterminate) return Minus;
+    if (checkboxState.checked) return Check;
+    return null;
+  }
+
+  // Create checkbox element for tree node
+  createCheckboxElement(checkboxState, handleClick) {
+    const CheckboxIcon = ScribeFileTree.getCheckboxIcon(checkboxState);
+    const className = `tree-checkbox ${checkboxState.checked ? 'checked' : ''} ${checkboxState.indeterminate ? 'indeterminate' : ''}`;
+
+    return React.createElement('div', {
+      key: 'checkbox',
+      className,
+      onClick: handleClick
+    }, CheckboxIcon ? React.createElement(CheckboxIcon, {
+      className: 'checkbox-icon',
+      size: 14
+    }) : null);
+  }
+
+  // Create arrow element for folder nodes
+  createArrowElement(isFolder, isOpen, handleClick) {
+    if (!isFolder) {
+      return React.createElement('div', { key: 'spacer', className: 'tree-arrow' });
+    }
+    return React.createElement('div', {
+      key: 'arrow',
+      className: `tree-arrow ${isOpen ? 'expanded' : ''}`,
+      onClick: handleClick
+    }, React.createElement(ChevronRight, { className: 'tree-icon', size: 16 }));
   }
 
   // Tree Node Component
   createNodeComponent() {
     const { useState, useCallback } = React;
-    const getFileIcon = this.getFileIcon;
-    const checkboxStates = this.checkboxStates;
-    const toggleFileCheckbox = this.toggleFileCheckbox.bind(this);
+    const self = this;
 
     return function Node({ node, style, dragHandle, tree }) {
       const isFolder = node.isFolder;
       const isOpen = tree.isOpen(node.id);
-      const [forceUpdate, setForceUpdate] = useState(0);
-      
-      // Get checkbox state
-      const checkboxState = checkboxStates.get(node.path) || { checked: false, indeterminate: false };
-      
+      const [, setForceUpdate] = useState(0);
+
+      const checkboxState = self.checkboxStates.get(node.path) || { checked: false, indeterminate: false };
+
       const handleLabelClick = useCallback((e) => {
         e.stopPropagation();
         if (isFolder) {
           tree.toggle(node.id);
-        } else {
-          // Navigate to file section
-          const fileIndex = node.fileIndex;
-          if (fileIndex !== undefined) {
-            const element = document.getElementById(`file-${fileIndex + 1}`);
-            if (element) {
-              element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-          }
+        } else if (node.fileIndex !== undefined) {
+          const element = document.getElementById(`file-${node.fileIndex + 1}`);
+          element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }, [node.id, isFolder, tree, node.fileIndex]);
 
       const handleCheckboxClick = useCallback((e) => {
         e.stopPropagation();
-        
-        // Get the tree data to pass node map
-        const treeData = tree.data;
-        const nodeMap = new Map();
-        
-        // Rebuild node map from current tree data
-        const buildNodeMap = (nodes) => {
-          nodes.forEach(n => {
-            nodeMap.set(n.path, n);
-            if (n.children) {
-              buildNodeMap(n.children);
-            }
-          });
-        };
-        buildNodeMap(treeData);
-        
-        toggleFileCheckbox(nodeMap, node.path, !isFolder);
-        setForceUpdate(prev => prev + 1); // Force re-render
-      }, [node.path, isFolder, tree, toggleFileCheckbox]);
+        const nodeMap = self.buildNodeMapFromTree(tree.data);
+        self.toggleFileCheckbox(nodeMap, node.path, !isFolder);
+        setForceUpdate(prev => prev + 1);
+      }, [node.path, isFolder, tree]);
 
-      const IconComponent = isFolder ? (isOpen ? FolderOpen : Folder) : getFileIcon(node.name);
-
-      // Render checkbox icon based on state
-      const CheckboxIcon = checkboxState.indeterminate ? Minus : 
-                          checkboxState.checked ? Check : 
-                          'div'; // Empty div for unchecked state
+      const IconComponent = self.getNodeIcon(isFolder, isOpen, node.name);
 
       return React.createElement('div', {
         ref: dragHandle,
@@ -299,39 +326,14 @@ class ScribeFileTree {
       }, React.createElement('div', {
         className: 'tree-node-content'
       }, [
-        // Checkbox
-        React.createElement('div', {
-          key: 'checkbox',
-          className: `tree-checkbox ${checkboxState.checked ? 'checked' : ''} ${checkboxState.indeterminate ? 'indeterminate' : ''}`,
-          onClick: handleCheckboxClick
-        }, CheckboxIcon !== 'div' ? React.createElement(CheckboxIcon, {
-          className: 'checkbox-icon',
-          size: 14
-        }) : null),
-        
-        // Arrow for folders
-        isFolder && React.createElement('div', {
-          key: 'arrow',
-          className: `tree-arrow ${isOpen ? 'expanded' : ''}`,
-          onClick: handleLabelClick
-        }, React.createElement(ChevronRight, { 
-          className: 'tree-icon',
-          size: 16 
-        })),
-        !isFolder && React.createElement('div', { 
-          key: 'spacer',
-          className: 'tree-arrow' 
-        }),
-        
-        // File/folder icon
+        self.createCheckboxElement(checkboxState, handleCheckboxClick),
+        self.createArrowElement(isFolder, isOpen, handleLabelClick),
         React.createElement(IconComponent, {
           key: 'icon',
           className: `tree-icon ${isFolder ? 'folder-icon' : 'file-icon'}`,
           size: 16,
           onClick: handleLabelClick
         }),
-        
-        // Label
         React.createElement('span', {
           key: 'label',
           className: 'tree-label',
