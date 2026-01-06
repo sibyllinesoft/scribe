@@ -577,6 +577,30 @@ impl AstParser {
         })
     }
 
+    /// Get base importance score for a chunk type
+    fn base_importance_score(chunk_type: &str) -> f64 {
+        match chunk_type {
+            "import" | "import_from" | "use" => 0.9,
+            "package" => 0.95,
+            "class" | "struct_item" | "trait_item" => 0.85,
+            "interface" | "type_alias" | "enum" => 0.8,
+            "function" | "method" => 0.75,
+            "export" => 0.7,
+            "mod" | "module" => 0.65,
+            "const" | "constant" | "static" => 0.6,
+            _ => 0.5,
+        }
+    }
+
+    /// Apply language-specific importance adjustments
+    fn language_importance_adjustment(chunk_type: &str, language: &AstLanguage) -> Option<f64> {
+        match language {
+            AstLanguage::Rust if chunk_type == "impl" => Some(0.85),
+            AstLanguage::TypeScript if chunk_type == "interface" => Some(0.9),
+            _ => None,
+        }
+    }
+
     /// Calculate importance score based on AST analysis
     fn calculate_importance_score(
         &self,
@@ -585,17 +609,12 @@ impl AstParser {
         node: Node,
         content: &str,
     ) -> f64 {
-        let mut score: f64 = match chunk_type {
-            "import" | "import_from" | "use" => 0.9, // Imports are crucial
-            "package" => 0.95,                       // Package declarations are essential
-            "class" | "struct_item" | "trait_item" => 0.85, // Type definitions
-            "interface" | "type_alias" | "enum" => 0.8, // Type definitions
-            "function" | "method" => 0.75,           // Functions
-            "const" | "constant" | "static" => 0.6,  // Constants
-            "export" => 0.7,                         // Exports
-            "mod" | "module" => 0.65,                // Modules
-            _ => 0.5,                                // Default
-        };
+        let mut score = Self::base_importance_score(chunk_type);
+
+        // Apply language-specific override if applicable
+        if let Some(lang_score) = Self::language_importance_adjustment(chunk_type, language) {
+            score = lang_score;
+        }
 
         // Boost score for public/exported items
         if self.is_node_public(node, content) {
@@ -605,23 +624,6 @@ impl AstParser {
         // Boost score for documented items
         if self.has_documentation(node, content) {
             score += 0.05;
-        }
-
-        // Language-specific adjustments
-        match language {
-            AstLanguage::Rust => {
-                // Rust impl blocks are very important
-                if chunk_type == "impl" {
-                    score = 0.85;
-                }
-            }
-            AstLanguage::TypeScript => {
-                // TypeScript interfaces are crucial
-                if chunk_type == "interface" {
-                    score = 0.9;
-                }
-            }
-            _ => {}
         }
 
         score.min(1.0)
@@ -1100,6 +1102,37 @@ impl AstParser {
         })
     }
 
+    /// Create an AstImport from a node with name field
+    fn create_import_from_named_node(&self, child: Node, content: &str) -> Option<AstImport> {
+        let name_node = child.child_by_field_name("name")?;
+        let module = self.node_text(name_node, content);
+        let alias = child
+            .child_by_field_name("alias")
+            .map(|alias_node| self.node_text(alias_node, content));
+        let line_number = name_node.start_position().row + 1;
+
+        Some(AstImport {
+            module,
+            alias,
+            items: vec![],
+            line_number,
+            is_relative: false,
+        })
+    }
+
+    /// Extract import items from an import_list node
+    fn extract_import_items(&self, list_node: Node, content: &str) -> Vec<String> {
+        let mut items = Vec::new();
+        for j in 0..list_node.child_count() {
+            if let Some(item) = list_node.child(j) {
+                if item.kind() == "dotted_name" || item.kind() == "identifier" {
+                    items.push(self.node_text(item, content));
+                }
+            }
+        }
+        items
+    }
+
     /// Extract Python import from a single node (optimized, no recursion)
     fn extract_python_import_node(
         &self,
@@ -1107,96 +1140,73 @@ impl AstParser {
         content: &str,
         imports: &mut Vec<AstImport>,
     ) -> Result<()> {
-        // Look for import_statement and import_from_statement nodes
-        if node.kind() == "import_statement" {
-            // Handle import statements like "import os" or "import sys as system"
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    if child.kind() == "aliased_import" {
-                        // Handle "import sys as system"
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let module = self.node_text(name_node, content);
-                            let alias = child
-                                .child_by_field_name("alias")
-                                .map(|alias_node| self.node_text(alias_node, content));
-                            let line_number = name_node.start_position().row + 1;
+        match node.kind() {
+            "import_statement" => {
+                self.extract_python_simple_import(node, content, imports);
+            }
+            "import_from_statement" => {
+                self.extract_python_from_import(node, content, imports);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 
-                            imports.push(AstImport {
-                                module,
-                                alias,
-                                items: vec![],
-                                line_number,
-                                is_relative: false,
-                            });
-                        }
-                    } else if child.kind() == "dotted_as_name" {
-                        // Handle dotted imports with alias like "import package.module as mod"
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let module = self.node_text(name_node, content);
-                            let alias = child
-                                .child_by_field_name("alias")
-                                .map(|alias_node| self.node_text(alias_node, content));
-                            let line_number = name_node.start_position().row + 1;
+    /// Extract simple Python import statement (import os, import sys as system)
+    fn extract_python_simple_import(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) {
+        for i in 0..node.child_count() {
+            let Some(child) = node.child(i) else { continue };
 
-                            imports.push(AstImport {
-                                module,
-                                alias,
-                                items: vec![],
-                                line_number,
-                                is_relative: false,
-                            });
-                        }
-                    } else if child.kind() == "dotted_name" || child.kind() == "identifier" {
-                        // Handle simple "import os"
-                        let module = self.node_text(child, content);
-                        let line_number = child.start_position().row + 1;
-
-                        imports.push(AstImport {
-                            module,
-                            alias: None,
-                            items: vec![],
-                            line_number,
-                            is_relative: false,
-                        });
+            match child.kind() {
+                "aliased_import" | "dotted_as_name" => {
+                    if let Some(import) = self.create_import_from_named_node(child, content) {
+                        imports.push(import);
                     }
                 }
-            }
-        } else if node.kind() == "import_from_statement" {
-            let mut module = String::new();
-            let mut items = Vec::new();
-            let mut is_relative = false;
-
-            if let Some(module_node) = node.child_by_field_name("module_name") {
-                module = self.node_text(module_node, content);
-                is_relative = module.starts_with('.');
-            }
-
-            // Get imported items
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    if child.kind() == "import_list" {
-                        for j in 0..child.child_count() {
-                            if let Some(item) = child.child(j) {
-                                if item.kind() == "dotted_name" || item.kind() == "identifier" {
-                                    items.push(self.node_text(item, content));
-                                }
-                            }
-                        }
-                    }
+                "dotted_name" | "identifier" => {
+                    let module = self.node_text(child, content);
+                    let line_number = child.start_position().row + 1;
+                    imports.push(AstImport {
+                        module,
+                        alias: None,
+                        items: vec![],
+                        line_number,
+                        is_relative: false,
+                    });
                 }
+                _ => {}
             }
+        }
+    }
 
-            let line_number = node.start_position().row + 1;
-            imports.push(AstImport {
-                module,
-                alias: None,
-                items,
-                line_number,
-                is_relative,
-            });
+    /// Extract Python from-import statement (from x import y)
+    fn extract_python_from_import(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) {
+        let mut module = String::new();
+        let mut is_relative = false;
+
+        if let Some(module_node) = node.child_by_field_name("module_name") {
+            module = self.node_text(module_node, content);
+            is_relative = module.starts_with('.');
         }
 
-        Ok(())
+        let mut items = Vec::new();
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if child.kind() == "import_list" {
+                    items = self.extract_import_items(child, content);
+                    break;
+                }
+            }
+        }
+
+        let line_number = node.start_position().row + 1;
+        imports.push(AstImport {
+            module,
+            alias: None,
+            items,
+            line_number,
+            is_relative,
+        });
     }
 
     /// Extract JavaScript/TypeScript import from a single node (optimized, no recursion)
