@@ -322,6 +322,29 @@ fn write_xml_target<W: std::io::Write>(
     Ok(())
 }
 
+/// Format a single entity as XML string
+fn format_xml_entity(entity: &scribe_selection::CoveringSetEntity) -> String {
+    format!(
+        "    <entity>\n\
+         \x20     <file>{}</file>\n\
+         \x20     <name>{}</name>\n\
+         \x20     <type>{}</type>\n\
+         \x20     <lines start=\"{}\" end=\"{}\"/>\n\
+         \x20     <distance>{}</distance>\n\
+         \x20     <reason>{:?}</reason>\n\
+         \x20     <content><![CDATA[{}]]></content>\n\
+         \x20   </entity>",
+        escape_xml(&entity.file_path),
+        escape_xml(&entity.name),
+        escape_xml(&entity.entity_type),
+        entity.start_line,
+        entity.end_line,
+        entity.distance,
+        entity.reason,
+        entity.content
+    )
+}
+
 /// Write XML entities element
 fn write_xml_entities<W: std::io::Write>(
     handle: &mut W,
@@ -330,18 +353,26 @@ fn write_xml_entities<W: std::io::Write>(
     use std::io::Write;
     writeln!(handle, "  <entities count=\"{}\">", entities.len())?;
     for entity in entities {
-        writeln!(handle, "    <entity>")?;
-        writeln!(handle, "      <file>{}</file>", escape_xml(&entity.file_path))?;
-        writeln!(handle, "      <name>{}</name>", escape_xml(&entity.name))?;
-        writeln!(handle, "      <type>{}</type>", escape_xml(&entity.entity_type))?;
-        writeln!(handle, "      <lines start=\"{}\" end=\"{}\"/>", entity.start_line, entity.end_line)?;
-        writeln!(handle, "      <distance>{}</distance>", entity.distance)?;
-        writeln!(handle, "      <reason>{:?}</reason>", entity.reason)?;
-        writeln!(handle, "      <content><![CDATA[{}]]></content>", entity.content)?;
-        writeln!(handle, "    </entity>")?;
+        writeln!(handle, "{}", format_xml_entity(entity))?;
     }
     writeln!(handle, "  </entities>")?;
     Ok(())
+}
+
+/// Format a single file as XML string
+fn format_xml_file(file: &scribe_selection::CoveringSetFile, content: &str) -> String {
+    format!(
+        "    <file>\n\
+         \x20     <path>{}</path>\n\
+         \x20     <distance>{}</distance>\n\
+         \x20     <reason>{:?}</reason>\n\
+         \x20     <content><![CDATA[{}]]></content>\n\
+         \x20   </file>",
+        escape_xml(&file.path),
+        file.distance,
+        file.reason,
+        content
+    )
 }
 
 /// Write XML files element
@@ -354,12 +385,7 @@ fn write_xml_files<W: std::io::Write>(
     writeln!(handle, "  <files count=\"{}\">", files.len())?;
     for file in files {
         let content = file_contents.get(&file.path).map(|s| s.as_str()).unwrap_or("");
-        writeln!(handle, "    <file>")?;
-        writeln!(handle, "      <path>{}</path>", escape_xml(&file.path))?;
-        writeln!(handle, "      <distance>{}</distance>", file.distance)?;
-        writeln!(handle, "      <reason>{:?}</reason>", file.reason)?;
-        writeln!(handle, "      <content><![CDATA[{}]]></content>", content)?;
-        writeln!(handle, "    </file>")?;
+        writeln!(handle, "{}", format_xml_file(file, content))?;
     }
     writeln!(handle, "  </files>")?;
     Ok(())
