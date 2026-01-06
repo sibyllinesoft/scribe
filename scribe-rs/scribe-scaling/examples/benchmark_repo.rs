@@ -1,6 +1,56 @@
 use scribe_scaling::{ScalingConfig, ScalingEngine};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
+
+/// Get performance rating based on time and memory
+fn get_performance_rating(time_secs: f64, memory_mb: f64) -> &'static str {
+    if time_secs < 1.0 && memory_mb < 50.0 {
+        "🏆 Excellent"
+    } else if time_secs < 5.0 && memory_mb < 200.0 {
+        "✅ Good"
+    } else if time_secs < 15.0 && memory_mb < 1000.0 {
+        "⚠️ Fair"
+    } else {
+        "❌ Needs Improvement"
+    }
+}
+
+/// Get overall assessment based on metrics
+fn get_overall_assessment(avg_time: f64, avg_memory: f64, consistency: f64) -> &'static str {
+    if avg_time < 1.0 && avg_memory < 50.0 && consistency > 90.0 {
+        "   🌟 EXCELLENT - Ready for production use"
+    } else if avg_time < 5.0 && avg_memory < 200.0 && consistency > 80.0 {
+        "   ✅ GOOD - Suitable for medium repositories"
+    } else if avg_time < 15.0 && avg_memory < 1000.0 && consistency > 70.0 {
+        "   ⚠️ FAIR - May need optimization for large repositories"
+    } else {
+        "   ❌ POOR - Requires significant optimization"
+    }
+}
+
+/// Print performance check based on repository size
+fn print_performance_check(total_files: usize, time_secs: f64, memory_mb: f64) {
+    let (time_target, memory_target) = if total_files <= 1000 {
+        (1.0, 50.0)
+    } else if total_files <= 10000 {
+        (5.0, 200.0)
+    } else {
+        return; // No specific target for very large repos
+    };
+
+    let time_ok = time_secs < time_target;
+    let memory_ok = memory_mb < memory_target;
+
+    println!(
+        "   Target: <{}s, <{}MB | Actual: {:.2}s, {:.2}MB | Status: {} {}",
+        time_target as u32,
+        memory_target as u32,
+        time_secs,
+        memory_mb,
+        if time_ok { "⏱️ ✅" } else { "⏱️ ❌" },
+        if memory_ok { "💾 ✅" } else { "💾 ❌" }
+    );
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,41 +104,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let time_secs = total_duration.as_secs_f64();
 
         println!("📈 Performance Analysis:");
-        if result.total_files <= 1000 {
-            // Small repo targets: <1s, <50MB
-            let time_ok = time_secs < 1.0;
-            let memory_ok = memory_mb < 50.0;
-            println!(
-                "   Target: <1s, <50MB | Actual: {:.2}s, {:.2}MB | Status: {} {}",
-                time_secs,
-                memory_mb,
-                if time_ok { "⏱️ ✅" } else { "⏱️ ❌" },
-                if memory_ok { "💾 ✅" } else { "💾 ❌" }
-            );
-        } else if result.total_files <= 10000 {
-            // Medium repo targets: <5s, <200MB
-            let time_ok = time_secs < 5.0;
-            let memory_ok = memory_mb < 200.0;
-            println!(
-                "   Target: <5s, <200MB | Actual: {:.2}s, {:.2}MB | Status: {} {}",
-                time_secs,
-                memory_mb,
-                if time_ok { "⏱️ ✅" } else { "⏱️ ❌" },
-                if memory_ok { "💾 ✅" } else { "💾 ❌" }
-            );
-        }
-
+        print_performance_check(result.total_files, time_secs, memory_mb);
         println!(
             "   Performance Rating: {}",
-            if time_secs < 1.0 && memory_mb < 50.0 {
-                "🏆 Excellent"
-            } else if time_secs < 5.0 && memory_mb < 200.0 {
-                "✅ Good"
-            } else if time_secs < 15.0 && memory_mb < 1000.0 {
-                "⚠️ Fair"
-            } else {
-                "❌ Needs Improvement"
-            }
+            get_performance_rating(time_secs, memory_mb)
         );
     }
 
@@ -139,15 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Overall assessment
         println!("\n🏆 Overall Performance Assessment:");
-        if avg_time < 1.0 && avg_memory < 50.0 && consistency > 90.0 {
-            println!("   🌟 EXCELLENT - Ready for production use");
-        } else if avg_time < 5.0 && avg_memory < 200.0 && consistency > 80.0 {
-            println!("   ✅ GOOD - Suitable for medium repositories");
-        } else if avg_time < 15.0 && avg_memory < 1000.0 && consistency > 70.0 {
-            println!("   ⚠️ FAIR - May need optimization for large repositories");
-        } else {
-            println!("   ❌ POOR - Requires significant optimization");
-        }
+        println!("{}", get_overall_assessment(avg_time, avg_memory, consistency));
     }
 
     println!("\n✅ Scaling Performance Test Complete!");
