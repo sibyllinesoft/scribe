@@ -58,6 +58,128 @@ impl scribe_analysis::heuristics::ScanResult for CoveringScanFile {
     fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> { None }
 }
 
+/// Log message conditionally based on mode and verbosity
+fn log_covering_set_progress(msg: &str, stdout_mode: bool, verbose_level: u8, use_info: bool) {
+    if stdout_mode {
+        return;
+    }
+    if use_info && verbose_level > 0 {
+        info!("{}", msg);
+    } else if !use_info || verbose_level == 0 {
+        eprintln!("{}", msg);
+    }
+}
+
+/// Build entity query from name and options
+fn build_entity_query(
+    entity_name: &str,
+    entity_type: Option<&str>,
+    exact_match: bool,
+) -> scribe_selection::EntityQuery {
+    use scribe_selection::{EntityQuery, EntityType};
+
+    let mut query = EntityQuery::parse(entity_name);
+    query.exact_match = exact_match;
+
+    if let Some(t) = entity_type {
+        query.entity_type = match t.to_lowercase().as_str() {
+            "function" => Some(EntityType::Function),
+            "class" => Some(EntityType::Class),
+            "module" => Some(EntityType::Module),
+            "interface" => Some(EntityType::Interface),
+            "constant" => Some(EntityType::Constant),
+            _ => None,
+        };
+    }
+    query
+}
+
+/// Display covering set result in interactive mode
+fn display_covering_set_result(
+    result: &scribe_selection::CoveringSetResult,
+    entity_name: &str,
+    granularity: scribe_selection::CoveringSetGranularity,
+) {
+    if result.files.is_empty() && result.entities.is_empty() {
+        display_not_found_error(entity_name);
+        return;
+    }
+
+    display_target_info(result);
+
+    if granularity == scribe_selection::CoveringSetGranularity::Entity {
+        display_entity_results(result);
+    } else {
+        display_file_results(result);
+    }
+}
+
+/// Display error when target not found
+fn display_not_found_error(entity_name: &str) {
+    let has_entity = entity_name.contains(':') &&
+        !(entity_name.len() > 1 && entity_name.chars().nth(1) == Some(':') &&
+          entity_name.chars().next().unwrap().is_ascii_alphabetic());
+
+    if has_entity {
+        println!("\n❌ Target '{}' not found", entity_name);
+        println!("   The file may not exist or the entity wasn't found in the file.");
+    } else {
+        println!("\n❌ File '{}' not found", entity_name);
+        println!("   Try using a more specific path or check the file exists.");
+    }
+}
+
+/// Display target entity/file info
+fn display_target_info(result: &scribe_selection::CoveringSetResult) {
+    if let Some(target) = &result.target_entity {
+        println!("\n✅ Found target entity:");
+        println!("  • File     : {}", target.file_path);
+        println!("  • Type     : {}", target.entity_type);
+        println!("  • Name     : {}", target.entity_name);
+        println!("  • Lines    : {}-{}", target.start_line, target.end_line);
+        println!("  • Public   : {}", if target.is_public { "yes" } else { "no" });
+    } else if let Some(first_file) = result.files.first() {
+        println!("\n✅ Found target file: {}", first_file.path);
+    }
+}
+
+/// Display entity-level covering set results
+fn display_entity_results(result: &scribe_selection::CoveringSetResult) {
+    println!("\n📦 Covering set ({} entities):", result.entities.len());
+    for (idx, entity) in result.entities.iter().enumerate() {
+        let explanation = result
+            .inclusion_reasons
+            .get(&format!("{}::{}", entity.file_path, entity.name))
+            .map(|s| s.as_str())
+            .unwrap_or("Included");
+
+        println!(
+            "  {}. {}::{} ({}, distance: {}, reason: {})",
+            idx + 1, entity.file_path, entity.name, entity.entity_type, entity.distance, explanation
+        );
+    }
+    println!("\n📊 Statistics:");
+    println!("  • Files examined    : {}", result.statistics.files_examined);
+    println!("  • Entities selected : {}", result.statistics.entities_selected);
+    println!("  • Max depth         : {}", result.statistics.max_depth_reached);
+    println!("  • Limits reached    : {}", if result.statistics.limits_reached { "yes" } else { "no" });
+}
+
+/// Display file-level covering set results
+fn display_file_results(result: &scribe_selection::CoveringSetResult) {
+    println!("\n📦 Covering set ({} files):", result.files.len());
+    for (idx, file) in result.files.iter().enumerate() {
+        let explanation = result.inclusion_reasons.get(&file.path).map(|s| s.as_str()).unwrap_or("Included");
+        println!("  {}. {} (distance: {}, reason: {})", idx + 1, file.path, file.distance, explanation);
+    }
+    println!("\n📊 Statistics:");
+    println!("  • Files examined  : {}", result.statistics.files_examined);
+    println!("  • Files selected  : {}", result.statistics.files_selected);
+    println!("  • Files excluded  : {}", result.statistics.files_excluded);
+    println!("  • Max depth       : {}", result.statistics.max_depth_reached);
+    println!("  • Limits reached  : {}", if result.statistics.limits_reached { "yes" } else { "no" });
+}
+
 async fn run_covering_set_mode(
     repo_dir: &Path,
     entity_name: &str,
@@ -70,71 +192,48 @@ async fn run_covering_set_mode(
     stdout_mode: bool,
     verbose_level: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use scribe_selection::{CoveringSetComputer, CoveringSetGranularity, CoveringSetOptions, EntityQuery, EntityType};
+    use scribe_selection::{CoveringSetComputer, CoveringSetGranularity, CoveringSetOptions};
     use scribe::{analyze_and_select, extract_imports};
     use std::collections::HashMap;
 
-    // In stdout mode, suppress progress output
-    if !stdout_mode {
-        if verbose_level > 0 {
-            info!("🎯 Covering set mode: finding '{}'", entity_name);
-        } else {
-            eprintln!("🎯 Finding covering set for: {}", entity_name);
-        }
-    }
+    log_covering_set_progress(&format!("🎯 Finding covering set for: {}", entity_name), stdout_mode, verbose_level, false);
 
-    // First, scan and analyze the repository to get file info and build dependency graph
+    // Analyze repository
     let mut config = Config::default();
     config.general.working_dir = Some(repo_dir.to_path_buf());
-    config.analysis.token_budget = None; // Analyze all files
+    config.analysis.token_budget = None;
 
     let selection_options = SelectionOptions {
-        token_target: 0, // No budget limit for initial analysis
+        token_target: 0,
         force_traditional: false,
         algorithm_name: Some("covering-set".to_string()),
         include_directory_map: false,
     };
 
-    if !stdout_mode {
-        if verbose_level > 0 {
-            info!("📊 Scanning repository...");
-        } else {
-            eprintln!("📊 Scanning repository...");
-        }
-    }
-
+    log_covering_set_progress("📊 Scanning repository...", stdout_mode, verbose_level, true);
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
-    // Collect file contents and build scan files for dependency graph
+    // Collect file contents and build scan files
     let mut file_contents = HashMap::new();
     let mut scan_files = Vec::new();
 
     for file_info in &analysis_outcome.analysis.files {
         if let Ok(content) = std::fs::read_to_string(&file_info.path) {
             let path_str = file_info.path.display().to_string();
-
-            // Extract imports for dependency graph building
             let imports = extract_imports(&content, &file_info.language);
-
             scan_files.push(CoveringScanFile {
                 path: path_str.clone(),
                 relative_path: file_info.relative_path.clone(),
                 imports,
             });
-
             file_contents.insert(path_str, content);
         }
     }
 
-    if !stdout_mode && verbose_level > 0 {
-        info!("📁 Loaded {} files", file_contents.len());
-    }
+    log_covering_set_progress(&format!("📁 Loaded {} files", file_contents.len()), stdout_mode, verbose_level, true);
 
-    // Build dependency graph from imports
-    if !stdout_mode && verbose_level > 0 {
-        info!("🔗 Building dependency graph...");
-    }
-
+    // Build dependency graph
+    log_covering_set_progress("🔗 Building dependency graph...", stdout_mode, verbose_level, true);
     use scribe_graph::CentralityCalculator;
     let calculator = CentralityCalculator::new()?;
     let graph = calculator.build_graph_only(&scan_files)?;
@@ -143,26 +242,8 @@ async fn run_covering_set_mode(
         eprintln!("🔗 Graph built with {} nodes, {} edges", graph.node_count(), graph.edge_count());
     }
 
-
-    // Build entity query using parse() for file:entity syntax support
-    let mut query = EntityQuery::parse(entity_name);
-
-    // Override exact_match from CLI flag
-    query.exact_match = exact_match;
-
-    // Override entity_type if explicitly specified via CLI
-    if let Some(t) = entity_type {
-        query.entity_type = match t.to_lowercase().as_str() {
-            "function" => Some(EntityType::Function),
-            "class" => Some(EntityType::Class),
-            "module" => Some(EntityType::Module),
-            "interface" => Some(EntityType::Interface),
-            "constant" => Some(EntityType::Constant),
-            _ => None,
-        };
-    }
-
-    // Build covering set options
+    // Build query and options
+    let query = build_entity_query(entity_name, entity_type, exact_match);
     let granularity_option = match granularity {
         "entity" => CoveringSetGranularity::Entity,
         _ => CoveringSetGranularity::File,
@@ -177,105 +258,17 @@ async fn run_covering_set_mode(
         granularity: granularity_option,
     };
 
-    if !stdout_mode {
-        if verbose_level > 0 {
-            info!("🔍 Computing covering set...");
-        } else {
-            eprintln!("🔍 Computing covering set...");
-        }
-    }
+    log_covering_set_progress("🔍 Computing covering set...", stdout_mode, verbose_level, true);
 
     // Compute covering set
     let mut computer = CoveringSetComputer::new()?;
-    let result = computer.compute_covering_set(
-        &query,
-        &file_contents,
-        &graph,
-        &options,
-    )?;
+    let result = computer.compute_covering_set(&query, &file_contents, &graph, &options)?;
 
-    // Handle stdout mode - output XML
     if stdout_mode {
         return output_covering_set_xml(&result, &file_contents, granularity_option);
     }
 
-    // Display results (interactive mode)
-    if result.files.is_empty() && result.entities.is_empty() {
-        // Parse the target to show appropriate error
-        let has_entity = entity_name.contains(':') &&
-            !(entity_name.len() > 1 && entity_name.chars().nth(1) == Some(':') &&
-              entity_name.chars().next().unwrap().is_ascii_alphabetic());
-
-        if has_entity {
-            println!("\n❌ Target '{}' not found", entity_name);
-            println!("   The file may not exist or the entity wasn't found in the file.");
-        } else {
-            println!("\n❌ File '{}' not found", entity_name);
-            println!("   Try using a more specific path or check the file exists.");
-        }
-        return Ok(());
-    }
-
-    // Show target info
-    if let Some(target) = &result.target_entity {
-        println!("\n✅ Found target entity:");
-        println!("  • File     : {}", target.file_path);
-        println!("  • Type     : {}", target.entity_type);
-        println!("  • Name     : {}", target.entity_name);
-        println!("  • Lines    : {}-{}", target.start_line, target.end_line);
-        println!("  • Public   : {}", if target.is_public { "yes" } else { "no" });
-    } else if let Some(first_file) = result.files.first() {
-        println!("\n✅ Found target file: {}", first_file.path);
-    }
-
-    if granularity_option == CoveringSetGranularity::Entity {
-        println!("\n📦 Covering set ({} entities):", result.entities.len());
-        for (idx, entity) in result.entities.iter().enumerate() {
-            let explanation = result
-                .inclusion_reasons
-                .get(&format!("{}::{}", entity.file_path, entity.name))
-                .map(|s| s.as_str())
-                .unwrap_or("Included");
-
-            println!(
-                "  {}. {}::{} ({}, distance: {}, reason: {})",
-                idx + 1,
-                entity.file_path,
-                entity.name,
-                entity.entity_type,
-                entity.distance,
-                explanation
-            );
-        }
-        println!("\n📊 Statistics:");
-        println!("  • Files examined    : {}", result.statistics.files_examined);
-        println!("  • Entities selected : {}", result.statistics.entities_selected);
-        println!("  • Max depth         : {}", result.statistics.max_depth_reached);
-        println!("  • Limits reached    : {}", if result.statistics.limits_reached { "yes" } else { "no" });
-    } else {
-        println!("\n📦 Covering set ({} files):", result.files.len());
-        for (idx, file) in result.files.iter().enumerate() {
-            let explanation = result
-                .inclusion_reasons
-                .get(&file.path)
-                .map(|s| s.as_str())
-                .unwrap_or("Included");
-
-            println!(
-                "  {}. {} (distance: {}, reason: {})",
-                idx + 1,
-                file.path,
-                file.distance,
-                explanation
-            );
-        }
-        println!("\n📊 Statistics:");
-        println!("  • Files examined  : {}", result.statistics.files_examined);
-        println!("  • Files selected  : {}", result.statistics.files_selected);
-        println!("  • Files excluded  : {}", result.statistics.files_excluded);
-        println!("  • Max depth       : {}", result.statistics.max_depth_reached);
-        println!("  • Limits reached  : {}", if result.statistics.limits_reached { "yes" } else { "no" });
-    }
+    display_covering_set_result(&result, entity_name, granularity_option);
 
     if verbose_level > 0 {
         info!("✨ Covering set computation complete");

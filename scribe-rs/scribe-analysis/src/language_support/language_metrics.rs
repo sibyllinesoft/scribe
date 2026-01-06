@@ -129,97 +129,103 @@ impl LanguageMetrics {
         content: &str,
         language: AstLanguage,
     ) -> LanguageSpecificComplexity {
-        let mut language_factors = 0.0;
-        let mut idiom_score = 0.0;
-        let mut framework_complexity = 0.0;
-
-        match language {
-            AstLanguage::Python => {
-                // Python-specific complexity factors
-                if content.contains("async def") || content.contains("await ") {
-                    language_factors += 0.3; // Async complexity
-                }
-                if content.contains("@") {
-                    language_factors += 0.2; // Decorators
-                }
-                if content.contains("[") && content.contains("for ") && content.contains("in ") {
-                    language_factors += 0.1; // List comprehensions
-                }
-
-                // Framework detection
-                if content.contains("import django") || content.contains("from django") {
-                    framework_complexity += 0.2;
-                }
-                if content.contains("import flask") || content.contains("from flask") {
-                    framework_complexity += 0.1;
-                }
-            }
-
-            AstLanguage::Rust => {
-                // Rust-specific complexity factors
-                if content.contains("'") && content.contains("&") {
-                    language_factors += 0.4; // Lifetimes and borrowing
-                }
-                if content.contains("match ") || content.contains("if let ") {
-                    language_factors += 0.1; // Pattern matching
-                }
-                if content.contains("macro_rules!") || content.contains("!") {
-                    language_factors += 0.3; // Macros
-                }
-
-                // Idiomatic Rust patterns
-                if content.contains("Result<") || content.contains("Option<") {
-                    idiom_score += 0.2; // Good error handling
-                }
-            }
-
-            AstLanguage::JavaScript | AstLanguage::TypeScript => {
-                // JS/TS complexity factors
-                if content.contains("async ") || content.contains("await ") {
-                    language_factors += 0.2; // Async/await
-                }
-                if content.contains("Promise") {
-                    language_factors += 0.1; // Promises
-                }
-                if language == AstLanguage::TypeScript {
-                    if content.contains("<") && content.contains(">") {
-                        language_factors += 0.2; // Generics
-                    }
-                }
-
-                // Framework detection
-                if content.contains("import React") || content.contains("from 'react'") {
-                    framework_complexity += 0.1;
-                }
-            }
-
-            AstLanguage::Go => {
-                // Go-specific complexity factors
-                if content.contains("go ") && content.contains("()") {
-                    language_factors += 0.2; // Goroutines
-                }
-                if content.contains("chan ") || content.contains("<-") {
-                    language_factors += 0.3; // Channels
-                }
-                if content.contains("defer ") {
-                    language_factors += 0.1; // Defer statements
-                }
-            }
-
-            _ => {
-                // Generic complexity assessment
-                language_factors = 0.1;
-            }
-        }
-
-        let base_complexity = 1.0; // Base complexity
+        let (language_factors, idiom_score, framework_complexity) = match language {
+            AstLanguage::Python => Self::python_complexity(content),
+            AstLanguage::Rust => Self::rust_complexity(content),
+            AstLanguage::JavaScript | AstLanguage::TypeScript => Self::js_ts_complexity(content, language),
+            AstLanguage::Go => Self::go_complexity(content),
+            _ => (0.1, 0.0, 0.0),
+        };
 
         LanguageSpecificComplexity {
-            base_complexity,
+            base_complexity: 1.0,
             language_factors,
             idiom_score,
             framework_complexity,
         }
+    }
+
+    /// Calculate Python-specific complexity factors
+    fn python_complexity(content: &str) -> (f64, f64, f64) {
+        let mut factors = 0.0;
+        let mut framework = 0.0;
+
+        if content.contains("async def") || content.contains("await ") {
+            factors += 0.3;
+        }
+        if content.contains("@") {
+            factors += 0.2;
+        }
+        if content.contains("[") && content.contains("for ") && content.contains("in ") {
+            factors += 0.1;
+        }
+        if content.contains("import django") || content.contains("from django") {
+            framework += 0.2;
+        }
+        if content.contains("import flask") || content.contains("from flask") {
+            framework += 0.1;
+        }
+
+        (factors, 0.0, framework)
+    }
+
+    /// Calculate Rust-specific complexity factors
+    fn rust_complexity(content: &str) -> (f64, f64, f64) {
+        let mut factors = 0.0;
+        let mut idiom = 0.0;
+
+        if content.contains("'") && content.contains("&") {
+            factors += 0.4;
+        }
+        if content.contains("match ") || content.contains("if let ") {
+            factors += 0.1;
+        }
+        if content.contains("macro_rules!") || content.contains("!") {
+            factors += 0.3;
+        }
+        if content.contains("Result<") || content.contains("Option<") {
+            idiom += 0.2;
+        }
+
+        (factors, idiom, 0.0)
+    }
+
+    /// Calculate JavaScript/TypeScript complexity factors
+    fn js_ts_complexity(content: &str, language: AstLanguage) -> (f64, f64, f64) {
+        let mut factors = 0.0;
+        let mut framework = 0.0;
+
+        if content.contains("async ") || content.contains("await ") {
+            factors += 0.2;
+        }
+        if content.contains("Promise") {
+            factors += 0.1;
+        }
+        if language == AstLanguage::TypeScript && content.contains("<") && content.contains(">") {
+            factors += 0.2;
+        }
+        if content.contains("import React") || content.contains("from 'react'") {
+            framework += 0.1;
+        }
+
+        (factors, 0.0, framework)
+    }
+
+    /// Calculate Go-specific complexity factors
+    fn go_complexity(content: &str) -> (f64, f64, f64) {
+        let mut factors = 0.0;
+
+        if content.contains("go ") && content.contains("()") {
+            factors += 0.2;
+        }
+        if content.contains("chan ") || content.contains("<-") {
+            factors += 0.3;
+        }
+        if content.contains("defer ") {
+            factors += 0.1;
+        }
+
+        (factors, 0.0, 0.0)
     }
 
     /// Calculate maintainability score
