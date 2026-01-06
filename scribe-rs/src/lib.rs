@@ -305,105 +305,94 @@ pub async fn analyze_repository<P: AsRef<std::path::Path>>(
     path: P,
     config: &Config,
 ) -> Result<RepositoryAnalysis> {
-    use std::collections::HashMap;
+    let optimized_config = build_optimized_config(config);
 
-    // Apply default performance tuning for faster analysis
-    let mut optimized_config = config.clone();
-
-    // Tune PerformanceConfig for maximum parallel throughput
-    optimized_config.performance.batch_size = 20; // Smaller batches = faster tail latency
-    optimized_config.performance.use_mmap = true; // Memory mapping for large files
-    optimized_config.performance.io_buffer_size = 512 * 1024; // 512KB buffers
-
-    // Enable caching and tuned scoring defaults
-    optimized_config.analysis.enable_caching = true;
-
-    // When available, leverage the scaling engine for large repositories
+    // Try scaling engine for large repositories
     #[cfg(feature = "scaling")]
-    {
-        use scribe_scaling::{create_scaling_engine, quick_scale_estimate};
-
-        match quick_scale_estimate(path.as_ref()).await {
-            Ok((file_count, estimated_duration, _memory_usage)) => {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "Scaling estimate: {} files, {:?} duration",
-                        file_count, estimated_duration
-                    );
-                }
-
-                if file_count > 50 || estimated_duration.as_secs() > 2 {
-                    if config.features.scaling_enabled {
-                        if std::env::var("SCRIBE_DEBUG").is_ok() {
-                            eprintln!("Using scaling engine for large repo");
-                        }
-                    } else {
-                        if std::env::var("SCRIBE_DEBUG").is_ok() {
-                            eprintln!("Large repo but scaling disabled");
-                        }
-                    }
-                }
-
-                if (file_count > 50 || estimated_duration.as_secs() > 2)
-                    && config.features.scaling_enabled
-                {
-                    match create_scaling_engine(path.as_ref()).await {
-                        Ok(mut scaling_engine) => {
-                            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                eprintln!("Scaling engine created, processing repository...");
-                            }
-
-                            // Use scaling engine's optimized processing
-                            match scaling_engine.process_repository(path.as_ref()).await {
-                                Ok(processing_result) => {
-                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                        eprintln!("Scaling processing complete: {} files processed in {:?}", 
-                                            processing_result.total_files, processing_result.processing_time);
-                                    }
-
-                                    return convert_scaling_result_to_analysis(
-                                        processing_result,
-                                        optimized_config,
-                                        path.as_ref(),
-                                    )
-                                    .await;
-                                }
-                                Err(e) => {
-                                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                        eprintln!(
-                                            "Scaling engine processing failed: {}, falling back",
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                                eprintln!("Failed to create scaling engine: {}, falling back", e);
-                            }
-                        }
-                    }
-                } else if file_count > 50 || estimated_duration.as_secs() > 2 {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!("Large repo detected but scaling disabled, using optimized basic scanner");
-                    }
-                } else {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!("Small repo detected, using optimized basic scanner");
-                    }
-                }
-            }
-            Err(e) => {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!("Scaling estimate failed: {}, falling back", e);
-                }
-            }
-        }
+    if let Some(result) = try_scaling_analysis(path.as_ref(), &optimized_config, config).await {
+        return result;
     }
 
-    // Fallback to the optimized scanning pipeline when advanced selection fails
+    // Fallback to the optimized scanning pipeline
     fallback_scan(path, &optimized_config).await
+}
+
+/// Build optimized config for repository analysis
+fn build_optimized_config(config: &Config) -> Config {
+    let mut optimized = config.clone();
+    optimized.performance.batch_size = 20;
+    optimized.performance.use_mmap = true;
+    optimized.performance.io_buffer_size = 512 * 1024;
+    optimized.analysis.enable_caching = true;
+    optimized
+}
+
+/// Log debug message if SCRIBE_DEBUG is set
+fn debug_log(msg: &str) {
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("{}", msg);
+    }
+}
+
+/// Try using the scaling engine for large repositories
+#[cfg(feature = "scaling")]
+async fn try_scaling_analysis(
+    path: &std::path::Path,
+    optimized_config: &Config,
+    original_config: &Config,
+) -> Option<Result<RepositoryAnalysis>> {
+    use scribe_scaling::{create_scaling_engine, quick_scale_estimate};
+
+    let (file_count, estimated_duration, _) = match quick_scale_estimate(path).await {
+        Ok(estimate) => estimate,
+        Err(e) => {
+            debug_log(&format!("Scaling estimate failed: {}, falling back", e));
+            return None;
+        }
+    };
+
+    debug_log(&format!(
+        "Scaling estimate: {} files, {:?} duration",
+        file_count, estimated_duration
+    ));
+
+    let is_large_repo = file_count > 50 || estimated_duration.as_secs() > 2;
+
+    if !is_large_repo {
+        debug_log("Small repo detected, using optimized basic scanner");
+        return None;
+    }
+
+    if !original_config.features.scaling_enabled {
+        debug_log("Large repo detected but scaling disabled, using optimized basic scanner");
+        return None;
+    }
+
+    debug_log("Using scaling engine for large repo");
+
+    let mut scaling_engine = match create_scaling_engine(path).await {
+        Ok(engine) => engine,
+        Err(e) => {
+            debug_log(&format!("Failed to create scaling engine: {}, falling back", e));
+            return None;
+        }
+    };
+
+    debug_log("Scaling engine created, processing repository...");
+
+    match scaling_engine.process_repository(path).await {
+        Ok(result) => {
+            debug_log(&format!(
+                "Scaling processing complete: {} files processed in {:?}",
+                result.total_files, result.processing_time
+            ));
+            Some(convert_scaling_result_to_analysis(result, optimized_config.clone(), path).await)
+        }
+        Err(e) => {
+            debug_log(&format!("Scaling engine processing failed: {}, falling back", e));
+            None
+        }
+    }
 }
 
 async fn fallback_scan<P: AsRef<std::path::Path>>(
