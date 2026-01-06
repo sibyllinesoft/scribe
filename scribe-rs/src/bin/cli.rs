@@ -1383,36 +1383,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Determine output file path with config file support
-    let output_path = if let Some(output) = matches.get_one::<String>("output") {
-        // CLI argument takes priority
-        PathBuf::from(output)
-    } else if let Some(config_path) = &config.output.file_path {
-        // Use path from config file
-        let path = PathBuf::from(config_path);
-        if path.is_absolute() {
-            path
-        } else {
-            // Resolve relative paths against repository directory
-            repo_dir.join(path)
-        }
-    } else {
-        // Auto-generate output filename
-        let base_name = repo_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("repository");
-
-        let extension = match report_format {
-            ReportFormat::Html => "html",
-            ReportFormat::Repomix => "repomix",
-            ReportFormat::Xml => "xml",
-            ReportFormat::Json => "json",
-            ReportFormat::Text => "txt",
-            ReportFormat::Markdown => "md",
-        };
-
-        PathBuf::from(format!("{}.{}", base_name, extension))
-    };
+    let output_path = determine_output_path(
+        matches.get_one::<String>("output"),
+        config.output.file_path.as_ref(),
+        &repo_dir,
+        report_format,
+    );
 
     // Use the library function for proper intelligent analysis
     config.filtering.max_file_size = max_bytes as u64;
@@ -1421,49 +1397,18 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Enable scaling optimizations if requested
     config.features.scaling_enabled = use_scaling;
 
-    // Start from configuration-defined patterns
-    config.filtering.include_patterns =
-        normalize_patterns(std::mem::take(&mut config.filtering.include_patterns));
-    let mut exclude_patterns =
-        normalize_patterns(std::mem::take(&mut config.filtering.exclude_patterns));
-
-    if disable_default_patterns {
-        exclude_patterns.clear();
-    }
-
-    if !repo_ignore_patterns.is_empty() {
-        exclude_patterns.extend(normalize_patterns(repo_ignore_patterns));
-    }
-
-    if let Some(patterns) = exclude_patterns_cli {
-        exclude_patterns.extend(patterns);
-    }
-
-    if let Some(patterns) = ignore_patterns_cli {
-        exclude_patterns.extend(patterns);
-    }
-
-    config.filtering.exclude_patterns = normalize_patterns(exclude_patterns);
-
-    // Apply CLI overrides for filtering behaviour
-    if disable_gitignore {
-        config.filtering.respect_gitignore = false;
-    }
-
-    if let Some(patterns) = include_patterns_cli {
-        if !patterns.is_empty() {
-            config.filtering.include_patterns = patterns;
-        }
-    }
-
-    // Enable auto-exclude tests if requested
-    config.features.auto_exclude_tests = if include_tests_override {
-        false
-    } else if exclude_tests {
-        true
-    } else {
-        config.features.auto_exclude_tests
-    };
+    // Apply filtering configuration
+    apply_filter_config(
+        &mut config,
+        exclude_patterns_cli,
+        ignore_patterns_cli,
+        include_patterns_cli,
+        repo_ignore_patterns,
+        disable_default_patterns,
+        disable_gitignore,
+        exclude_tests,
+        include_tests_override,
+    );
 
     if std::env::var("SCRIBE_DEBUG").is_ok() {
         eprintln!("Include patterns: {:?}", config.filtering.include_patterns);
@@ -1529,29 +1474,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             metrics.files_selected, metrics.total_tokens_estimated
         );
     } else {
-        println!("📊 Selection summary");
-        println!("  • Files scanned   : {}", total_files_discovered);
-        println!("  • Eligible files  : {}", eligible_file_count);
-        println!(
-            "  • Files selected  : {} ({} tokens)",
-            metrics.files_selected, metrics.total_tokens_estimated
-        );
-        println!(
-            "  • Files excluded  : {}",
-            eligible_file_count.saturating_sub(metrics.files_selected)
-        );
-        println!(
-            "  • Coverage        : {:.1}%",
-            metrics.coverage_score * 100.0
-        );
-        if unlimited_budget || token_target == 0 {
-            println!("  • Token usage     : unlimited");
-        } else {
-            println!(
-                "  • Token usage     : {} / {}",
-                metrics.total_tokens_estimated, token_target
-            );
-        }
+        print_selection_summary(&metrics, eligible_file_count, token_target, unlimited_budget);
     }
 
     if show_metrics {
@@ -1632,14 +1555,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Generate output
-    let format_label = match report_format {
-        ReportFormat::Html => "HTML",
-        ReportFormat::Repomix => "Repomix",
-        ReportFormat::Xml => "XML",
-        ReportFormat::Json => "JSON",
-        ReportFormat::Text => "Text",
-        ReportFormat::Markdown => "Markdown",
-    };
+    let format_label = report_format_label(report_format);
 
     if verbose_level == 0 {
         println!("📝 Generating {} output...", format_label);
@@ -1677,32 +1593,34 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_repository_config(repo_dir: &Path) -> Config {
-    let candidates = [".scribe.json", "scribe.config.json"];
+/// Configuration file candidates to check in repository
+const CONFIG_FILE_CANDIDATES: [&str; 2] = [".scribe.json", "scribe.config.json"];
 
-    for candidate in &candidates {
+fn load_repository_config(repo_dir: &Path) -> Config {
+    for candidate in &CONFIG_FILE_CANDIDATES {
         let candidate_path = repo_dir.join(candidate);
-        if candidate_path.exists() {
-            match Config::load_from_file(&candidate_path) {
-                Ok(config) => {
-                    info!(
-                        "📋 Loaded repository configuration from: {}",
-                        candidate_path.display()
-                    );
-                    return config;
-                }
-                Err(err) => {
-                    warn!(
-                        "Failed to load configuration from {}: {}",
-                        candidate_path.display(),
-                        err
-                    );
-                }
-            }
+        if let Some(config) = try_load_config_file(&candidate_path) {
+            return config;
         }
     }
-
     Config::default()
+}
+
+/// Attempt to load config from a specific file path
+fn try_load_config_file(path: &Path) -> Option<Config> {
+    if !path.exists() {
+        return None;
+    }
+    match Config::load_from_file(path) {
+        Ok(config) => {
+            info!("📋 Loaded repository configuration from: {}", path.display());
+            Some(config)
+        }
+        Err(err) => {
+            warn!("Failed to load configuration from {}: {}", path.display(), err);
+            None
+        }
+    }
 }
 
 fn load_ignore_patterns(repo_dir: &Path) -> Vec<String> {
@@ -1786,4 +1704,141 @@ fn add_line_numbers(content: &str) -> String {
     }
 
     numbered
+}
+
+/// Determine output file path from CLI args, config, or auto-generate
+fn determine_output_path(
+    cli_output: Option<&String>,
+    config_path: Option<&String>,
+    repo_dir: &Path,
+    report_format: ReportFormat,
+) -> PathBuf {
+    if let Some(output) = cli_output {
+        return PathBuf::from(output);
+    }
+
+    if let Some(config_path) = config_path {
+        let path = PathBuf::from(config_path);
+        return if path.is_absolute() { path } else { repo_dir.join(path) };
+    }
+
+    auto_generate_output_path(repo_dir, report_format)
+}
+
+/// Auto-generate output filename based on repository name and format
+fn auto_generate_output_path(repo_dir: &Path, format: ReportFormat) -> PathBuf {
+    let base_name = repo_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repository");
+
+    let extension = report_format_extension(format);
+    PathBuf::from(format!("{}.{}", base_name, extension))
+}
+
+/// Get file extension for a report format
+fn report_format_extension(format: ReportFormat) -> &'static str {
+    match format {
+        ReportFormat::Html => "html",
+        ReportFormat::Repomix => "repomix",
+        ReportFormat::Xml => "xml",
+        ReportFormat::Json => "json",
+        ReportFormat::Text => "txt",
+        ReportFormat::Markdown => "md",
+    }
+}
+
+/// Get human-readable label for a report format
+fn report_format_label(format: ReportFormat) -> &'static str {
+    match format {
+        ReportFormat::Html => "HTML",
+        ReportFormat::Repomix => "Repomix",
+        ReportFormat::Xml => "XML",
+        ReportFormat::Json => "JSON",
+        ReportFormat::Text => "Text",
+        ReportFormat::Markdown => "Markdown",
+    }
+}
+
+/// Apply filtering configuration from CLI arguments
+fn apply_filter_config(
+    config: &mut Config,
+    exclude_patterns_cli: Option<Vec<String>>,
+    ignore_patterns_cli: Option<Vec<String>>,
+    include_patterns_cli: Option<Vec<String>>,
+    repo_ignore_patterns: Vec<String>,
+    disable_default_patterns: bool,
+    disable_gitignore: bool,
+    exclude_tests: bool,
+    include_tests_override: bool,
+) {
+    config.filtering.include_patterns =
+        normalize_patterns(std::mem::take(&mut config.filtering.include_patterns));
+    let mut exclude_patterns =
+        normalize_patterns(std::mem::take(&mut config.filtering.exclude_patterns));
+
+    if disable_default_patterns {
+        exclude_patterns.clear();
+    }
+
+    if !repo_ignore_patterns.is_empty() {
+        exclude_patterns.extend(normalize_patterns(repo_ignore_patterns));
+    }
+
+    if let Some(patterns) = exclude_patterns_cli {
+        exclude_patterns.extend(patterns);
+    }
+
+    if let Some(patterns) = ignore_patterns_cli {
+        exclude_patterns.extend(patterns);
+    }
+
+    config.filtering.exclude_patterns = normalize_patterns(exclude_patterns);
+
+    if disable_gitignore {
+        config.filtering.respect_gitignore = false;
+    }
+
+    if let Some(patterns) = include_patterns_cli {
+        if !patterns.is_empty() {
+            config.filtering.include_patterns = patterns;
+        }
+    }
+
+    config.features.auto_exclude_tests = if include_tests_override {
+        false
+    } else if exclude_tests {
+        true
+    } else {
+        config.features.auto_exclude_tests
+    };
+}
+
+/// Print selection summary to stdout
+fn print_selection_summary(
+    metrics: &SelectionMetrics,
+    eligible_file_count: usize,
+    token_target: usize,
+    unlimited_budget: bool,
+) {
+    println!("📊 Selection summary");
+    println!("  • Files scanned   : {}", metrics.total_files_discovered);
+    println!("  • Eligible files  : {}", eligible_file_count);
+    println!(
+        "  • Files selected  : {} ({} tokens)",
+        metrics.files_selected, metrics.total_tokens_estimated
+    );
+    println!(
+        "  • Files excluded  : {}",
+        eligible_file_count.saturating_sub(metrics.files_selected)
+    );
+    println!("  • Coverage        : {:.1}%", metrics.coverage_score * 100.0);
+    if unlimited_budget || token_target == 0 {
+        println!("  • Token usage     : unlimited");
+    } else {
+        println!(
+            "  • Token usage     : {} / {}",
+            metrics.total_tokens_estimated, token_target
+        );
+    }
 }
