@@ -133,9 +133,7 @@ pub async fn apply_token_budget_selection(
     if debug {
         eprintln!(
             "🎯 Token budget selection: {} tokens, boost={:.1}/{:.1}",
-            token_budget,
-            selection_config.signature_boost,
-            selection_config.chunk_boost,
+            token_budget, selection_config.signature_boost, selection_config.chunk_boost,
         );
     }
 
@@ -143,189 +141,216 @@ pub async fn apply_token_budget_selection(
     let mut selected_files = Vec::new();
     let mut budget_tracker = TokenBudget::new(token_budget);
 
-    // Split files into categories
     let (mandatory_files, source_files, doc_files, other_files) = categorize_files(files);
 
     if debug {
         eprintln!(
             "📊 File categories: {} mandatory, {} source, {} docs, {} other",
-            mandatory_files.len(),
-            source_files.len(),
-            doc_files.len(),
-            other_files.len()
+            mandatory_files.len(), source_files.len(), doc_files.len(), other_files.len()
         );
     }
 
-    // Tier 1: Mandatory files (always full content)
-    for file in mandatory_files {
-        if budget_tracker.available() < 1 {
-            break;
-        }
-        if let Some(selected_file) =
-            try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
-        {
-            selected_files.push(selected_file);
-        }
-    }
+    // Tier 1: Mandatory files
+    select_mandatory_files(mandatory_files, &counter, &mut budget_tracker, &mut selected_files).await?;
 
-    // Tier 2: Source files using optimization-based selection
+    // Tier 2: Source files with optimization
     if !source_files.is_empty() && budget_tracker.available() > 0 {
-        // Compute centrality for source files
-        let calculator = CentralityCalculator::new()?;
-        let mock_scan_results: Vec<_> = source_files
-            .iter()
-            .map(MockScanResult::from_file_info)
-            .collect();
-        let centrality_results = calculator.calculate_centrality(&mock_scan_results)?;
-
-        // Compute priority for each file (centrality merged with external weights)
-        let source_with_priority: Vec<_> = source_files
-            .into_iter()
-            .map(|mut file| {
-                let centrality_score = centrality_results
-                    .pagerank_scores
-                    .get(&file.relative_path)
-                    .copied()
-                    .unwrap_or(0.0);
-                file.centrality_score = Some(centrality_score);
-
-                let priority = if let Some(w) = weights {
-                    let external_weight = w.get(&file.relative_path);
-                    if external_weight > 0.0 {
-                        (centrality_score + external_weight) / 2.0
-                    } else {
-                        centrality_score
-                    }
-                } else {
-                    centrality_score
-                };
-
-                (file, priority)
-            })
-            .collect();
-
-        // Pre-compute fidelity options for all source files
-        let fidelity_options = precompute_fidelity_options(source_with_priority, &counter)?;
-
-        if debug {
-            eprintln!(
-                "📦 Pre-computed fidelity options for {} source files",
-                fidelity_options.len()
-            );
-        }
-
-        // Generate all candidates with boosted scores
-        let mut candidates = generate_fidelity_candidates(&fidelity_options, selection_config);
-
-        if debug {
-            eprintln!("🔢 Generated {} candidates", candidates.len());
-        }
-
-        // Run greedy knapsack optimization
-        let selected_indices = optimize_selection(&mut candidates, budget_tracker.available());
-
-        // Count selections by mode for debug output
-        let mut full_count = 0;
-        let mut chunk_count = 0;
-        let mut signature_count = 0;
-        let mut total_tokens = 0;
-
-        // Apply selections
-        for idx in selected_indices {
-            let candidate = &candidates[idx];
-            let opt = &fidelity_options[candidate.file_index];
-            let mut file = opt.file.clone();
-
-            file.content = Some(candidate.content.clone());
-            file.token_estimate = Some(candidate.tokens);
-            file.char_count = Some(candidate.content.chars().count());
-            file.line_count = Some(candidate.content.lines().count());
-            file.centrality_score = Some(opt.priority);
-
-            budget_tracker.allocate(candidate.tokens);
-            total_tokens += candidate.tokens;
-
-            match candidate.mode {
-                FidelityMode::Full => full_count += 1,
-                FidelityMode::Chunk => chunk_count += 1,
-                FidelityMode::Signature => signature_count += 1,
-            }
-
-            selected_files.push(file);
-        }
-
-        if debug {
-            eprintln!(
-                "✅ Selected {} source files: {} full, {} chunk, {} signature ({} tokens)",
-                full_count + chunk_count + signature_count,
-                full_count,
-                chunk_count,
-                signature_count,
-                total_tokens
-            );
-        }
+        select_source_files_optimized(
+            source_files, weights, selection_config, &counter,
+            &mut budget_tracker, &mut selected_files, debug,
+        ).await?;
     }
 
     // Tier 3: Documentation files
-    if !doc_files.is_empty() && budget_tracker.available() > 0 {
-        let mut critical_docs = Vec::new();
-        let mut other_docs = Vec::new();
-
-        for file in doc_files {
-            let path_lower = file.relative_path.to_lowercase();
-            if path_lower.contains("architecture")
-                || path_lower.contains("design")
-                || path_lower.contains("api")
-                || path_lower.contains("spec")
-                || path_lower.ends_with("changelog.md")
-                || path_lower.ends_with("contributing.md")
-            {
-                critical_docs.push(file);
-            } else {
-                other_docs.push(file);
-            }
-        }
-
-        for file in critical_docs.into_iter().chain(other_docs.into_iter()) {
-            if budget_tracker.available() < 1 {
-                break;
-            }
-            if let Some(selected_file) =
-                try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
-            {
-                selected_files.push(selected_file);
-            }
-        }
-    }
+    select_documentation_files(doc_files, &counter, &mut budget_tracker, &mut selected_files).await?;
 
     // Tier 4: Other files
-    if !other_files.is_empty() && budget_tracker.available() > 0 {
-        for file in other_files {
-            if budget_tracker.available() < 1 {
-                break;
-            }
-            if let Some(selected_file) =
-                try_include_file_with_budget(file, &counter, &mut budget_tracker).await?
-            {
-                selected_files.push(selected_file);
-            }
-        }
-    }
-
-    let tokens_used = token_budget - budget_tracker.available();
-    let utilization = (tokens_used as f64 / token_budget as f64) * 100.0;
+    select_remaining_files(other_files, &counter, &mut budget_tracker, &mut selected_files).await?;
 
     if debug {
+        let tokens_used = token_budget - budget_tracker.available();
+        let utilization = (tokens_used as f64 / token_budget as f64) * 100.0;
         eprintln!(
             "✅ Total: {} files ({} tokens / {} budget, {:.1}% utilized)",
-            selected_files.len(),
-            tokens_used,
-            token_budget,
-            utilization
+            selected_files.len(), tokens_used, token_budget, utilization
         );
     }
 
     Ok(selected_files)
+}
+
+/// Select mandatory files (always full content)
+async fn select_mandatory_files(
+    files: Vec<FileInfo>,
+    counter: &TokenCounter,
+    budget_tracker: &mut TokenBudget,
+    selected_files: &mut Vec<FileInfo>,
+) -> Result<()> {
+    for file in files {
+        if budget_tracker.available() < 1 {
+            break;
+        }
+        if let Some(selected_file) = try_include_file_with_budget(file, counter, budget_tracker).await? {
+            selected_files.push(selected_file);
+        }
+    }
+    Ok(())
+}
+
+/// Select source files using optimization-based selection
+async fn select_source_files_optimized(
+    source_files: Vec<FileInfo>,
+    weights: Option<&FileWeights>,
+    selection_config: &SelectionConfig,
+    counter: &TokenCounter,
+    budget_tracker: &mut TokenBudget,
+    selected_files: &mut Vec<FileInfo>,
+    debug: bool,
+) -> Result<()> {
+    let calculator = CentralityCalculator::new()?;
+    let mock_scan_results: Vec<_> = source_files.iter().map(MockScanResult::from_file_info).collect();
+    let centrality_results = calculator.calculate_centrality(&mock_scan_results)?;
+
+    let source_with_priority: Vec<_> = source_files
+        .into_iter()
+        .map(|mut file| {
+            let centrality_score = centrality_results.pagerank_scores.get(&file.relative_path).copied().unwrap_or(0.0);
+            file.centrality_score = Some(centrality_score);
+            let priority = compute_file_priority(centrality_score, &file.relative_path, weights);
+            (file, priority)
+        })
+        .collect();
+
+    let fidelity_options = precompute_fidelity_options(source_with_priority, counter)?;
+
+    if debug {
+        eprintln!("📦 Pre-computed fidelity options for {} source files", fidelity_options.len());
+    }
+
+    let mut candidates = generate_fidelity_candidates(&fidelity_options, selection_config);
+
+    if debug {
+        eprintln!("🔢 Generated {} candidates", candidates.len());
+    }
+
+    let selected_indices = optimize_selection(&mut candidates, budget_tracker.available());
+    apply_selected_candidates(&selected_indices, &candidates, &fidelity_options, budget_tracker, selected_files, debug);
+
+    Ok(())
+}
+
+/// Compute file priority from centrality and external weights
+fn compute_file_priority(centrality_score: f64, relative_path: &str, weights: Option<&FileWeights>) -> f64 {
+    if let Some(w) = weights {
+        let external_weight = w.get(relative_path);
+        if external_weight > 0.0 {
+            return (centrality_score + external_weight) / 2.0;
+        }
+    }
+    centrality_score
+}
+
+/// Apply selected candidates to the output
+fn apply_selected_candidates(
+    selected_indices: &[usize],
+    candidates: &[FidelityCandidate],
+    fidelity_options: &[FileFidelityOptions],
+    budget_tracker: &mut TokenBudget,
+    selected_files: &mut Vec<FileInfo>,
+    debug: bool,
+) {
+    let mut full_count = 0;
+    let mut chunk_count = 0;
+    let mut signature_count = 0;
+    let mut total_tokens = 0;
+
+    for &idx in selected_indices {
+        let candidate = &candidates[idx];
+        let opt = &fidelity_options[candidate.file_index];
+        let mut file = opt.file.clone();
+
+        file.content = Some(candidate.content.clone());
+        file.token_estimate = Some(candidate.tokens);
+        file.char_count = Some(candidate.content.chars().count());
+        file.line_count = Some(candidate.content.lines().count());
+        file.centrality_score = Some(opt.priority);
+
+        budget_tracker.allocate(candidate.tokens);
+        total_tokens += candidate.tokens;
+
+        match candidate.mode {
+            FidelityMode::Full => full_count += 1,
+            FidelityMode::Chunk => chunk_count += 1,
+            FidelityMode::Signature => signature_count += 1,
+        }
+
+        selected_files.push(file);
+    }
+
+    if debug {
+        eprintln!(
+            "✅ Selected {} source files: {} full, {} chunk, {} signature ({} tokens)",
+            full_count + chunk_count + signature_count, full_count, chunk_count, signature_count, total_tokens
+        );
+    }
+}
+
+/// Check if a documentation file is critical
+fn is_critical_doc(path_lower: &str) -> bool {
+    path_lower.contains("architecture")
+        || path_lower.contains("design")
+        || path_lower.contains("api")
+        || path_lower.contains("spec")
+        || path_lower.ends_with("changelog.md")
+        || path_lower.ends_with("contributing.md")
+}
+
+/// Select documentation files with priority for critical docs
+async fn select_documentation_files(
+    doc_files: Vec<FileInfo>,
+    counter: &TokenCounter,
+    budget_tracker: &mut TokenBudget,
+    selected_files: &mut Vec<FileInfo>,
+) -> Result<()> {
+    if doc_files.is_empty() || budget_tracker.available() == 0 {
+        return Ok(());
+    }
+
+    let (critical_docs, other_docs): (Vec<_>, Vec<_>) = doc_files
+        .into_iter()
+        .partition(|f| is_critical_doc(&f.relative_path.to_lowercase()));
+
+    for file in critical_docs.into_iter().chain(other_docs) {
+        if budget_tracker.available() < 1 {
+            break;
+        }
+        if let Some(selected_file) = try_include_file_with_budget(file, counter, budget_tracker).await? {
+            selected_files.push(selected_file);
+        }
+    }
+    Ok(())
+}
+
+/// Select remaining files until budget is exhausted
+async fn select_remaining_files(
+    files: Vec<FileInfo>,
+    counter: &TokenCounter,
+    budget_tracker: &mut TokenBudget,
+    selected_files: &mut Vec<FileInfo>,
+) -> Result<()> {
+    if files.is_empty() || budget_tracker.available() == 0 {
+        return Ok(());
+    }
+
+    for file in files {
+        if budget_tracker.available() < 1 {
+            break;
+        }
+        if let Some(selected_file) = try_include_file_with_budget(file, counter, budget_tracker).await? {
+            selected_files.push(selected_file);
+        }
+    }
+    Ok(())
 }
 
 fn categorize_files(
