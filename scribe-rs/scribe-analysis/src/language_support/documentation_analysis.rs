@@ -70,36 +70,23 @@ impl DocumentationAnalyzer {
             .count()
     }
 
+    /// Get documentation prefixes for a language
+    fn doc_prefixes(language: &AstLanguage) -> &'static [&'static str] {
+        match language {
+            AstLanguage::Python => &["#", "\"\"\"", "'''"],
+            AstLanguage::JavaScript | AstLanguage::TypeScript => &["//", "/*", "*", "/**"],
+            AstLanguage::Rust => &["//", "///", "//!"],
+            AstLanguage::Go => &["//"],
+            _ => &["//", "#", "/*", "*"], // Generic fallback
+        }
+    }
+
     /// Check if a line contains documentation
     fn is_documentation_line(&self, line: &str) -> bool {
         let trimmed = line.trim();
-
-        match self.language {
-            AstLanguage::Python => {
-                trimmed.starts_with('#')
-                    || trimmed.starts_with("\"\"\"")
-                    || trimmed.starts_with("'''")
-            }
-            AstLanguage::JavaScript | AstLanguage::TypeScript => {
-                trimmed.starts_with("//")
-                    || trimmed.starts_with("/*")
-                    || trimmed.starts_with("*")
-                    || trimmed.starts_with("/**")
-            }
-            AstLanguage::Rust => {
-                trimmed.starts_with("//")
-                    || trimmed.starts_with("///")
-                    || trimmed.starts_with("//!")
-            }
-            AstLanguage::Go => trimmed.starts_with("//"),
-            _ => {
-                // Generic comment detection
-                trimmed.starts_with("//")
-                    || trimmed.starts_with("#")
-                    || trimmed.starts_with("/*")
-                    || trimmed.starts_with("*")
-            }
-        }
+        Self::doc_prefixes(&self.language)
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
     }
 }
 

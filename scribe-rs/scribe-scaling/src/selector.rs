@@ -559,81 +559,104 @@ impl ScalingSelector {
         final_tokens.min(self.config.token_budget / 4) // No single file > 25% of budget
     }
 
-    /// Calculate file score for selection (aggressive prioritization like original scribe)
-    fn calculate_file_score(&self, file: &FileMetadata) -> f64 {
-        let mut score: f64 = 0.1; // Lower base score to be more selective
-
-        let path_str = file.path.to_string_lossy().to_lowercase();
-
-        // High-priority entry points (like original scribe)
+    /// Calculate entry point bonus for a file path
+    fn entry_point_score(path_str: &str) -> f64 {
+        let mut score = 0.0;
         if path_str.contains("main") || path_str.contains("index") {
-            score += 2.0; // Very high priority
+            score += 2.0;
         }
         if path_str.contains("lib.rs") || path_str.contains("mod.rs") {
-            score += 1.5; // High priority for Rust entry points
+            score += 1.5;
         }
         if path_str.contains("__init__.py") {
-            score += 1.3; // High priority for Python packages
+            score += 1.3;
         }
+        score
+    }
 
-        // Root-level files get major boost (like README, setup files)
-        let path_components = file.path.components().count();
-        if path_components <= 2 {
-            // Root or one level down
-            score += 1.0;
-
-            // Special boost for important root files
-            if path_str.contains("readme")
-                || path_str.contains("license")
-                || path_str.contains("cargo.toml")
-                || path_str.contains("package.json")
-                || path_str.contains("pyproject.toml")
-                || path_str.contains("setup.py")
-            {
-                score += 1.5;
-            }
+    /// Calculate root-level file bonus
+    fn root_level_score(path_str: &str, path_components: usize) -> f64 {
+        if path_components > 2 {
+            return 0.0;
         }
-
-        // Language importance (more aggressive)
-        match file.language.as_str() {
-            "Rust" | "Python" | "JavaScript" | "TypeScript" => score += 0.8,
-            "C" | "C++" | "Go" | "Java" => score += 0.6,
-            "Shell" | "Makefile" => score += 0.4, // Build scripts
-            _ => {}
+        let mut score = 1.0;
+        const ROOT_FILE_PATTERNS: &[&str] = &[
+            "readme", "license", "cargo.toml", "package.json", "pyproject.toml", "setup.py",
+        ];
+        if ROOT_FILE_PATTERNS.iter().any(|p| path_str.contains(p)) {
+            score += 1.5;
         }
+        score
+    }
 
-        // File type importance
-        match file.file_type.as_str() {
-            "Source" => score += 0.6,
-            "Configuration" => score += 0.5, // Config files are very important
-            "Documentation" => score += 0.3,
-            _ => {}
+    /// Calculate language importance score
+    fn language_score(language: &str) -> f64 {
+        match language {
+            "Rust" | "Python" | "JavaScript" | "TypeScript" => 0.8,
+            "C" | "C++" | "Go" | "Java" => 0.6,
+            "Shell" | "Makefile" => 0.4,
+            _ => 0.0,
         }
+    }
 
-        // Penalize very large files more heavily to stay within budget
-        if file.size > 50_000 {
+    /// Calculate file type importance score
+    fn file_type_score(file_type: &str) -> f64 {
+        match file_type {
+            "Source" => 0.6,
+            "Configuration" => 0.5,
+            "Documentation" => 0.3,
+            _ => 0.0,
+        }
+    }
+
+    /// Calculate size-related score adjustments
+    fn size_score(size: u64, path_str: &str) -> f64 {
+        let mut score = 0.0;
+        if size > 50_000 {
             score -= 0.5;
         }
-        if file.size > 100_000 {
+        if size > 100_000 {
             score -= 1.0;
         }
-
-        // Boost for certain important patterns
-        if path_str.contains("test") && !path_str.contains("tests/") {
-            score += 0.2; // Important test files but not test directories
-        }
-
-        // Penalize deep nesting (prefer top-level files)
-        if path_components > 4 {
-            score -= 0.3 * (path_components - 4) as f64;
-        }
-
-        // Boost small, important files
-        if file.size < 10_000 && (path_str.contains("config") || path_str.contains("env")) {
+        if size < 10_000 && (path_str.contains("config") || path_str.contains("env")) {
             score += 0.4;
         }
+        score
+    }
 
-        score.clamp(0.0, 5.0) // Allow higher scores for very important files
+    /// Calculate nesting depth penalty
+    fn nesting_score(path_components: usize) -> f64 {
+        if path_components > 4 {
+            -0.3 * (path_components - 4) as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// Calculate test pattern bonus
+    fn test_pattern_score(path_str: &str) -> f64 {
+        if path_str.contains("test") && !path_str.contains("tests/") {
+            0.2
+        } else {
+            0.0
+        }
+    }
+
+    /// Calculate file score for selection (aggressive prioritization like original scribe)
+    fn calculate_file_score(&self, file: &FileMetadata) -> f64 {
+        let path_str = file.path.to_string_lossy().to_lowercase();
+        let path_components = file.path.components().count();
+
+        let score = 0.1 // Base score
+            + Self::entry_point_score(&path_str)
+            + Self::root_level_score(&path_str, path_components)
+            + Self::language_score(file.language.as_str())
+            + Self::file_type_score(file.file_type.as_str())
+            + Self::size_score(file.size, &path_str)
+            + Self::nesting_score(path_components)
+            + Self::test_pattern_score(&path_str);
+
+        score.clamp(0.0, 5.0)
     }
 
     /// Classify file into category
@@ -678,80 +701,21 @@ impl ScalingSelector {
     }
 
     /// Static version of file scoring for use in streaming selector
+    #[allow(unused_variables)]
     fn calculate_file_score_static(file: &FileMetadata, token_budget: usize) -> f64 {
-        let mut score: f64 = 0.1; // Lower base score to be more selective
-
         let path_str = file.path.to_string_lossy().to_lowercase();
-
-        // High-priority entry points (like original scribe)
-        if path_str.contains("main") || path_str.contains("index") {
-            score += 2.0; // Very high priority
-        }
-        if path_str.contains("lib.rs") || path_str.contains("mod.rs") {
-            score += 1.5; // High priority for Rust entry points
-        }
-        if path_str.contains("__init__.py") {
-            score += 1.3; // High priority for Python packages
-        }
-
-        // Root-level files get major boost (like README, setup files)
         let path_components = file.path.components().count();
-        if path_components <= 2 {
-            // Root or one level down
-            score += 1.0;
 
-            // Special boost for important root files
-            if path_str.contains("readme")
-                || path_str.contains("license")
-                || path_str.contains("cargo.toml")
-                || path_str.contains("package.json")
-                || path_str.contains("pyproject.toml")
-                || path_str.contains("setup.py")
-            {
-                score += 1.5;
-            }
-        }
+        let score = 0.1 // Base score
+            + Self::entry_point_score(&path_str)
+            + Self::root_level_score(&path_str, path_components)
+            + Self::language_score(file.language.as_str())
+            + Self::file_type_score(file.file_type.as_str())
+            + Self::size_score(file.size, &path_str)
+            + Self::nesting_score(path_components)
+            + Self::test_pattern_score(&path_str);
 
-        // Language importance (more aggressive)
-        match file.language.as_str() {
-            "Rust" | "Python" | "JavaScript" | "TypeScript" => score += 0.8,
-            "C" | "C++" | "Go" | "Java" => score += 0.6,
-            "Shell" => score += 0.4, // Build scripts
-            _ => {}
-        }
-
-        // File type importance
-        match file.file_type.as_str() {
-            "Source" => score += 0.6,
-            "Configuration" => score += 0.5, // Config files are very important
-            "Documentation" => score += 0.3,
-            _ => {}
-        }
-
-        // Penalize very large files more heavily to stay within budget
-        if file.size > 50_000 {
-            score -= 0.5;
-        }
-        if file.size > 100_000 {
-            score -= 1.0;
-        }
-
-        // Boost for certain important patterns
-        if path_str.contains("test") && !path_str.contains("tests/") {
-            score += 0.2; // Important test files but not test directories
-        }
-
-        // Penalize deep nesting (prefer top-level files)
-        if path_components > 4 {
-            score -= 0.3 * (path_components - 4) as f64;
-        }
-
-        // Boost small, important files
-        if file.size < 10_000 && (path_str.contains("config") || path_str.contains("env")) {
-            score += 0.4;
-        }
-
-        score.clamp(0.0, 5.0) // Allow higher scores for very important files
+        score.clamp(0.0, 5.0)
     }
 
     /// Static version of token estimation for use in streaming selector
