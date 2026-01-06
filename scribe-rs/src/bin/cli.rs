@@ -298,8 +298,27 @@ fn output_covering_set_xml(
     writeln!(handle, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
     writeln!(handle, "<covering_set>")?;
 
-    // Output target entity info
-    if let Some(target) = &result.target_entity {
+    write_xml_target(&mut handle, &result.target_entity)?;
+
+    if granularity == scribe_selection::CoveringSetGranularity::Entity {
+        write_xml_entities(&mut handle, &result.entities)?;
+    } else {
+        write_xml_files(&mut handle, &result.files, file_contents)?;
+    }
+
+    write_xml_statistics(&mut handle, &result.statistics)?;
+    writeln!(handle, "</covering_set>")?;
+
+    Ok(())
+}
+
+/// Write XML target element
+fn write_xml_target<W: std::io::Write>(
+    handle: &mut W,
+    target: &Option<scribe_selection::EntityLocation>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    if let Some(target) = target {
         writeln!(handle, "  <target>")?;
         writeln!(handle, "    <file>{}</file>", escape_xml(&target.file_path))?;
         writeln!(handle, "    <name>{}</name>", escape_xml(&target.entity_name))?;
@@ -307,48 +326,65 @@ fn output_covering_set_xml(
         writeln!(handle, "    <lines start=\"{}\" end=\"{}\"/>", target.start_line, target.end_line)?;
         writeln!(handle, "  </target>")?;
     }
+    Ok(())
+}
 
-    if granularity == scribe_selection::CoveringSetGranularity::Entity {
-        // Entity-level output
-        writeln!(handle, "  <entities count=\"{}\">", result.entities.len())?;
-        for entity in &result.entities {
-            writeln!(handle, "    <entity>")?;
-            writeln!(handle, "      <file>{}</file>", escape_xml(&entity.file_path))?;
-            writeln!(handle, "      <name>{}</name>", escape_xml(&entity.name))?;
-            writeln!(handle, "      <type>{}</type>", escape_xml(&entity.entity_type))?;
-            writeln!(handle, "      <lines start=\"{}\" end=\"{}\"/>", entity.start_line, entity.end_line)?;
-            writeln!(handle, "      <distance>{}</distance>", entity.distance)?;
-            writeln!(handle, "      <reason>{:?}</reason>", entity.reason)?;
-            writeln!(handle, "      <content><![CDATA[{}]]></content>", entity.content)?;
-            writeln!(handle, "    </entity>")?;
-        }
-        writeln!(handle, "  </entities>")?;
-    } else {
-        // File-level output
-        writeln!(handle, "  <files count=\"{}\">", result.files.len())?;
-        for file in &result.files {
-            let content = file_contents.get(&file.path).map(|s| s.as_str()).unwrap_or("");
-            writeln!(handle, "    <file>")?;
-            writeln!(handle, "      <path>{}</path>", escape_xml(&file.path))?;
-            writeln!(handle, "      <distance>{}</distance>", file.distance)?;
-            writeln!(handle, "      <reason>{:?}</reason>", file.reason)?;
-            writeln!(handle, "      <content><![CDATA[{}]]></content>", content)?;
-            writeln!(handle, "    </file>")?;
-        }
-        writeln!(handle, "  </files>")?;
+/// Write XML entities element
+fn write_xml_entities<W: std::io::Write>(
+    handle: &mut W,
+    entities: &[scribe_selection::CoveringSetEntity],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    writeln!(handle, "  <entities count=\"{}\">", entities.len())?;
+    for entity in entities {
+        writeln!(handle, "    <entity>")?;
+        writeln!(handle, "      <file>{}</file>", escape_xml(&entity.file_path))?;
+        writeln!(handle, "      <name>{}</name>", escape_xml(&entity.name))?;
+        writeln!(handle, "      <type>{}</type>", escape_xml(&entity.entity_type))?;
+        writeln!(handle, "      <lines start=\"{}\" end=\"{}\"/>", entity.start_line, entity.end_line)?;
+        writeln!(handle, "      <distance>{}</distance>", entity.distance)?;
+        writeln!(handle, "      <reason>{:?}</reason>", entity.reason)?;
+        writeln!(handle, "      <content><![CDATA[{}]]></content>", entity.content)?;
+        writeln!(handle, "    </entity>")?;
     }
+    writeln!(handle, "  </entities>")?;
+    Ok(())
+}
 
-    // Statistics
+/// Write XML files element
+fn write_xml_files<W: std::io::Write>(
+    handle: &mut W,
+    files: &[scribe_selection::CoveringSetFile],
+    file_contents: &std::collections::HashMap<String, String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    writeln!(handle, "  <files count=\"{}\">", files.len())?;
+    for file in files {
+        let content = file_contents.get(&file.path).map(|s| s.as_str()).unwrap_or("");
+        writeln!(handle, "    <file>")?;
+        writeln!(handle, "      <path>{}</path>", escape_xml(&file.path))?;
+        writeln!(handle, "      <distance>{}</distance>", file.distance)?;
+        writeln!(handle, "      <reason>{:?}</reason>", file.reason)?;
+        writeln!(handle, "      <content><![CDATA[{}]]></content>", content)?;
+        writeln!(handle, "    </file>")?;
+    }
+    writeln!(handle, "  </files>")?;
+    Ok(())
+}
+
+/// Write XML statistics element
+fn write_xml_statistics<W: std::io::Write>(
+    handle: &mut W,
+    stats: &scribe_selection::CoveringSetStatistics,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
     writeln!(handle, "  <statistics>")?;
-    writeln!(handle, "    <files_examined>{}</files_examined>", result.statistics.files_examined)?;
-    writeln!(handle, "    <files_selected>{}</files_selected>", result.statistics.files_selected)?;
-    writeln!(handle, "    <entities_selected>{}</entities_selected>", result.statistics.entities_selected)?;
-    writeln!(handle, "    <max_depth_reached>{}</max_depth_reached>", result.statistics.max_depth_reached)?;
-    writeln!(handle, "    <limits_reached>{}</limits_reached>", result.statistics.limits_reached)?;
+    writeln!(handle, "    <files_examined>{}</files_examined>", stats.files_examined)?;
+    writeln!(handle, "    <files_selected>{}</files_selected>", stats.files_selected)?;
+    writeln!(handle, "    <entities_selected>{}</entities_selected>", stats.entities_selected)?;
+    writeln!(handle, "    <max_depth_reached>{}</max_depth_reached>", stats.max_depth_reached)?;
+    writeln!(handle, "    <limits_reached>{}</limits_reached>", stats.limits_reached)?;
     writeln!(handle, "  </statistics>")?;
-
-    writeln!(handle, "</covering_set>")?;
-
     Ok(())
 }
 
@@ -361,204 +397,174 @@ fn escape_xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-async fn run_covering_set_diff_mode(
-    repo_dir: &Path,
-    diff_against: Option<&str>,
-    include_dependents: bool,
-    max_depth: Option<usize>,
-    max_files: Option<usize>,
-    verbose_level: u8,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use scribe_graph::centrality::{ImportDetector, ImportResolutionConfig};
-    use scribe_graph::DependencyGraph;
-    use scribe_selection::{CoveringSetComputer, CoveringSetOptions};
-    use scribe_analysis::heuristics::{DocumentAnalysis, ScanResult};
-    use scribe_core::file::{is_entrypoint_path, is_test_path, FileType};
+/// File metadata for diff covering set analysis (implements ScanResult)
+#[derive(Debug, Clone)]
+struct DiffScanFile {
+    path: String,
+    relative_path: String,
+    depth: usize,
+    is_docs: bool,
+    is_readme: bool,
+    is_test: bool,
+    is_entrypoint: bool,
+    has_examples: bool,
+    priority_boost: f64,
+    churn_score: f64,
+    imports: Vec<String>,
+}
+
+impl scribe_analysis::heuristics::ScanResult for DiffScanFile {
+    fn path(&self) -> &str { &self.path }
+    fn relative_path(&self) -> &str { &self.relative_path }
+    fn depth(&self) -> usize { self.depth }
+    fn is_docs(&self) -> bool { self.is_docs }
+    fn is_readme(&self) -> bool { self.is_readme }
+    fn is_test(&self) -> bool { self.is_test }
+    fn is_entrypoint(&self) -> bool { self.is_entrypoint }
+    fn has_examples(&self) -> bool { self.has_examples }
+    fn priority_boost(&self) -> f64 { self.priority_boost }
+    fn churn_score(&self) -> f64 { self.churn_score }
+    fn centrality_in(&self) -> f64 { 0.0 }
+    fn imports(&self) -> Option<&[String]> { Some(&self.imports) }
+    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> { None }
+}
+
+/// Extract imports from file content based on language
+fn extract_imports_for_diff(content: &str, language: &scribe_core::Language) -> Vec<String> {
     use scribe_core::Language;
+    use std::collections::HashSet;
+    let mut imports = HashSet::new();
 
-    #[derive(Debug, Clone)]
-    struct DiffScanFile {
-        path: String,
-        relative_path: String,
-        depth: usize,
-        is_docs: bool,
-        is_readme: bool,
-        is_test: bool,
-        is_entrypoint: bool,
-        has_examples: bool,
-        priority_boost: f64,
-        churn_score: f64,
-        imports: Vec<String>,
+    match language {
+        Language::Rust => extract_rust_imports(content, &mut imports),
+        Language::Python => extract_python_imports(content, &mut imports),
+        Language::JavaScript | Language::TypeScript => extract_js_imports(content, &mut imports),
+        Language::Go => extract_go_imports(content, &mut imports),
+        _ => {}
     }
 
-    impl ScanResult for DiffScanFile {
-        fn path(&self) -> &str {
-            &self.path
-        }
-        fn relative_path(&self) -> &str {
-            &self.relative_path
-        }
-        fn depth(&self) -> usize {
-            self.depth
-        }
-        fn is_docs(&self) -> bool {
-            self.is_docs
-        }
-        fn is_readme(&self) -> bool {
-            self.is_readme
-        }
-        fn is_test(&self) -> bool {
-            self.is_test
-        }
-        fn is_entrypoint(&self) -> bool {
-            self.is_entrypoint
-        }
-        fn has_examples(&self) -> bool {
-            self.has_examples
-        }
-        fn priority_boost(&self) -> f64 {
-            self.priority_boost
-        }
-        fn churn_score(&self) -> f64 {
-            self.churn_score
-        }
-        fn centrality_in(&self) -> f64 {
-            0.0
-        }
-        fn imports(&self) -> Option<&[String]> {
-            Some(&self.imports)
-        }
-        fn doc_analysis(&self) -> Option<&DocumentAnalysis> {
-            None
+    let mut ordered: Vec<String> = imports.into_iter().collect();
+    ordered.sort();
+    ordered.truncate(64);
+    ordered
+}
+
+fn extract_rust_imports(content: &str, imports: &mut std::collections::HashSet<String>) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("use ") {
+            let statement = trimmed
+                .trim_start_matches("use ")
+                .trim_end_matches(';')
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches("::");
+            if !statement.is_empty() {
+                imports.insert(statement.to_string());
+            }
+        } else if trimmed.starts_with("mod ") {
+            let module = trimmed
+                .trim_start_matches("mod ")
+                .trim_end_matches(';')
+                .trim();
+            if !module.is_empty() {
+                imports.insert(module.to_string());
+            }
         }
     }
+}
 
-    fn extract_imports(content: &str, language: &Language) -> Vec<String> {
-        use std::collections::HashSet;
-        let mut imports = HashSet::new();
-        match language {
-            Language::Rust => {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("use ") {
-                        let statement = trimmed
-                            .trim_start_matches("use ")
-                            .trim_end_matches(';')
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or_default()
-                            .trim_end_matches("::");
-                        if !statement.is_empty() {
-                            imports.insert(statement.to_string());
-                        }
-                    } else if trimmed.starts_with("mod ") {
-                        let module = trimmed
-                            .trim_start_matches("mod ")
-                            .trim_end_matches(';')
-                            .trim();
-                        if !module.is_empty() {
-                            imports.insert(module.to_string());
-                        }
+fn extract_python_imports(content: &str, imports: &mut std::collections::HashSet<String>) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") {
+            for module in trimmed.trim_start_matches("import ").split(',') {
+                let module = module.trim().split_whitespace().next().unwrap_or("");
+                if !module.is_empty() {
+                    imports.insert(module.to_string());
+                }
+            }
+        } else if trimmed.starts_with("from ") && trimmed.contains(" import ") {
+            let module = trimmed
+                .trim_start_matches("from ")
+                .split(" import ")
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !module.is_empty() {
+                imports.insert(module.to_string());
+            }
+        }
+    }
+}
+
+fn extract_js_imports(content: &str, imports: &mut std::collections::HashSet<String>) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") {
+            if let Some(start) = trimmed.find('"') {
+                if let Some(end) = trimmed[start + 1..].find('"') {
+                    imports.insert(trimmed[start + 1..start + 1 + end].to_string());
+                }
+            } else if let Some(start) = trimmed.find('\'') {
+                if let Some(end) = trimmed[start + 1..].find('\'') {
+                    imports.insert(trimmed[start + 1..start + 1 + end].to_string());
+                }
+            }
+        } else if trimmed.contains("require(") {
+            if let Some(start) = trimmed.find("require(") {
+                let start = start + "require(".len();
+                let slice = &trimmed[start..];
+                if let Some(end_idx) = slice.find(')') {
+                    let inner = &slice[..end_idx];
+                    let inner = inner.trim_matches(&['\'', '"'][..]);
+                    if !inner.is_empty() {
+                        imports.insert(inner.to_string());
                     }
                 }
             }
-            Language::Python => {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("import ") {
-                        for module in trimmed.trim_start_matches("import ").split(',') {
-                            let module = module.trim().split_whitespace().next().unwrap_or("");
-                            if !module.is_empty() {
-                                imports.insert(module.to_string());
-                            }
-                        }
-                    } else if trimmed.starts_with("from ") && trimmed.contains(" import ") {
-                        let module = trimmed
-                            .trim_start_matches("from ")
-                            .split(" import ")
-                            .next()
-                            .unwrap_or("")
-                            .trim();
-                        if !module.is_empty() {
-                            imports.insert(module.to_string());
-                        }
-                    }
-                }
-            }
-            Language::JavaScript | Language::TypeScript => {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("import ") {
-                        if let Some(start) = trimmed.find('"') {
-                            if let Some(end) = trimmed[start + 1..].find('"') {
-                                imports.insert(trimmed[start + 1..start + 1 + end].to_string());
-                            }
-                        } else if let Some(start) = trimmed.find('\'') {
-                            if let Some(end) = trimmed[start + 1..].find('\'') {
-                                imports.insert(trimmed[start + 1..start + 1 + end].to_string());
-                            }
-                        }
-                    } else if trimmed.contains("require(") {
-                        if let Some(start) = trimmed.find("require(") {
-                            let start = start + "require(".len();
-                            let slice = &trimmed[start..];
-                            if let Some(end_idx) = slice.find(')') {
-                                let inner = &slice[..end_idx];
-                                let inner = inner.trim_matches(&['\'', '"'][..]);
-                                if !inner.is_empty() {
-                                    imports.insert(inner.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Language::Go => {
-                let mut in_block = false;
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed == "import (" {
-                        in_block = true;
-                        continue;
-                    }
-                    if in_block {
-                        if trimmed == ")" {
-                            in_block = false;
-                            continue;
-                        }
-                        let import_path = trimmed.trim_matches(&['"', '`'][..]);
-                        if !import_path.is_empty() {
-                            imports.insert(import_path.to_string());
-                        }
-                    } else if trimmed.starts_with("import ") {
-                        let import_path = trimmed
-                            .trim_start_matches("import ")
-                            .trim_matches(&['"', '`'][..]);
-                        if !import_path.is_empty() {
-                            imports.insert(import_path.to_string());
-                        }
-                    }
-                }
-            }
-            _ => {}
         }
-        let mut ordered: Vec<String> = imports.into_iter().collect();
-        ordered.sort();
-        ordered.truncate(64);
-        ordered
     }
+}
 
-    if verbose_level > 0 {
-        info!("🎯 Covering set (diff) mode");
-    } else {
-        println!("🎯 Computing covering set for git diff");
+fn extract_go_imports(content: &str, imports: &mut std::collections::HashSet<String>) {
+    let mut in_block = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "import (" {
+            in_block = true;
+            continue;
+        }
+        if in_block {
+            if trimmed == ")" {
+                in_block = false;
+                continue;
+            }
+            let import_path = trimmed.trim_matches(&['"', '`'][..]);
+            if !import_path.is_empty() {
+                imports.insert(import_path.to_string());
+            }
+        } else if trimmed.starts_with("import ") {
+            let import_path = trimmed
+                .trim_start_matches("import ")
+                .trim_matches(&['"', '`'][..]);
+            if !import_path.is_empty() {
+                imports.insert(import_path.to_string());
+            }
+        }
     }
+}
 
-    let repo = Repository::open(repo_dir)?;
+/// Collect changed files from git diff
+fn collect_changed_files_from_diff(
+    repo: &Repository,
+    workdir: &Path,
+    diff_against: Option<&str>,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut diff_opts = DiffOptions::new();
     diff_opts.include_untracked(true).recurse_untracked_dirs(true);
 
-    let workdir = repo.workdir().unwrap_or(repo_dir);
     let mut changed_files = std::collections::HashSet::new();
 
     if let Some(reference) = diff_against {
@@ -580,12 +586,78 @@ async fn run_covering_set_diff_mode(
         }
     }
 
+    Ok(changed_files.into_iter().collect())
+}
+
+/// Build DiffScanFile metadata from file info
+fn build_diff_scan_file(file: &scribe::FileInfo) -> DiffScanFile {
+    use scribe_core::file::{is_entrypoint_path, is_test_path, FileType};
+    use scribe_core::Language;
+
+    let extension = file.path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    let language = Language::from_extension(extension);
+    let content = if file.is_binary {
+        String::new()
+    } else {
+        file.content
+            .clone()
+            .or_else(|| std::fs::read_to_string(&file.path).ok())
+            .unwrap_or_default()
+    };
+
+    let imports = if file.is_binary {
+        Vec::new()
+    } else {
+        extract_imports_for_diff(&content, &language)
+    };
+
+    let relative_path = file.relative_path.clone();
+    let depth = relative_path.matches('/').count();
+    let path_lower = relative_path.to_lowercase();
+
+    DiffScanFile {
+        path: file.path.to_string_lossy().to_string(),
+        relative_path,
+        depth,
+        is_docs: matches!(file.file_type, FileType::Documentation { .. }),
+        is_readme: path_lower.contains("readme"),
+        is_test: is_test_path(&file.path),
+        is_entrypoint: is_entrypoint_path(&file.path, &language),
+        has_examples: path_lower.contains("example"),
+        priority_boost: 0.0,
+        churn_score: 0.0,
+        imports,
+    }
+}
+
+async fn run_covering_set_diff_mode(
+    repo_dir: &Path,
+    diff_against: Option<&str>,
+    include_dependents: bool,
+    max_depth: Option<usize>,
+    max_files: Option<usize>,
+    verbose_level: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use scribe_graph::centrality::{ImportDetector, ImportResolutionConfig};
+    use scribe_graph::DependencyGraph;
+    use scribe_selection::{CoveringSetComputer, CoveringSetOptions};
+    use scribe_analysis::heuristics::ScanResult;
+
+    if verbose_level > 0 {
+        info!("🎯 Covering set (diff) mode");
+    } else {
+        println!("🎯 Computing covering set for git diff");
+    }
+
+    let repo = Repository::open(repo_dir)?;
+    let workdir = repo.workdir().unwrap_or(repo_dir);
+
+    let changed_files = collect_changed_files_from_diff(&repo, workdir, diff_against)?;
+
     if changed_files.is_empty() {
         println!("❌ No changes detected in the diff");
         return Ok(());
     }
-
-    let changed_files: Vec<String> = changed_files.into_iter().collect();
 
     if verbose_level > 0 {
         info!("📁 {} changed files detected", changed_files.len());
@@ -593,7 +665,7 @@ async fn run_covering_set_diff_mode(
         println!("📁 {} changed files detected", changed_files.len());
     }
 
-    // Reuse the full analysis pipeline to collect file metadata and content.
+    // Run analysis pipeline to collect file metadata
     let mut config = Config::default();
     config.general.working_dir = Some(repo_dir.to_path_buf());
     config.analysis.token_budget = None;
@@ -605,53 +677,15 @@ async fn run_covering_set_diff_mode(
     };
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
-    // Build ScanResult shims with imports for dependency graph construction
+    // Build scan file metadata for dependency graph
     let diff_scan_files: Vec<DiffScanFile> = analysis_outcome
         .analysis
         .files
         .iter()
-        .map(|file| {
-            let extension = file
-                .path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("");
-            let language = Language::from_extension(extension);
-            let content = if file.is_binary {
-                String::new()
-            } else {
-                file.content
-                    .clone()
-                    .or_else(|| std::fs::read_to_string(&file.path).ok())
-                    .unwrap_or_default()
-            };
-
-            let imports = if file.is_binary {
-                Vec::new()
-            } else {
-                extract_imports(&content, &language)
-            };
-
-            let relative_path = file.relative_path.clone();
-            let depth = relative_path.matches('/').count();
-            let path_lower = relative_path.to_lowercase();
-
-            DiffScanFile {
-                path: file.path.to_string_lossy().to_string(),
-                relative_path,
-                depth,
-                is_docs: matches!(file.file_type, FileType::Documentation { .. }),
-                is_readme: path_lower.contains("readme"),
-                is_test: is_test_path(&file.path),
-                is_entrypoint: is_entrypoint_path(&file.path, &language),
-                has_examples: path_lower.contains("example"),
-                priority_boost: 0.0,
-                churn_score: 0.0,
-                imports,
-            }
-        })
+        .map(build_diff_scan_file)
         .collect();
 
+    // Build dependency graph
     let mut graph = DependencyGraph::with_capacity(diff_scan_files.len());
     for file in &diff_scan_files {
         graph.add_node(file.path.clone())?;
@@ -674,6 +708,7 @@ async fn run_covering_set_diff_mode(
         }
     }
 
+    // Compute covering set
     let options = CoveringSetOptions {
         include_dependencies: true,
         include_dependents,
@@ -687,6 +722,14 @@ async fn run_covering_set_diff_mode(
     let result =
         computer.compute_covering_set_for_files(&changed_files, &graph, None, &options)?;
 
+    // Display results
+    print_covering_set_results(&result, verbose_level);
+
+    Ok(())
+}
+
+/// Print covering set results to stdout
+fn print_covering_set_results(result: &scribe_selection::CoveringSetResult, verbose_level: u8) {
     println!("\n📦 Covering set for diff ({} files):", result.files.len());
     for (idx, file) in result.files.iter().enumerate() {
         let explanation = result
@@ -724,8 +767,6 @@ async fn run_covering_set_diff_mode(
     if verbose_level > 0 {
         info!("✨ Diff covering set computation complete");
     }
-
-    Ok(())
 }
 
 #[cfg(feature = "web")]
