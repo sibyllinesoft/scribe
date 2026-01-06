@@ -193,21 +193,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Create an example repository structure for the demo
-fn create_example_repository(
-    repo_path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Create directory structure
-    fs::create_dir_all(repo_path.join("src"))?;
-    fs::create_dir_all(repo_path.join("src/api"))?;
-    fs::create_dir_all(repo_path.join("src/utils"))?;
-    fs::create_dir_all(repo_path.join("tests"))?;
-    fs::create_dir_all(repo_path.join("docs"))?;
+/// Write a file at path with given content
+fn write_example_file(repo_path: &std::path::Path, relative_path: &str, content: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fs::write(repo_path.join(relative_path), content)?;
+    Ok(())
+}
 
-    // Create main entry points (high centrality expected)
-    fs::write(
-        repo_path.join("src/main.rs"),
-        r#"//! Main entry point for the application
+/// Create directory structure for example repository
+fn create_example_directories(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    for dir in ["src", "src/api", "src/utils", "tests", "docs"] {
+        fs::create_dir_all(repo_path.join(dir))?;
+    }
+    Ok(())
+}
+
+/// Create main entry point files
+fn create_entry_point_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_example_file(repo_path, "src/main.rs", r#"//! Main entry point for the application
 use crate::api::server;
 use crate::utils::config;
 
@@ -215,12 +217,9 @@ fn main() {
     println!("Starting application...");
     let config = config::load_config();
     server::start_server(config);
-}"#,
-    )?;
+}"#)?;
 
-    fs::write(
-        repo_path.join("src/lib.rs"),
-        r#"//! Core library functionality
+    write_example_file(repo_path, "src/lib.rs", r#"//! Core library functionality
 pub mod api;
 pub mod utils;
 
@@ -230,145 +229,56 @@ pub use utils::config;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_basic_functionality() {
         assert!(true);
     }
-}"#,
-    )?;
+}"#)?;
+    Ok(())
+}
 
-    // Create API modules (moderate centrality)
-    fs::write(
-        repo_path.join("src/api/mod.rs"),
-        r#"//! API module
-pub mod server;
-pub mod handlers;
-pub mod routes;"#,
-    )?;
-
-    fs::write(
-        repo_path.join("src/api/server.rs"),
-        r#"//! HTTP server implementation
+/// Create API module files
+fn create_api_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_example_file(repo_path, "src/api/mod.rs", "//! API module\npub mod server;\npub mod handlers;\npub mod routes;")?;
+    write_example_file(repo_path, "src/api/server.rs", r#"//! HTTP server implementation
 use crate::utils::config::Config;
 
 pub fn start_server(config: Config) {
     println!("Server starting on port {}", config.port);
-}"#,
-    )?;
-
-    fs::write(
-        repo_path.join("src/api/handlers.rs"),
-        r#"//! Request handlers
-pub fn handle_get_users() {
-    // Handle user requests
+}"#)?;
+    write_example_file(repo_path, "src/api/handlers.rs", "//! Request handlers\npub fn handle_get_users() {}\npub fn handle_create_user() {}")?;
+    write_example_file(repo_path, "src/api/routes.rs", "//! Route definitions\npub fn setup_routes() {}")?;
+    Ok(())
 }
 
-pub fn handle_create_user() {
-    // Handle user creation
-}"#,
-    )?;
-
-    fs::write(
-        repo_path.join("src/api/routes.rs"),
-        r#"//! Route definitions
-pub fn setup_routes() {
-    // Setup API routes
-}"#,
-    )?;
-
-    // Create utility modules (low centrality expected)
-    fs::write(
-        repo_path.join("src/utils/mod.rs"),
-        r#"//! Utility modules
-pub mod config;
-pub mod logging;
-pub mod helpers;"#,
-    )?;
-
-    fs::write(
-        repo_path.join("src/utils/config.rs"),
-        r#"//! Configuration management
+/// Create utility module files
+fn create_utils_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_example_file(repo_path, "src/utils/mod.rs", "//! Utility modules\npub mod config;\npub mod logging;\npub mod helpers;")?;
+    write_example_file(repo_path, "src/utils/config.rs", r#"//! Configuration management
 #[derive(Debug)]
-pub struct Config {
-    pub port: u16,
-    pub debug: bool,
+pub struct Config { pub port: u16, pub debug: bool }
+pub fn load_config() -> Config { Config { port: 8080, debug: true } }"#)?;
+    write_example_file(repo_path, "src/utils/logging.rs", "//! Logging utilities\npub fn setup_logging() {}")?;
+    write_example_file(repo_path, "src/utils/helpers.rs", "//! Helper functions\npub fn format_response(data: &str) -> String { format!(\"Response: {}\", data) }")?;
+    Ok(())
 }
 
-pub fn load_config() -> Config {
-    Config {
-        port: 8080,
-        debug: true,
-    }
-}"#,
-    )?;
+/// Create project configuration files
+fn create_project_files(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_example_file(repo_path, "tests/integration_tests.rs", "//! Integration tests\n#[tokio::test]\nasync fn test_server_startup() {}")?;
+    write_example_file(repo_path, "Cargo.toml", "[package]\nname = \"example-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntokio = { version = \"1.0\", features = [\"full\"] }\nserde = { version = \"1.0\", features = [\"derive\"] }")?;
+    write_example_file(repo_path, "README.md", "# Example Application\n\nThis is an example application demonstrating context positioning.\n\n## Features\n\n- HTTP API server\n- Configuration management")?;
+    write_example_file(repo_path, "docs/api.md", "# API Documentation\n\n## Endpoints\n\n- GET /users - List all users\n- POST /users - Create a new user")?;
+    Ok(())
+}
 
-    fs::write(
-        repo_path.join("src/utils/logging.rs"),
-        r#"//! Logging utilities
-pub fn setup_logging() {
-    // Setup application logging
-}"#,
-    )?;
-
-    fs::write(
-        repo_path.join("src/utils/helpers.rs"),
-        r#"//! Helper functions
-pub fn format_response(data: &str) -> String {
-    format!("Response: {}", data)
-}"#,
-    )?;
-
-    // Create test files (low centrality)
-    fs::write(
-        repo_path.join("tests/integration_tests.rs"),
-        r#"//! Integration tests
-#[tokio::test]
-async fn test_server_startup() {
-    // Test server functionality
-}"#,
-    )?;
-
-    // Create configuration files (high importance for some contexts)
-    fs::write(
-        repo_path.join("Cargo.toml"),
-        r#"[package]
-name = "example-app"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-"#,
-    )?;
-
-    fs::write(
-        repo_path.join("README.md"),
-        r#"# Example Application
-
-This is an example application demonstrating context positioning.
-
-## Features
-
-- HTTP API server
-- Configuration management
-- Logging utilities
-- Comprehensive testing
-"#,
-    )?;
-
-    // Create documentation (low centrality)
-    fs::write(
-        repo_path.join("docs/api.md"),
-        r#"# API Documentation
-
-## Endpoints
-
-- GET /users - List all users
-- POST /users - Create a new user
-"#,
-    )?;
-
+/// Create an example repository structure for the demo
+fn create_example_repository(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    create_example_directories(repo_path)?;
+    create_entry_point_files(repo_path)?;
+    create_api_files(repo_path)?;
+    create_utils_files(repo_path)?;
+    create_project_files(repo_path)?;
     Ok(())
 }
