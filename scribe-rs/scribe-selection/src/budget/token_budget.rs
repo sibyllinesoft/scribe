@@ -380,67 +380,82 @@ fn categorize_files(
     (mandatory, source, docs, other)
 }
 
-fn is_mandatory_file(file: &FileInfo) -> bool {
-    let path = file.relative_path.to_lowercase();
+/// Directories that indicate generated/vendored content
+const IGNORED_DIRS: [&str; 8] = [
+    "node_modules/",
+    "target/",
+    "vendor/",
+    ".git/",
+    "__pycache__/",
+    "build/",
+    "dist/",
+    ".cache/",
+];
 
-    // Skip files in dependency/build directories
-    if path.contains("node_modules/")
-        || path.contains("target/")
-        || path.contains("vendor/")
-        || path.contains(".git/")
-        || path.contains("__pycache__/")
-        || path.contains("build/")
-        || path.contains("dist/")
-        || path.contains(".cache/")
-    {
+/// Root-level project configuration files
+const ROOT_CONFIG_FILES: [&str; 12] = [
+    "package.json",
+    "cargo.toml",
+    "pyproject.toml",
+    "requirements.txt",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "composer.json",
+    "tsconfig.json",
+    ".gitignore",
+    "dockerfile",
+    "docker-compose.yml",
+];
+
+/// Check if path is in an ignored directory
+fn is_in_ignored_dir(path: &str) -> bool {
+    IGNORED_DIRS.iter().any(|dir| path.contains(dir))
+}
+
+/// Check if file is a README file worth including
+fn is_mandatory_readme(path: &str) -> bool {
+    if !path.contains("readme") {
         return false;
     }
 
-    // README files (only in project root and first-level directories)
-    if path.contains("readme") {
-        let depth = path.matches('/').count();
-        // Treat all READMEs (including subfolders) as mandatory unless they're in ignored dirs
-        if depth <= 1 {
-            return true;
-        }
-        if path.ends_with("readme.md")
-            || path.ends_with("readme.markdown")
-            || path.ends_with("readme.txt")
-            || path.ends_with("readme")
-        {
-            return true;
-        }
-    }
-
-    // Project configuration files (only at root level)
-    if !path.contains('/')
-        && matches!(
-            path.as_str(),
-            "package.json"
-                | "cargo.toml"
-                | "pyproject.toml"
-                | "requirements.txt"
-                | "go.mod"
-                | "pom.xml"
-                | "build.gradle"
-                | "composer.json"
-                | "tsconfig.json"
-                | ".gitignore"
-                | "dockerfile"
-                | "docker-compose.yml"
-        )
-    {
+    let depth = path.matches('/').count();
+    if depth <= 1 {
         return true;
     }
 
-    // Main/index files in root or src
-    if (path.starts_with("src/") || path.starts_with("lib/") || !path.contains('/'))
-        && (path.contains("main") || path.contains("index"))
-    {
-        return true;
+    path.ends_with("readme.md")
+        || path.ends_with("readme.markdown")
+        || path.ends_with("readme.txt")
+        || path.ends_with("readme")
+}
+
+/// Check if file is a root-level config file
+fn is_root_config_file(path: &str) -> bool {
+    !path.contains('/') && ROOT_CONFIG_FILES.contains(&path)
+}
+
+/// Check if file is a main/index entrypoint
+fn is_entrypoint_file(path: &str) -> bool {
+    let is_source_dir = path.starts_with("src/") || path.starts_with("lib/") || !path.contains('/');
+    is_source_dir && (path.contains("main") || path.contains("index"))
+}
+
+fn is_mandatory_file(file: &FileInfo) -> bool {
+    let path = file.relative_path.to_lowercase();
+
+    if is_in_ignored_dir(&path) {
+        return false;
     }
 
-    false
+    is_mandatory_readme(&path) || is_root_config_file(&path) || is_entrypoint_file(&path)
+}
+
+/// Log a debug warning if SCRIBE_DEBUG is set
+fn debug_warn(msg: &str) {
+    if std::env::var("SCRIBE_DEBUG").is_ok() {
+        eprintln!("⚠️  {}", msg);
+    }
 }
 
 async fn try_include_file_with_budget(
@@ -448,43 +463,33 @@ async fn try_include_file_with_budget(
     counter: &TokenCounter,
     budget_tracker: &mut TokenBudget,
 ) -> Result<Option<FileInfo>> {
-    match load_file_content_safe(&file.path) {
-        Ok(content) => match counter.estimate_file_tokens(&content, &file.path) {
-            Ok(token_count) => {
-                if budget_tracker.can_allocate(token_count) {
-                    budget_tracker.allocate(token_count);
-                    file.content = Some(content);
-                    file.token_estimate = Some(token_count);
-                    file.char_count = Some(file.content.as_ref().unwrap().chars().count());
-                    file.line_count = Some(file.content.as_ref().unwrap().lines().count());
-                    Ok(Some(file))
-                } else {
-                    if std::env::var("SCRIBE_DEBUG").is_ok() {
-                        eprintln!(
-                            "⚠️  Skipping {} ({} tokens) - would exceed budget",
-                            file.relative_path, token_count
-                        );
-                    }
-                    Ok(None)
-                }
-            }
-            Err(e) => {
-                if std::env::var("SCRIBE_DEBUG").is_ok() {
-                    eprintln!(
-                        "⚠️  Failed to estimate tokens for {}: {}",
-                        file.relative_path, e
-                    );
-                }
-                Ok(None)
-            }
-        },
+    let content = match load_file_content_safe(&file.path) {
+        Ok(c) => c,
         Err(e) => {
-            if std::env::var("SCRIBE_DEBUG").is_ok() {
-                eprintln!("⚠️  Failed to read {}: {}", file.relative_path, e);
-            }
-            Ok(None)
+            debug_warn(&format!("Failed to read {}: {}", file.relative_path, e));
+            return Ok(None);
         }
+    };
+
+    let token_count = match counter.estimate_file_tokens(&content, &file.path) {
+        Ok(count) => count,
+        Err(e) => {
+            debug_warn(&format!("Failed to estimate tokens for {}: {}", file.relative_path, e));
+            return Ok(None);
+        }
+    };
+
+    if !budget_tracker.can_allocate(token_count) {
+        debug_warn(&format!("Skipping {} ({} tokens) - would exceed budget", file.relative_path, token_count));
+        return Ok(None);
     }
+
+    budget_tracker.allocate(token_count);
+    file.char_count = Some(content.chars().count());
+    file.line_count = Some(content.lines().count());
+    file.content = Some(content);
+    file.token_estimate = Some(token_count);
+    Ok(Some(file))
 }
 
 struct MockScanResult {
