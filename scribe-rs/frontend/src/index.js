@@ -37,66 +37,82 @@ class ScribeFileTree {
     this.initializeTreeComponent();
   }
 
+  // Create a tree node for the given path segment
+  createTreeNode(part, currentPath, isLast, index, file) {
+    const node = {
+      id: currentPath,
+      name: part,
+      isFolder: !isLast,
+      path: currentPath,
+      fileIndex: isLast ? index : undefined,
+      fileData: isLast ? file : undefined
+    };
+
+    // Initialize checkbox state for new nodes
+    if (!this.checkboxStates.has(currentPath)) {
+      this.checkboxStates.set(currentPath, { checked: false, indeterminate: false });
+    }
+
+    // Only add children array for folders
+    if (!isLast) {
+      node.children = [];
+    }
+
+    return node;
+  }
+
+  // Add a node to the tree, linking to parent if needed
+  addNodeToTree(nodeMap, rootNodes, node, parentPath) {
+    nodeMap.set(node.path, node);
+
+    if (parentPath) {
+      const parent = nodeMap.get(parentPath);
+      if (parent && parent.children) {
+        parent.children.push(node);
+      }
+    } else {
+      rootNodes.push(node);
+    }
+  }
+
+  // Process a single file path and add all path segments to the tree
+  processFilePath(file, index, nodeMap, rootNodes) {
+    const parts = file.path.split('/');
+    let currentPath = '';
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const parentPath = currentPath;
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      const isLast = i === parts.length - 1;
+
+      if (!nodeMap.has(currentPath)) {
+        const node = this.createTreeNode(part, currentPath, isLast, index, file);
+        this.addNodeToTree(nodeMap, rootNodes, node, parentPath);
+      }
+    }
+  }
+
   // Build hierarchical tree structure from flat file paths
   buildTreeData(files) {
     if (!files || files.length === 0) {
       console.warn('No files provided to buildTreeData');
       return [];
     }
-    
+
     const nodeMap = new Map();
     const rootNodes = [];
-    
+
     files.forEach((file, index) => {
       // Handle malformed file data
       if (!file || !file.path || typeof file.path !== 'string') {
         console.warn('Skipping malformed file data:', file);
         return;
       }
-      
-      const parts = file.path.split('/');
-      let currentPath = '';
-      
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        const parentPath = currentPath;
-        currentPath = currentPath ? `${currentPath}/${part}` : part;
-        const isLast = i === parts.length - 1;
-        
-        if (!nodeMap.has(currentPath)) {
-          const node = {
-            id: currentPath,
-            name: part,
-            isFolder: !isLast,
-            path: currentPath,
-            fileIndex: isLast ? index : undefined,
-            fileData: isLast ? file : undefined
-          };
-          
-          // Initialize checkbox state for new nodes
-          if (!this.checkboxStates.has(currentPath)) {
-            this.checkboxStates.set(currentPath, { checked: false, indeterminate: false });
-          }
-          
-          // Only add children array for folders
-          if (!isLast) {
-            node.children = [];
-          }
-          
-          nodeMap.set(currentPath, node);
-          
-          if (parentPath) {
-            const parent = nodeMap.get(parentPath);
-            if (parent && parent.children) {
-              parent.children.push(node);
-            }
-          } else {
-            rootNodes.push(node);
-          }
-        }
-      }
+
+      this.processFilePath(file, index, nodeMap, rootNodes);
     });
-    
+
     return rootNodes;
   }
 

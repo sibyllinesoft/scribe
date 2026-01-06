@@ -1,4 +1,4 @@
-use scribe_scaling::{ScalingConfig, ScalingEngine, ScalingResult, FileInfo};
+use scribe_scaling::{ProcessingResult, ScalingConfig, ScalingEngine, FileMetadata};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -38,7 +38,7 @@ fn is_core_file(filename: &str) -> bool {
 }
 
 /// Check if file matches query
-fn file_matches_query(file: &FileInfo, query: &Option<String>) -> bool {
+fn file_matches_query(file: &FileMetadata, query: &Option<String>) -> bool {
     query.as_ref().map_or(false, |q| {
         let filename = file.path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
         let path = file.path.to_string_lossy().to_lowercase();
@@ -50,7 +50,7 @@ fn file_matches_query(file: &FileInfo, query: &Option<String>) -> bool {
 async fn process_with_config(
     repo_path: &PathBuf,
     budget: usize,
-) -> Result<(ScalingResult, Duration), Box<dyn std::error::Error>> {
+) -> Result<(ProcessingResult, Duration), Box<dyn std::error::Error>> {
     let mut config = ScalingConfig::default();
     config.token_budget = Some(budget);
     config.enable_intelligent_selection = true;
@@ -65,7 +65,7 @@ async fn process_with_config(
 }
 
 /// Print first N files from result
-fn print_first_files(result: &ScalingResult, count: usize) {
+fn print_first_files(result: &ProcessingResult, count: usize) {
     for (i, file) in result.files.iter().take(count).enumerate() {
         let filename = file.path.file_name().unwrap_or_default().to_string_lossy();
         println!("      {}. {} ({} bytes, {})", i + 1, filename, file.size, file.language);
@@ -73,7 +73,7 @@ fn print_first_files(result: &ScalingResult, count: usize) {
 }
 
 /// Print HEAD section files with relevance info
-fn print_head_section(result: &ScalingResult, head_count: usize, total_files: usize, query: &Option<String>) {
+fn print_head_section(result: &ProcessingResult, head_count: usize, total_files: usize, query: &Option<String>) {
     println!(
         "\n   📍 Conceptual HEAD Section ({}% - Query-Specific High Centrality):",
         (100.0 * head_count as f64 / total_files as f64) as i32
@@ -92,7 +92,7 @@ fn print_head_section(result: &ScalingResult, head_count: usize, total_files: us
 }
 
 /// Print TAIL section files
-fn print_tail_section(result: &ScalingResult, tail_start: usize, total_files: usize) {
+fn print_tail_section(result: &ProcessingResult, tail_start: usize, total_files: usize) {
     println!(
         "   📍 Conceptual TAIL Section ({}% - Core Functionality):",
         (100.0 * (total_files - tail_start) as f64 / total_files as f64) as i32
@@ -106,7 +106,7 @@ fn print_tail_section(result: &ScalingResult, tail_start: usize, total_files: us
 }
 
 /// Print positioning analysis
-fn print_analysis(result: &ScalingResult, head_count: usize, tail_start: usize, total_files: usize, query: &Option<String>, overhead_ms: u128) {
+fn print_analysis(result: &ProcessingResult, head_count: usize, tail_start: usize, total_files: usize, query: &Option<String>, overhead_ms: u128) {
     println!("\n   📈 Positioning Analysis:");
 
     if query.is_some() {

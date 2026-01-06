@@ -1,4 +1,4 @@
-use scribe_scaling::{ScalingConfig, ScalingEngine, ScalingResult};
+use scribe_scaling::{ProcessingResult, ScalingConfig, ScalingEngine};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -29,7 +29,7 @@ async fn run_budget_test(
 }
 
 /// Print basic test results
-fn print_test_result(result: &ScalingResult, token_budget: Option<usize>, duration: Duration) {
+fn print_test_result(result: &ProcessingResult, token_budget: Option<usize>, duration: Duration) {
     println!("   ✅ Processing completed successfully");
     println!("   📁 Files selected: {}", result.total_files);
     println!("   ⏱️  Processing time: {:?}", duration);
@@ -46,7 +46,7 @@ fn print_test_result(result: &ScalingResult, token_budget: Option<usize>, durati
 }
 
 /// Verify intelligent selection worked correctly for given budget
-fn verify_selection(result: &ScalingResult, token_budget: Option<usize>) {
+fn verify_selection(result: &ProcessingResult, token_budget: Option<usize>) {
     match token_budget {
         Some(1000) if result.total_files <= 5 => {
             println!("   ✅ Intelligent selection working: {} files for 1k tokens (expected ~2-5)", result.total_files);
@@ -74,7 +74,7 @@ fn verify_selection(result: &ScalingResult, token_budget: Option<usize>) {
 }
 
 /// Analyze and print performance metrics
-fn analyze_performance(result: &ScalingResult, duration: Duration) {
+fn analyze_performance(result: &ProcessingResult, duration: Duration) {
     let time_secs = duration.as_secs_f64();
     let memory_mb = result.memory_peak as f64 / 1024.0 / 1024.0;
 

@@ -77,23 +77,23 @@ const generateMockFiles = (count = 10, maxDepth = 3) => {
   const files = [];
   const folders = ['src', 'tests', 'docs', 'utils', 'components', 'hooks', 'styles', 'assets'];
   const extensions = ['.js', '.jsx', '.ts', '.tsx', '.css', '.scss', '.md', '.json', '.html'];
-  
+
   for (let i = 0; i < count; i++) {
     const folder = folders[i % folders.length];
     const depth = Math.floor(Math.random() * maxDepth) + 1;
-    
+
     let path = folder;
     for (let d = 1; d < depth; d++) {
       path += `/subfolder${d}`;
     }
-    
+
     const ext = extensions[i % extensions.length];
     const fileName = `file${i}${ext}`;
     path += `/${fileName}`;
-    
+
     files.push({ path });
   }
-  
+
   return files;
 };
 
@@ -101,15 +101,94 @@ const createStressTestFiles = (nodeCount = 1000) => {
   const files = [];
   const folders = 10;
   const subfolders = 5;
-  
+
   for (let i = 0; i < nodeCount; i++) {
     const folder = `folder${i % folders}`;
     const subfolder = `sub${Math.floor(i / folders) % subfolders}`;
     const file = `file${i}.js`;
     files.push({ path: `${folder}/${subfolder}/${file}` });
   }
-  
+
   return files;
+};
+
+// Build a node map from tree data for testing
+const buildNodeMap = (nodes, nodeMap = new Map()) => {
+  nodes.forEach(node => {
+    nodeMap.set(node.path, node);
+    if (node.children) {
+      buildNodeMap(node.children, nodeMap);
+    }
+  });
+  return nodeMap;
+};
+
+// Get all file nodes from a node map
+const getFileNodes = (nodeMap) => {
+  return Array.from(nodeMap.values()).filter(node => !node.isFolder);
+};
+
+// Validate all nodes in tree have proper checkbox states
+const validateCheckboxStates = (fileTree, nodes) => {
+  nodes.forEach(node => {
+    const state = fileTree.checkboxStates.get(node.path);
+    expect(state).toBeDefined();
+    expect(state.checked).toBe(false);
+    expect(state.indeterminate).toBe(false);
+
+    if (node.children) {
+      validateCheckboxStates(fileTree, node.children);
+    }
+  });
+};
+
+// Validate all children under a folder are checked
+const validateChildrenChecked = (fileTree, children) => {
+  children.forEach(child => {
+    const childState = fileTree.checkboxStates.get(child.path);
+    expect(childState.checked).toBe(true);
+
+    if (!child.isFolder) {
+      expect(fileTree.selectedFiles.has(child.path)).toBe(true);
+    }
+
+    if (child.children) {
+      validateChildrenChecked(fileTree, child.children);
+    }
+  });
+};
+
+// Validate tree data structure integrity
+const validateTreeDataIntegrity = (nodes, visited = new Set()) => {
+  nodes.forEach(node => {
+    // Check for duplicate IDs
+    expect(visited.has(node.id)).toBe(false);
+    visited.add(node.id);
+
+    // Validate node structure
+    expect(node.id).toBeDefined();
+    expect(node.name).toBeDefined();
+    expect(node.path).toBeDefined();
+    expect(typeof node.isFolder).toBe('boolean');
+
+    // Validate folder vs file consistency
+    if (node.isFolder) {
+      expect(Array.isArray(node.children)).toBe(true);
+      if (node.children.length > 0) {
+        validateTreeDataIntegrity(node.children, visited);
+      }
+    } else {
+      expect(node.children).toBeUndefined();
+      expect(typeof node.fileIndex).toBe('number');
+    }
+
+    // Validate path consistency
+    if (node.children) {
+      node.children.forEach(child => {
+        expect(child.path.startsWith(node.path)).toBe(true);
+      });
+    }
+  });
 };
 
 describe('React Arborist Integration Tests', () => {
@@ -174,24 +253,9 @@ describe('React Arborist Integration Tests', () => {
     test('should initialize checkbox states correctly', () => {
       const files = generateMockFiles(10);
       const treeData = fileTree.buildTreeData(files);
-      
+
       expect(fileTree.checkboxStates.size).toBeGreaterThan(0);
-      
-      // Check that all paths have states
-      const checkAllNodes = (nodes) => {
-        nodes.forEach(node => {
-          const state = fileTree.checkboxStates.get(node.path);
-          expect(state).toBeDefined();
-          expect(state.checked).toBe(false);
-          expect(state.indeterminate).toBe(false);
-          
-          if (node.children) {
-            checkAllNodes(node.children);
-          }
-        });
-      };
-      
-      checkAllNodes(treeData);
+      validateCheckboxStates(fileTree, treeData);
     });
   });
 
@@ -202,23 +266,12 @@ describe('React Arborist Integration Tests', () => {
     beforeEach(() => {
       const files = generateMockFiles(20);
       treeData = fileTree.buildTreeData(files);
-      
-      // Build node map for testing
-      nodeMap = new Map();
-      const buildMap = (nodes) => {
-        nodes.forEach(node => {
-          nodeMap.set(node.path, node);
-          if (node.children) {
-            buildMap(node.children);
-          }
-        });
-      };
-      buildMap(treeData);
+      nodeMap = buildNodeMap(treeData);
     });
 
     test('should toggle file checkbox state', () => {
       // Find a file node
-      const fileNode = Array.from(nodeMap.values()).find(node => !node.isFolder);
+      const fileNode = getFileNodes(nodeMap)[0];
       if (!fileNode) return; // Skip if no files found
       
       const initialState = fileTree.checkboxStates.get(fileNode.path);
@@ -257,22 +310,7 @@ describe('React Arborist Integration Tests', () => {
       expect(folderState.checked).toBe(true);
       
       // Check that all file children are selected
-      const checkChildren = (children) => {
-        children.forEach(child => {
-          const childState = fileTree.checkboxStates.get(child.path);
-          expect(childState.checked).toBe(true);
-          
-          if (!child.isFolder) {
-            expect(fileTree.selectedFiles.has(child.path)).toBe(true);
-          }
-          
-          if (child.children) {
-            checkChildren(child.children);
-          }
-        });
-      };
-      
-      checkChildren(folderNode.children);
+      validateChildrenChecked(fileTree, folderNode.children);
     });
 
     test('should update parent folder states correctly', () => {
@@ -300,7 +338,7 @@ describe('React Arborist Integration Tests', () => {
 
     test('should clear all selections', () => {
       // Select some files first
-      const files = Array.from(nodeMap.values()).filter(node => !node.isFolder).slice(0, 3);
+      const files = getFileNodes(nodeMap).slice(0, 3);
       files.forEach(file => {
         fileTree.toggleFileCheckbox(nodeMap, file.path, true);
       });
@@ -318,8 +356,7 @@ describe('React Arborist Integration Tests', () => {
     });
 
     test('should set selected files programmatically', () => {
-      const filesToSelect = Array.from(nodeMap.values())
-        .filter(node => !node.isFolder)
+      const filesToSelect = getFileNodes(nodeMap)
         .slice(0, 3)
         .map(node => node.path);
       
@@ -450,18 +487,8 @@ describe('React Arborist Integration Tests', () => {
     test('should handle rapid state changes efficiently', () => {
       const files = generateMockFiles(50);
       const treeData = fileTree.buildTreeData(files);
-      
-      // Build node map
-      const nodeMap = new Map();
-      const buildMap = (nodes) => {
-        nodes.forEach(node => {
-          nodeMap.set(node.path, node);
-          if (node.children) buildMap(node.children);
-        });
-      };
-      buildMap(treeData);
-      
-      const fileNodes = Array.from(nodeMap.values()).filter(node => !node.isFolder);
+      const nodeMap = buildNodeMap(treeData);
+      const fileNodes = getFileNodes(nodeMap);
       
       const startTime = performance.now();
       
@@ -576,19 +603,10 @@ describe('React Arborist Integration Tests', () => {
     test('should maintain consistency between selected files and checkbox states', () => {
       const files = generateMockFiles(20);
       const treeData = fileTree.buildTreeData(files);
-      
-      // Build node map
-      const nodeMap = new Map();
-      const buildMap = (nodes) => {
-        nodes.forEach(node => {
-          nodeMap.set(node.path, node);
-          if (node.children) buildMap(node.children);
-        });
-      };
-      buildMap(treeData);
-      
+      const nodeMap = buildNodeMap(treeData);
+
       // Select various files
-      const fileNodes = Array.from(nodeMap.values()).filter(node => !node.isFolder);
+      const fileNodes = getFileNodes(nodeMap);
       const selectedPaths = fileNodes.slice(0, 5).map(node => node.path);
       
       selectedPaths.forEach(path => {
@@ -608,57 +626,16 @@ describe('React Arborist Integration Tests', () => {
     test('should validate tree data structure integrity', () => {
       const files = generateMockFiles(30);
       const treeData = fileTree.buildTreeData(files);
-      
-      const validateTreeIntegrity = (nodes, visited = new Set()) => {
-        nodes.forEach(node => {
-          // Check for duplicate IDs
-          expect(visited.has(node.id)).toBe(false);
-          visited.add(node.id);
-          
-          // Validate node structure
-          expect(node.id).toBeDefined();
-          expect(node.name).toBeDefined();
-          expect(node.path).toBeDefined();
-          expect(typeof node.isFolder).toBe('boolean');
-          
-          // Validate folder vs file consistency
-          if (node.isFolder) {
-            expect(Array.isArray(node.children)).toBe(true);
-            if (node.children.length > 0) {
-              validateTreeIntegrity(node.children, visited);
-            }
-          } else {
-            expect(node.children).toBeUndefined();
-            expect(typeof node.fileIndex).toBe('number');
-          }
-          
-          // Validate path consistency
-          if (node.children) {
-            node.children.forEach(child => {
-              expect(child.path.startsWith(node.path)).toBe(true);
-            });
-          }
-        });
-      };
-      
-      validateTreeIntegrity(treeData);
+
+      // Use helper function for tree integrity validation
+      validateTreeDataIntegrity(treeData);
     });
 
     test('should handle concurrent state modifications gracefully', () => {
       const files = generateMockFiles(20);
       const treeData = fileTree.buildTreeData(files);
-      
-      // Build node map
-      const nodeMap = new Map();
-      const buildMap = (nodes) => {
-        nodes.forEach(node => {
-          nodeMap.set(node.path, node);
-          if (node.children) buildMap(node.children);
-        });
-      };
-      buildMap(treeData);
-      
-      const fileNodes = Array.from(nodeMap.values()).filter(node => !node.isFolder);
+      const nodeMap = buildNodeMap(treeData);
+      const fileNodes = getFileNodes(nodeMap);
       
       // Simulate concurrent modifications
       const operations = [];

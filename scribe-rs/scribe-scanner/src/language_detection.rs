@@ -705,46 +705,25 @@ impl LanguageDetector {
 
     /// Quick content validation for extension-based detection
     fn quick_content_validation(&self, language: &Language, content: &str) -> bool {
+        let markers = Self::get_language_markers(language);
+        if markers.is_empty() {
+            return true; // For less common languages, skip validation
+        }
+        markers.iter().any(|marker| content.contains(marker))
+    }
+
+    /// Get language-specific content markers for quick validation
+    fn get_language_markers(language: &Language) -> &'static [&'static str] {
         match language {
-            Language::Rust => {
-                content.contains("fn ") || content.contains("use ") || content.contains("struct ")
-            }
-            Language::Python => {
-                content.contains("def ")
-                    || content.contains("import ")
-                    || content.contains("class ")
-            }
-            Language::JavaScript => {
-                content.contains("function ")
-                    || content.contains("const ")
-                    || content.contains("var ")
-            }
-            Language::TypeScript => {
-                content.contains("interface ")
-                    || content.contains("type ")
-                    || content.contains(": ")
-            }
-            Language::Go => {
-                content.contains("func ")
-                    || content.contains("package ")
-                    || content.contains("import ")
-            }
-            Language::Java => {
-                content.contains("class ")
-                    || content.contains("public ")
-                    || content.contains("import ")
-            }
-            Language::C => {
-                content.contains("#include")
-                    || content.contains("int main")
-                    || content.contains("void ")
-            }
-            Language::Cpp => {
-                content.contains("#include")
-                    || content.contains("class ")
-                    || content.contains("namespace ")
-            }
-            _ => true, // For less common languages, skip validation
+            Language::Rust => &["fn ", "use ", "struct "],
+            Language::Python => &["def ", "import ", "class "],
+            Language::JavaScript => &["function ", "const ", "var "],
+            Language::TypeScript => &["interface ", "type ", ": "],
+            Language::Go => &["func ", "package ", "import "],
+            Language::Java => &["class ", "public ", "import "],
+            Language::C => &["#include", "int main", "void "],
+            Language::Cpp => &["#include", "class ", "namespace "],
+            _ => &[],
         }
     }
 

@@ -142,85 +142,92 @@ const htmlTemplate = `
 // Track last modification time for hot reload
 let lastModified = Date.now();
 
+// Handle API status endpoint for hot reload
+function handleStatusEndpoint() {
+  return new Response(JSON.stringify({
+    status: 'ok',
+    lastModified,
+    timestamp: Date.now(),
+  }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// Handle serving the main HTML page
+function handleHtmlPage() {
+  return new Response(htmlTemplate, {
+    headers: { 'Content-Type': 'text/html' },
+  });
+}
+
+// Serve a static file with appropriate MIME type and caching
+function serveStaticFile(pathname, defaultMime, cacheControl) {
+  const filePath = join(process.cwd(), pathname.slice(1));
+
+  try {
+    if (existsSync(filePath)) {
+      const file = readFileSync(filePath);
+      const ext = extname(filePath);
+      const mimeType = mimeTypes[ext] || defaultMime;
+
+      return new Response(file, {
+        headers: {
+          'Content-Type': mimeType,
+          'Cache-Control': cacheControl,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Error serving file:', error);
+  }
+  return null;
+}
+
+// Return a 404 Not Found response
+function notFoundResponse() {
+  return new Response('Not Found', {
+    status: 404,
+    headers: { 'Content-Type': 'text/plain' },
+  });
+}
+
 const server = serve({
   port: PORT,
-  
+
   async fetch(request) {
     const url = new URL(request.url);
     const pathname = url.pathname;
-    
+
     // Hot reload API endpoint
     if (pathname === '/api/status') {
-      return new Response(JSON.stringify({
-        status: 'ok',
-        lastModified,
-        timestamp: Date.now(),
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return handleStatusEndpoint();
     }
-    
+
     // Update last modified time (simple file change detection)
     if (isDev) {
       lastModified = Date.now();
     }
-    
+
     // Serve the main HTML page
     if (pathname === '/' || pathname === '/index.html') {
-      return new Response(htmlTemplate, {
-        headers: { 'Content-Type': 'text/html' },
-      });
+      return handleHtmlPage();
     }
-    
+
     // Serve static files from dist directory
     if (pathname.startsWith('/dist/')) {
-      const filePath = join(process.cwd(), pathname.slice(1));
-      
-      try {
-        if (existsSync(filePath)) {
-          const file = readFileSync(filePath);
-          const ext = extname(filePath);
-          const mimeType = mimeTypes[ext] || 'application/octet-stream';
-          
-          return new Response(file, {
-            headers: { 
-              'Content-Type': mimeType,
-              'Cache-Control': isDev ? 'no-cache' : 'public, max-age=31536000',
-            },
-          });
-        }
-      } catch (error) {
-        console.error('Error serving file:', error);
-      }
+      const cacheControl = isDev ? 'no-cache' : 'public, max-age=31536000';
+      const response = serveStaticFile(pathname, 'application/octet-stream', cacheControl);
+      if (response) return response;
     }
-    
+
     // Serve files from src directory in development
     if (isDev && pathname.startsWith('/src/')) {
-      const filePath = join(process.cwd(), pathname.slice(1));
-      
-      try {
-        if (existsSync(filePath)) {
-          const file = readFileSync(filePath);
-          const ext = extname(filePath);
-          const mimeType = mimeTypes[ext] || 'text/plain';
-          
-          return new Response(file, {
-            headers: { 
-              'Content-Type': mimeType,
-              'Cache-Control': 'no-cache',
-            },
-          });
-        }
-      } catch (error) {
-        console.error('Error serving source file:', error);
-      }
+      const response = serveStaticFile(pathname, 'text/plain', 'no-cache');
+      if (response) return response;
     }
-    
+
     // 404 for everything else
-    return new Response('Not Found', { 
-      status: 404,
-      headers: { 'Content-Type': 'text/plain' },
-    });
+    return notFoundResponse();
   },
   
   error(error) {
