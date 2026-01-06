@@ -1,6 +1,63 @@
-use scribe_scaling::{ScalingConfig, ScalingEngine};
+use scribe_scaling::{ScalingConfig, ScalingEngine, ScalingFileInfo};
 use std::path::PathBuf;
 use std::time::Instant;
+
+/// Get file type multiplier for token estimation
+fn file_type_multiplier(file_type: &str) -> f64 {
+    match file_type {
+        "Source" => 1.2,
+        "Documentation" => 1.0,
+        "Configuration" => 0.8,
+        _ => 1.1,
+    }
+}
+
+/// Get language multiplier for token estimation
+fn language_multiplier(language: &str) -> f64 {
+    match language {
+        "Rust" => 1.3,
+        "JavaScript" | "TypeScript" => 1.2,
+        "Python" => 1.1,
+        "C" | "Go" => 1.0,
+        "HTML" | "CSS" => 0.9,
+        "JSON" | "YAML" | "TOML" => 0.7,
+        _ => 1.0,
+    }
+}
+
+/// Estimate tokens for a file
+fn estimate_file_tokens(file: &ScalingFileInfo, token_budget: usize) -> usize {
+    let base_tokens = ((file.size as f64) / 3.5) as usize;
+    let min_tokens = if token_budget < 5000 { 100 } else { 50 };
+    let base_tokens = base_tokens.max(min_tokens);
+
+    let type_mult = file_type_multiplier(&file.file_type);
+    let lang_mult = language_multiplier(&file.language);
+    let estimated = (base_tokens as f64 * type_mult * lang_mult) as usize;
+
+    estimated.min(token_budget / 4)
+}
+
+/// Print budget comparison result
+fn print_budget_comparison(token_budget: usize, total_files: usize, total_tokens: usize, expected_files: &str, expected_tokens: &str) {
+    println!("\n   🔍 Comparison to Original Scribe:");
+    println!("      Original: {}", expected_files);
+    println!("      Current:  {} files, {} tokens", total_files, total_tokens);
+
+    let good_file_count = match token_budget {
+        1000 => total_files >= 2 && total_files <= 6,
+        10000 => total_files >= 8 && total_files <= 20,
+        _ => true,
+    };
+
+    if total_tokens <= token_budget && good_file_count {
+        println!("      ✅ EXCELLENT: Within budget and reasonable file count");
+    } else if total_tokens <= (token_budget as f64 * 1.2) as usize {
+        println!("      ✅ GOOD: Close to budget with {} files", total_files);
+    } else {
+        println!("      ⚠️  OVER BUDGET: {} tokens > {} budget", total_tokens, token_budget);
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,47 +109,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut total_estimated_tokens = 0;
         let mut file_details = Vec::new();
 
-        // Estimate tokens for each selected file (using same logic as selector)
         for file in &result.files {
-            let base_tokens = ((file.size as f64) / 3.5) as usize;
-            let min_tokens = if token_budget < 5000 { 100 } else { 50 };
-            let base_tokens = base_tokens.max(min_tokens);
+            let tokens = estimate_file_tokens(file, token_budget);
+            total_estimated_tokens += tokens;
 
-            // Adjust based on file type
-            let multiplier = match file.file_type.as_str() {
-                "Source" => 1.2,
-                "Documentation" => 1.0,
-                "Configuration" => 0.8,
-                _ => 1.1,
-            };
-
-            // Apply language-specific adjustments
-            let language_multiplier = match file.language.as_str() {
-                "Rust" => 1.3,
-                "JavaScript" | "TypeScript" => 1.2,
-                "Python" => 1.1,
-                "C" | "Go" => 1.0,
-                "HTML" | "CSS" => 0.9,
-                "JSON" | "YAML" | "TOML" => 0.7,
-                _ => 1.0,
-            };
-
-            let estimated_tokens = (base_tokens as f64 * multiplier * language_multiplier) as usize;
-            let capped_tokens = estimated_tokens.min(token_budget / 4);
-
-            total_estimated_tokens += capped_tokens;
-
-            // Show details for first few files
             if file_details.len() < 5 {
-                file_details.push((
-                    file.path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    file.size,
-                    capped_tokens,
-                ));
+                let filename = file.path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                file_details.push((filename, file.size, tokens));
             }
         }
 
@@ -114,64 +137,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Compare to original scribe expectations
         match token_budget {
-            1000 => {
-                println!("\n   🔍 Comparison to Original Scribe:");
-                println!("      Original: ~2 files, ~791 tokens");
-                println!(
-                    "      Current:  {} files, {} tokens",
-                    result.total_files, total_estimated_tokens
-                );
-
-                if total_estimated_tokens <= 1000
-                    && result.total_files >= 2
-                    && result.total_files <= 6
-                {
-                    println!("      ✅ EXCELLENT: Within budget and reasonable file count");
-                } else if total_estimated_tokens <= 1200 {
-                    println!(
-                        "      ✅ GOOD: Close to budget with {} files",
-                        result.total_files
-                    );
-                } else {
-                    println!(
-                        "      ⚠️  OVER BUDGET: {} tokens > {} budget",
-                        total_estimated_tokens, token_budget
-                    );
-                }
-            }
-            10000 => {
-                println!("\n   🔍 Comparison to Original Scribe:");
-                println!("      Original: ~11 files, ~7,630 tokens");
-                println!(
-                    "      Current:  {} files, {} tokens",
-                    result.total_files, total_estimated_tokens
-                );
-
-                if total_estimated_tokens <= 10000
-                    && result.total_files >= 8
-                    && result.total_files <= 20
-                {
-                    println!("      ✅ EXCELLENT: Within budget and reasonable file count");
-                } else if total_estimated_tokens <= 12000 {
-                    println!(
-                        "      ✅ GOOD: Close to budget with {} files",
-                        result.total_files
-                    );
-                } else {
-                    println!(
-                        "      ⚠️  OVER BUDGET: {} tokens > {} budget",
-                        total_estimated_tokens, token_budget
-                    );
-                }
-            }
+            1000 => print_budget_comparison(token_budget, result.total_files, total_estimated_tokens, "~2 files, ~791 tokens", ""),
+            10000 => print_budget_comparison(token_budget, result.total_files, total_estimated_tokens, "~11 files, ~7,630 tokens", ""),
             50000 => {
                 if total_estimated_tokens <= 50000 {
                     println!("      ✅ Within budget: {} tokens", total_estimated_tokens);
                 } else {
-                    println!(
-                        "      ⚠️  Over budget: {} tokens > {} budget",
-                        total_estimated_tokens, token_budget
-                    );
+                    println!("      ⚠️  Over budget: {} tokens > {} budget", total_estimated_tokens, token_budget);
                 }
             }
             _ => {}
