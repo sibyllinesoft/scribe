@@ -17,7 +17,8 @@ use tokio::fs;
 use tracing::{debug, info, warn};
 
 use crate::core::error::{ScalingError, ScalingResult};
-use scribe_core::{file, FileInfo, FileType};
+use crate::core::utils::classify_file_type_string;
+use scribe_core::file;
 
 /// File metadata for streaming operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -344,41 +345,9 @@ fn detect_language(path: &Path) -> String {
     file::language_display_name(&language).to_string()
 }
 
-/// Fast file type classification
+/// Fast file type classification - delegates to shared utility
 fn classify_file_type(path: &Path) -> String {
-    let extension = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    let language = file::detect_language_from_path(path);
-    let file_type =
-        FileInfo::classify_file_type(path.to_string_lossy().as_ref(), &language, &extension);
-
-    match file_type {
-        FileType::Test { .. } => "Test".to_string(),
-        FileType::Documentation { .. } => "Documentation".to_string(),
-        FileType::Configuration { .. } => "Configuration".to_string(),
-        FileType::Binary => "Binary".to_string(),
-        FileType::Generated => "Generated".to_string(),
-        FileType::Source { .. } => match extension.as_str() {
-            "jsx" | "tsx" | "vue" | "svelte" => "Frontend".to_string(),
-            "html" | "htm" | "css" | "scss" | "sass" | "less" => "Web".to_string(),
-            "sh" | "bash" | "bat" | "ps1" => "Script".to_string(),
-            _ => "Source".to_string(),
-        },
-        FileType::Unknown => match extension.as_str() {
-            "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" => "Image".to_string(),
-            "pdf" | "doc" | "docx" | "ppt" | "pptx" => "Document".to_string(),
-            "sql" => "Database".to_string(),
-            "xml" | "xsd" | "xsl" => "Markup".to_string(),
-            "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" => {
-                "Configuration".to_string()
-            }
-            _ => "Other".to_string(),
-        },
-    }
+    classify_file_type_string(path)
 }
 
 /// Legacy file chunk for backwards compatibility

@@ -20,7 +20,8 @@ use crate::io::memory::MemoryConfig;
 use crate::io::metrics::{BenchmarkResult, ScalingMetrics};
 use crate::io::parallel::ParallelConfig;
 use crate::io::streaming::{FileMetadata, StreamingConfig};
-use scribe_core::{file, FileInfo, FileType};
+use crate::core::utils::classify_file_type_string;
+use scribe_core::file;
 
 /// Complete scaling configuration combining all subsystems
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -419,35 +420,9 @@ fn detect_language(path: &Path) -> String {
     file::language_display_name(&language).to_string()
 }
 
-/// Simple file type classification
+/// Simple file type classification - delegates to shared utility
 fn classify_file_type(path: &Path) -> String {
-    let extension = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    let language = file::detect_language_from_path(path);
-    let file_type =
-        FileInfo::classify_file_type(path.to_string_lossy().as_ref(), &language, &extension);
-
-    match file_type {
-        FileType::Test { .. } => "Test".to_string(),
-        FileType::Documentation { .. } => "Documentation".to_string(),
-        FileType::Configuration { .. } => "Configuration".to_string(),
-        FileType::Binary => "Binary".to_string(),
-        FileType::Generated => "Generated".to_string(),
-        FileType::Source { .. } => match extension.as_str() {
-            "h" | "hpp" | "hxx" => "Header".to_string(),
-            _ => "Source".to_string(),
-        },
-        FileType::Unknown => match extension.as_str() {
-            "md" | "txt" | "rst" | "adoc" => "Documentation".to_string(),
-            "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" => "Configuration".to_string(),
-            "png" | "jpg" | "jpeg" | "gif" | "svg" => "Image".to_string(),
-            _ => "Other".to_string(),
-        },
-    }
+    classify_file_type_string(path)
 }
 
 /// Estimate memory usage based on file count

@@ -14,7 +14,8 @@ use crate::api::engine::{ProcessingResult, ScalingConfig};
 use crate::core::error::{ScalingError, ScalingResult};
 use crate::core::positioning::{ContextPositioner, ContextPositioningConfig, PositionedSelection};
 use crate::io::streaming::{FileMetadata, ScoredFile, StreamingSelector};
-use scribe_core::{file, FileInfo, FileType};
+use crate::core::utils::classify_file_type_string;
+use scribe_core::file;
 
 /// File category classification for quota allocation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -351,35 +352,9 @@ impl ScalingSelector {
         file::language_display_name(&language).to_string()
     }
 
-    /// Simple file type classification
+    /// Simple file type classification - delegates to shared utility
     fn classify_file_type(&self, path: &Path) -> String {
-        let extension = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_lowercase())
-            .unwrap_or_default();
-
-        let language = file::detect_language_from_path(path);
-        let file_type =
-            FileInfo::classify_file_type(path.to_string_lossy().as_ref(), &language, &extension);
-
-        match file_type {
-            FileType::Test { .. } => "Test".to_string(),
-            FileType::Documentation { .. } => "Documentation".to_string(),
-            FileType::Configuration { .. } => "Configuration".to_string(),
-            FileType::Binary => "Binary".to_string(),
-            FileType::Generated => "Generated".to_string(),
-            FileType::Source { .. } => match extension.as_str() {
-                "h" | "hpp" | "hxx" => "Header".to_string(),
-                _ => "Source".to_string(),
-            },
-            FileType::Unknown => match extension.as_str() {
-                "md" | "txt" | "rst" => "Documentation".to_string(),
-                "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" => "Configuration".to_string(),
-                "png" | "jpg" | "jpeg" | "gif" | "svg" => "Image".to_string(),
-                _ => "Other".to_string(),
-            },
-        }
+        classify_file_type_string(path)
     }
 
     /// Apply intelligent selection algorithm based on configuration
