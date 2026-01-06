@@ -230,50 +230,14 @@ impl IncrementalScanner {
             .as_secs();
 
         for (path, change) in &changes {
-            match change {
-                FileChange::Unchanged => {
-                    // Use cached data
-                    if let Some(entry) = manifest.entries.get(path) {
-                        if let Some(cached) = &entry.cached_results {
-                            let cached_info = self.file_info_from_cache(entry, cached)?;
-                            collection.add_file(&cached_info);
-                            self.metrics.files_cached += 1;
-                        }
-                    }
-                }
-
-                FileChange::NewFile | FileChange::ContentChanged | FileChange::MetadataChanged => {
-                    // Scan the file
-                    let file_path = self.repo_root.join(path);
-                    let SingleFileScanResult {
-                        manifest_entry,
-                        file_info,
-                    } = self.scan_single_file(&file_path).await?;
-
-                    collection.add_file(&file_info);
-                    new_manifest.entries.insert(path.clone(), manifest_entry);
-
-                    match change {
-                        FileChange::NewFile => self.metrics.files_scanned += 1,
-                        _ => self.metrics.files_updated += 1,
-                    }
-                }
-
-                FileChange::Moved(old_path) => {
-                    // Handle moved file
-                    if let Some(old_entry) = new_manifest.entries.remove(old_path) {
-                        let mut new_entry = old_entry;
-                        new_entry.path = path.clone();
-                        new_entry.scanned_at = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-
-                        new_manifest.entries.insert(path.clone(), new_entry);
-                        self.metrics.files_updated += 1;
-                    }
-                }
-            }
+            self.process_file_change(
+                path,
+                change,
+                &manifest,
+                &mut new_manifest,
+                &mut collection,
+            )
+            .await?;
         }
 
         // Remove deleted files from manifest
@@ -315,6 +279,91 @@ impl IncrementalScanner {
         );
 
         Ok(collection)
+    }
+
+    /// Process a single file change during incremental scan
+    async fn process_file_change(
+        &mut self,
+        path: &str,
+        change: &FileChange,
+        manifest: &FileManifest,
+        new_manifest: &mut FileManifest,
+        collection: &mut CompactFileCollection,
+    ) -> Result<()> {
+        match change {
+            FileChange::Unchanged => {
+                self.process_unchanged_file(path, manifest, collection)?;
+            }
+            FileChange::NewFile | FileChange::ContentChanged | FileChange::MetadataChanged => {
+                self.process_modified_file(path, change, new_manifest, collection).await?;
+            }
+            FileChange::Moved(old_path) => {
+                self.process_moved_file(path, old_path, new_manifest);
+            }
+        }
+        Ok(())
+    }
+
+    /// Process an unchanged file by loading from cache
+    fn process_unchanged_file(
+        &mut self,
+        path: &str,
+        manifest: &FileManifest,
+        collection: &mut CompactFileCollection,
+    ) -> Result<()> {
+        if let Some(entry) = manifest.entries.get(path) {
+            if let Some(cached) = &entry.cached_results {
+                let cached_info = self.file_info_from_cache(entry, cached)?;
+                collection.add_file(&cached_info);
+                self.metrics.files_cached += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Process a new, changed, or metadata-changed file
+    async fn process_modified_file(
+        &mut self,
+        path: &str,
+        change: &FileChange,
+        new_manifest: &mut FileManifest,
+        collection: &mut CompactFileCollection,
+    ) -> Result<()> {
+        let file_path = self.repo_root.join(path);
+        let SingleFileScanResult {
+            manifest_entry,
+            file_info,
+        } = self.scan_single_file(&file_path).await?;
+
+        collection.add_file(&file_info);
+        new_manifest.entries.insert(path.to_string(), manifest_entry);
+
+        if matches!(change, FileChange::NewFile) {
+            self.metrics.files_scanned += 1;
+        } else {
+            self.metrics.files_updated += 1;
+        }
+        Ok(())
+    }
+
+    /// Process a moved/renamed file
+    fn process_moved_file(
+        &mut self,
+        new_path: &str,
+        old_path: &str,
+        new_manifest: &mut FileManifest,
+    ) {
+        if let Some(old_entry) = new_manifest.entries.remove(old_path) {
+            let mut new_entry = old_entry;
+            new_entry.path = new_path.to_string();
+            new_entry.scanned_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            new_manifest.entries.insert(new_path.to_string(), new_entry);
+            self.metrics.files_updated += 1;
+        }
     }
 
     /// Load existing manifest from disk

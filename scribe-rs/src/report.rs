@@ -361,23 +361,44 @@ fn escape_xml(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Check if file name matches a special icon pattern
+fn is_readme(name: &str) -> bool {
+    name.starts_with("readme")
+}
+
+fn is_license(name: &str) -> bool {
+    name == "license" || name == "licence"
+}
+
+fn is_docker(name: &str) -> bool {
+    name == "dockerfile" || name.contains("docker-compose")
+}
+
+fn is_package_manifest(name: &str) -> bool {
+    name == "package.json" || name == "cargo.toml" || name == "go.mod"
+}
+
 /// Get icon for special file names (README, LICENSE, etc.)
 fn get_special_file_icon(name: &str) -> Option<&'static str> {
-    if name.starts_with("readme") {
-        Some("book-open")
-    } else if name == "license" || name == "licence" {
-        Some("scale")
-    } else if name == "dockerfile" || name.contains("docker-compose") {
-        Some("box")
-    } else if name == "makefile" {
-        Some("settings")
-    } else if name.starts_with(".git") {
-        Some("git-branch")
-    } else if name == "package.json" || name == "cargo.toml" || name == "go.mod" {
-        Some("package")
-    } else {
-        None
+    if is_readme(name) {
+        return Some("book-open");
     }
+    if is_license(name) {
+        return Some("scale");
+    }
+    if is_docker(name) {
+        return Some("box");
+    }
+    if name == "makefile" {
+        return Some("settings");
+    }
+    if name.starts_with(".git") {
+        return Some("git-branch");
+    }
+    if is_package_manifest(name) {
+        return Some("package");
+    }
+    None
 }
 
 /// Get icon based on file extension
