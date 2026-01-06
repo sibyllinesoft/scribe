@@ -765,37 +765,46 @@ impl AstParser {
         trimmed
     }
 
-    /// Check if a node has associated documentation
-    fn has_documentation(&self, node: Node, content: &str) -> bool {
-        // Look for comments before the node
-        if let Some(prev_sibling) = node.prev_sibling() {
-            if prev_sibling.kind() == "comment" {
-                return true;
-            }
-        }
+    /// Check if a node has a preceding comment
+    fn has_preceding_comment(&self, node: Node) -> bool {
+        node.prev_sibling()
+            .map(|sibling| sibling.kind() == "comment")
+            .unwrap_or(false)
+    }
 
-        // Look for docstrings in Python
-        if node.kind() == "function_definition" || node.kind() == "class_definition" {
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    if child.kind() == "expression_statement" {
-                        if let Some(grandchild) = child.child(0) {
-                            if grandchild.kind() == "string" {
-                                let string_content =
-                                    &content[grandchild.start_byte()..grandchild.end_byte()];
-                                if string_content.starts_with("\"\"\"")
-                                    || string_content.starts_with("'''")
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
+    /// Check if an expression statement contains a docstring
+    fn is_docstring_expression(&self, child: Node, content: &str) -> bool {
+        if child.kind() != "expression_statement" {
+            return false;
+        }
+        let Some(grandchild) = child.child(0) else {
+            return false;
+        };
+        if grandchild.kind() != "string" {
+            return false;
+        }
+        let string_content = &content[grandchild.start_byte()..grandchild.end_byte()];
+        string_content.starts_with("\"\"\"") || string_content.starts_with("'''")
+    }
+
+    /// Check if a Python node has a docstring
+    fn has_python_docstring(&self, node: Node, content: &str) -> bool {
+        if node.kind() != "function_definition" && node.kind() != "class_definition" {
+            return false;
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if self.is_docstring_expression(child, content) {
+                    return true;
                 }
             }
         }
-
         false
+    }
+
+    /// Check if a node has associated documentation
+    fn has_documentation(&self, node: Node, content: &str) -> bool {
+        self.has_preceding_comment(node) || self.has_python_docstring(node, content)
     }
 
     /// Extract dependencies from a node (simplified implementation)

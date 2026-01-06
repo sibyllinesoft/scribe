@@ -48,29 +48,61 @@ class SecretScanner:
         self.patterns = patterns or dict(self.DEFAULT_PATTERNS)
         self.file_patterns = tuple(file_patterns or self.DEFAULT_FILE_PATTERNS)
 
+    def _scan_line_for_patterns(
+        self, line: str, line_num: int, file_path: Path
+    ) -> List[Dict[str, Any]]:
+        """Scan a single line for all secret patterns."""
+        findings: List[Dict[str, Any]] = []
+        for secret_type, patterns in self.patterns.items():
+            for pattern in patterns:
+                for match in re.finditer(pattern, line, re.IGNORECASE):
+                    findings.append(
+                        {
+                            "type": secret_type,
+                            "file": str(file_path),
+                            "line": line_num,
+                            "pattern": pattern,
+                            "context": line.strip(),
+                            "severity": "high",
+                            "match": match.group(0),
+                        }
+                    )
+        return findings
+
     def scan_file(self, file_path: Path) -> List[Dict[str, Any]]:
         """Scan a single file and return matches."""
-        findings: List[Dict[str, Any]] = []
         try:
             content = file_path.read_text(encoding="utf-8", errors="ignore")
         except (UnicodeDecodeError, PermissionError):
-            return findings
+            return []
 
+        findings: List[Dict[str, Any]] = []
         for line_num, line in enumerate(content.splitlines(), start=1):
-            for secret_type, patterns in self.patterns.items():
-                for pattern in patterns:
-                    for match in re.finditer(pattern, line, re.IGNORECASE):
-                        findings.append(
-                            {
-                                "type": secret_type,
-                                "file": str(file_path),
-                                "line": line_num,
-                                "pattern": pattern,
-                                "context": line.strip(),
-                                "severity": "high",
-                                "match": match.group(0),
-                            }
-                        )
+            findings.extend(self._scan_line_for_patterns(line, line_num, file_path))
+        return findings
+
+    def _check_suspicious_filename(self, file_path: Path) -> List[Dict[str, Any]]:
+        """Check if a filename matches suspicious patterns."""
+        findings: List[Dict[str, Any]] = []
+        lower_name = file_path.name.lower()
+        for pattern in self.file_patterns:
+            if re.search(pattern, lower_name):
+                findings.append(
+                    {
+                        "type": "suspicious_filename",
+                        "file": str(file_path),
+                        "line": 0,
+                        "pattern": pattern,
+                        "context": f"Filename matches pattern: {pattern}",
+                        "severity": "medium",
+                    }
+                )
+        return findings
+
+    def _scan_single_file(self, file_path: Path) -> List[Dict[str, Any]]:
+        """Scan a single file including filename pattern checks."""
+        findings = self._check_suspicious_filename(file_path)
+        findings.extend(self.scan_file(file_path))
         return findings
 
     def scan_directory(self, directory: Path) -> List[Dict[str, Any]]:
@@ -91,20 +123,7 @@ class SecretScanner:
             dirs[:] = [d for d in dirs if d not in ignore_names]
             for filename in files:
                 file_path = Path(root) / filename
-                lower_name = filename.lower()
-                for pattern in self.file_patterns:
-                    if re.search(pattern, lower_name):
-                        findings.append(
-                            {
-                                "type": "suspicious_filename",
-                                "file": str(file_path),
-                                "line": 0,
-                                "pattern": pattern,
-                                "context": f"Filename matches pattern: {pattern}",
-                                "severity": "medium",
-                            }
-                        )
-                findings.extend(self.scan_file(file_path))
+                findings.extend(self._scan_single_file(file_path))
         return findings
 
     def summarize(self, findings: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
