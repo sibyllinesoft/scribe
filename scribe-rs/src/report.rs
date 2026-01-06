@@ -141,6 +141,25 @@ pub fn generate_html_output(
     Ok(html)
 }
 
+/// Append file content with trailing newline if needed
+fn append_content_with_newline(output: &mut String, content: &str) {
+    output.push_str(content);
+    if !content.ends_with('\n') {
+        output.push('\n');
+    }
+}
+
+/// Write a single file entry in repomix format
+fn write_repomix_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn Error>> {
+    writeln!(output, "## {}", file.relative_path)?;
+    writeln!(output, "- Last modified: {}", format_timestamp(file.modified))?;
+    writeln!(output, "```")?;
+    append_content_with_newline(output, &file.content);
+    writeln!(output, "```")?;
+    writeln!(output, "")?;
+    Ok(())
+}
+
 pub fn generate_repomix_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -153,22 +172,29 @@ pub fn generate_repomix_output(
     writeln!(output, "")?;
 
     for file in files {
-        writeln!(output, "## {}", file.relative_path)?;
-        writeln!(
-            output,
-            "- Last modified: {}",
-            format_timestamp(file.modified)
-        )?;
-        writeln!(output, "```")?;
-        output.push_str(&file.content);
-        if !file.content.ends_with('\n') {
-            output.push('\n');
-        }
-        writeln!(output, "```")?;
-        writeln!(output, "")?;
+        write_repomix_file(&mut output, file)?;
     }
 
     Ok(output)
+}
+
+/// Write a single file entry in XML format
+fn write_xml_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn Error>> {
+    let path = escape_xml(&file.relative_path);
+    let modified = escape_xml(&format_timestamp(file.modified));
+
+    writeln!(output, "  <file path=\"{}\" modified=\"{}\">", path, modified)?;
+    writeln!(output, "    <size bytes=\"{}\" tokens=\"{}\"/>", file.size, file.estimated_tokens)?;
+    writeln!(
+        output,
+        "    <scores importance=\"{:.2}\" centrality=\"{:.2}\" quality=\"{:.2}\"/>",
+        file.importance_score, file.centrality_score, file.content_quality_score
+    )?;
+    writeln!(output, "    <content><![CDATA[")?;
+    append_content_with_newline(output, &file.content);
+    writeln!(output, "    ]]></content>")?;
+    writeln!(output, "  </file>")?;
+    Ok(())
 }
 
 pub fn generate_xml_output(
@@ -188,30 +214,7 @@ pub fn generate_xml_output(
     )?;
 
     for file in files {
-        let path = escape_xml(&file.relative_path);
-        let modified = escape_xml(&format_timestamp(file.modified));
-        writeln!(
-            output,
-            "  <file path=\"{}\" modified=\"{}\">",
-            path, modified
-        )?;
-        writeln!(
-            output,
-            "    <size bytes=\"{}\" tokens=\"{}\"/>",
-            file.size, file.estimated_tokens
-        )?;
-        writeln!(
-            output,
-            "    <scores importance=\"{:.2}\" centrality=\"{:.2}\" quality=\"{:.2}\"/>",
-            file.importance_score, file.centrality_score, file.content_quality_score
-        )?;
-        writeln!(output, "    <content><![CDATA[")?;
-        output.push_str(&file.content);
-        if !file.content.ends_with('\n') {
-            output.push('\n');
-        }
-        writeln!(output, "    ]]></content>")?;
-        writeln!(output, "  </file>")?;
+        write_xml_file(&mut output, file)?;
     }
 
     writeln!(output, "</repository>")?;
@@ -252,6 +255,15 @@ pub fn generate_json_output(
     Ok(serde_json::to_string_pretty(&data)?)
 }
 
+/// Write a single file entry in text format
+fn write_text_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn Error>> {
+    writeln!(output, "--- {} ({} tokens) ---", file.relative_path, file.estimated_tokens)?;
+    writeln!(output, "Last modified: {}", format_timestamp(file.modified))?;
+    append_content_with_newline(output, &file.content);
+    writeln!(output)?;
+    Ok(())
+}
+
 pub fn generate_text_output(
     files: &[ReportFile],
     metrics: &SelectionMetrics,
@@ -265,20 +277,25 @@ pub fn generate_text_output(
     writeln!(output, "")?;
 
     for file in files {
-        writeln!(
-            output,
-            "--- {} ({} tokens) ---",
-            file.relative_path, file.estimated_tokens
-        )?;
-        writeln!(output, "Last modified: {}", format_timestamp(file.modified))?;
-        output.push_str(&file.content);
-        if !file.content.ends_with('\n') {
-            output.push('\n');
-        }
-        writeln!(output)?;
+        write_text_file(&mut output, file)?;
     }
 
     Ok(output)
+}
+
+/// Write a single file entry in markdown format
+fn write_markdown_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn Error>> {
+    writeln!(output, "## {}", file.relative_path)?;
+    writeln!(output, "- Size: {}", format_bytes(file.size))?;
+    writeln!(output, "- Tokens: {}", file.estimated_tokens)?;
+    writeln!(output, "- Importance: {:.2}", file.importance_score)?;
+    writeln!(output, "- Modified: {}", format_timestamp(file.modified))?;
+    writeln!(output, "")?;
+    writeln!(output, "```")?;
+    append_content_with_newline(output, &file.content);
+    writeln!(output, "```")?;
+    writeln!(output, "")?;
+    Ok(())
 }
 
 pub fn generate_markdown_output(
@@ -293,19 +310,7 @@ pub fn generate_markdown_output(
     writeln!(output, "")?;
 
     for file in files {
-        writeln!(output, "## {}", file.relative_path)?;
-        writeln!(output, "- Size: {}", format_bytes(file.size))?;
-        writeln!(output, "- Tokens: {}", file.estimated_tokens)?;
-        writeln!(output, "- Importance: {:.2}", file.importance_score)?;
-        writeln!(output, "- Modified: {}", format_timestamp(file.modified))?;
-        writeln!(output, "")?;
-        writeln!(output, "```")?;
-        output.push_str(&file.content);
-        if !file.content.ends_with('\n') {
-            output.push('\n');
-        }
-        writeln!(output, "```")?;
-        writeln!(output, "")?;
+        write_markdown_file(&mut output, file)?;
     }
 
     Ok(output)

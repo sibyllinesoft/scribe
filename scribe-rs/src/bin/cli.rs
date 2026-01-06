@@ -623,6 +623,64 @@ fn build_diff_scan_file(file: &scribe::FileInfo) -> DiffScanFile {
     }
 }
 
+/// Log message with appropriate verbosity
+fn log_covering_set_msg(verbose: bool, info_msg: &str, normal_msg: &str) {
+    if verbose {
+        info!("{}", info_msg);
+    } else {
+        println!("{}", normal_msg);
+    }
+}
+
+/// Build dependency graph from scan files
+fn build_dependency_graph(
+    diff_scan_files: &[DiffScanFile],
+) -> Result<scribe_graph::DependencyGraph, Box<dyn std::error::Error>> {
+    use scribe_analysis::heuristics::ScanResult;
+    use scribe_graph::centrality::{ImportDetector, ImportResolutionConfig};
+    use scribe_graph::DependencyGraph;
+
+    let mut graph = DependencyGraph::with_capacity(diff_scan_files.len());
+    for file in diff_scan_files {
+        graph.add_node(file.path.clone())?;
+    }
+
+    let detector =
+        ImportDetector::with_file_index(ImportResolutionConfig::default(), diff_scan_files);
+    let file_map: std::collections::HashMap<&str, &DiffScanFile> = diff_scan_files
+        .iter()
+        .map(|f| (f.path.as_str(), f))
+        .collect();
+
+    for file in diff_scan_files {
+        if let Some(imports) = file.imports() {
+            for import_str in imports {
+                if let Some(resolved) = detector.resolve_import(import_str, &file.path, &file_map) {
+                    graph.add_edge(file.path.clone(), resolved)?;
+                }
+            }
+        }
+    }
+
+    Ok(graph)
+}
+
+/// Create covering set options from parameters
+fn create_covering_set_options(
+    include_dependents: bool,
+    max_depth: Option<usize>,
+    max_files: Option<usize>,
+) -> scribe_selection::CoveringSetOptions {
+    scribe_selection::CoveringSetOptions {
+        include_dependencies: true,
+        include_dependents,
+        max_depth,
+        max_files,
+        min_importance: None,
+        granularity: scribe_selection::CoveringSetGranularity::File,
+    }
+}
+
 async fn run_covering_set_diff_mode(
     repo_dir: &Path,
     diff_against: Option<&str>,
@@ -631,20 +689,13 @@ async fn run_covering_set_diff_mode(
     max_files: Option<usize>,
     verbose_level: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use scribe_graph::centrality::{ImportDetector, ImportResolutionConfig};
-    use scribe_graph::DependencyGraph;
-    use scribe_selection::{CoveringSetComputer, CoveringSetOptions};
-    use scribe_analysis::heuristics::ScanResult;
+    use scribe_selection::CoveringSetComputer;
 
-    if verbose_level > 0 {
-        info!("🎯 Covering set (diff) mode");
-    } else {
-        println!("🎯 Computing covering set for git diff");
-    }
+    let verbose = verbose_level > 0;
+    log_covering_set_msg(verbose, "🎯 Covering set (diff) mode", "🎯 Computing covering set for git diff");
 
     let repo = Repository::open(repo_dir)?;
     let workdir = repo.workdir().unwrap_or(repo_dir);
-
     let changed_files = collect_changed_files_from_diff(&repo, workdir, diff_against)?;
 
     if changed_files.is_empty() {
@@ -652,13 +703,13 @@ async fn run_covering_set_diff_mode(
         return Ok(());
     }
 
-    if verbose_level > 0 {
-        info!("📁 {} changed files detected", changed_files.len());
-    } else {
-        println!("📁 {} changed files detected", changed_files.len());
-    }
+    log_covering_set_msg(
+        verbose,
+        &format!("📁 {} changed files detected", changed_files.len()),
+        &format!("📁 {} changed files detected", changed_files.len()),
+    );
 
-    // Run analysis pipeline to collect file metadata
+    // Run analysis pipeline
     let mut config = Config::default();
     config.general.working_dir = Some(repo_dir.to_path_buf());
     config.analysis.token_budget = None;
@@ -670,52 +721,19 @@ async fn run_covering_set_diff_mode(
     };
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
-    // Build scan file metadata for dependency graph
+    // Build scan files and dependency graph
     let diff_scan_files: Vec<DiffScanFile> = analysis_outcome
         .analysis
         .files
         .iter()
         .map(build_diff_scan_file)
         .collect();
+    let graph = build_dependency_graph(&diff_scan_files)?;
 
-    // Build dependency graph
-    let mut graph = DependencyGraph::with_capacity(diff_scan_files.len());
-    for file in &diff_scan_files {
-        graph.add_node(file.path.clone())?;
-    }
-
-    let detector =
-        ImportDetector::with_file_index(ImportResolutionConfig::default(), &diff_scan_files);
-    let file_map: std::collections::HashMap<&str, &DiffScanFile> = diff_scan_files
-        .iter()
-        .map(|f| (f.path.as_str(), f))
-        .collect();
-
-    for file in &diff_scan_files {
-        if let Some(imports) = file.imports() {
-            for import_str in imports {
-                if let Some(resolved) = detector.resolve_import(import_str, &file.path, &file_map) {
-                    graph.add_edge(file.path.clone(), resolved)?;
-                }
-            }
-        }
-    }
-
-    // Compute covering set
-    let options = CoveringSetOptions {
-        include_dependencies: true,
-        include_dependents,
-        max_depth,
-        max_files,
-        min_importance: None,
-        granularity: scribe_selection::CoveringSetGranularity::File,
-    };
-
+    // Compute and display covering set
+    let options = create_covering_set_options(include_dependents, max_depth, max_files);
     let computer = CoveringSetComputer::new()?;
-    let result =
-        computer.compute_covering_set_for_files(&changed_files, &graph, None, &options)?;
-
-    // Display results
+    let result = computer.compute_covering_set_for_files(&changed_files, &graph, None, &options)?;
     print_covering_set_results(&result, verbose_level);
 
     Ok(())
