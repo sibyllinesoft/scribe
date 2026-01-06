@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tracing::{debug, info, warn};
 
-use crate::error::{ScalingError, ScalingResult};
-use crate::streaming::FileMetadata;
+use crate::core::error::{ScalingError, ScalingResult};
+use crate::io::streaming::FileMetadata;
 use scribe_core::file;
 
 /// Configuration for context positioning optimization

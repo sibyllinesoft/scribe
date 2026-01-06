@@ -1,7 +1,7 @@
 //! Repository profiling for automatic type detection and configuration optimization.
 
-use crate::engine::ScalingConfig;
-use crate::error::ScalingResult;
+use crate::api::engine::ScalingConfig;
+use crate::core::error::ScalingResult;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

@@ -3,8 +3,8 @@
 //! These tests verify that our optimizations provide the expected performance
 //! improvements and don't regress over time.
 
-use scribe_scaling::engine::{ScalingConfig, ScalingEngine};
-use scribe_scaling::streaming::{StreamingConfig, StreamingSelector};
+use scribe_scaling::{ScalingConfig, ScalingEngine, StreamingConfig};
+use scribe_scaling::io::streaming::StreamingSelector;
 use std::fs;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;

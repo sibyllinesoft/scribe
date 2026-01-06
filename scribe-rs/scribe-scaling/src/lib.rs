@@ -16,7 +16,7 @@
 //! ## Performance Targets
 //!
 //! - Small repos (≤1k files): <1s selection, <50MB memory
-//! - Medium repos (1k-10k files): <5s selection, <200MB memory  
+//! - Medium repos (1k-10k files): <5s selection, <200MB memory
 //! - Large repos (10k-100k files): <15s selection, <1GB memory
 //! - Enterprise repos (100k+ files): <30s selection, <2GB memory
 //!
@@ -30,44 +30,32 @@
 //!   Fast scanning      Lightweight load    Smart filtering   Parallel work   Optimized result
 //! ```
 
-pub mod adaptive;
-pub mod caching;
-pub mod error;
-pub mod memory;
-pub mod metrics;
-pub mod parallel;
-pub mod profiling;
-pub mod signatures;
-pub mod streaming;
+// Module organization
+pub mod api;
+pub mod core;
+pub mod io;
 
-// Context positioning optimization
-pub mod positioning;
-
-// Core scaling engine
-pub mod engine;
-
-// Intelligent scaling selector
-pub mod selector;
-
-// Re-export main types
-pub use adaptive::AdaptiveConfig;
-pub use caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
-pub use engine::{ProcessingResult, ScalingConfig, ScalingEngine};
-pub use memory::{MemoryConfig, MemoryStats};
-pub use metrics::{BenchmarkResult, ScalingMetrics};
-pub use parallel::ParallelConfig;
-pub use positioning::{
+// Re-export core types
+pub use core::error::{ScalingError, ScalingResult};
+pub use core::positioning::{
     ContextPositioner, ContextPositioning, ContextPositioningConfig, PositionedSelection,
 };
-pub use profiling::{RepositoryProfile, RepositoryProfiler, RepositoryType};
-pub use selector::{
+pub use core::selector::{
     ScalingSelectionConfig, ScalingSelectionResult, ScalingSelector, SelectionAlgorithm,
 };
-pub use signatures::{SignatureConfig, SignatureLevel};
-pub use streaming::{FileChunk, FileMetadata, StreamingConfig};
+pub use core::signatures::{SignatureConfig, SignatureLevel};
 
-// Re-export error types
-pub use error::{ScalingError, ScalingResult};
+// Re-export API types
+pub use api::adaptive::AdaptiveConfig;
+pub use api::caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
+pub use api::engine::{ProcessingResult, ScalingConfig, ScalingEngine};
+pub use api::profiling::{RepositoryProfile, RepositoryProfiler, RepositoryType};
+
+// Re-export I/O types
+pub use io::memory::{MemoryConfig, MemoryStats};
+pub use io::metrics::{BenchmarkResult, ScalingMetrics};
+pub use io::parallel::ParallelConfig;
+pub use io::streaming::{FileChunk, FileMetadata, StreamingConfig};
 
 /// Current version of the scaling crate
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

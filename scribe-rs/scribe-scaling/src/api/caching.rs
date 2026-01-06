@@ -1,8 +1,7 @@
 //! Intelligent caching system with persistent storage for scaling results.
 
-use crate::engine::ProcessingResult;
-use crate::error::{ScalingError, ScalingResult};
-use crate::ScalingConfig;
+use crate::api::engine::{ProcessingResult, ScalingConfig};
+use crate::core::error::{ScalingError, ScalingResult};
 use blake3::Hasher;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};

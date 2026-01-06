@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::engine::{ProcessingResult, ScalingConfig};
-use crate::error::{ScalingError, ScalingResult};
-use crate::positioning::{ContextPositioner, ContextPositioningConfig, PositionedSelection};
-use crate::streaming::{FileMetadata, ScoredFile, StreamingSelector};
+use crate::api::engine::{ProcessingResult, ScalingConfig};
+use crate::core::error::{ScalingError, ScalingResult};
+use crate::core::positioning::{ContextPositioner, ContextPositioningConfig, PositionedSelection};
+use crate::io::streaming::{FileMetadata, ScoredFile, StreamingSelector};
 use scribe_core::{file, FileInfo, FileType};
 
 /// File category classification for quota allocation
@@ -268,7 +268,7 @@ impl ScalingSelector {
         info!("Using optimized streaming file discovery");
 
         // Create streaming selector
-        let streaming_config = crate::streaming::StreamingConfig {
+        let streaming_config = crate::io::streaming::StreamingConfig {
             enable_streaming: true,
             concurrency_limit: num_cpus::get() * 2,
             memory_limit: 100 * 1024 * 1024, // 100MB
@@ -498,7 +498,7 @@ impl ScalingSelector {
             memory_peak,
             cache_hits: 0,
             cache_misses: selected_files.len() as u64,
-            metrics: crate::metrics::ScalingMetrics {
+            metrics: crate::io::metrics::ScalingMetrics {
                 files_processed: selected_files.len() as u64,
                 total_processing_time: processing_time,
                 memory_peak,

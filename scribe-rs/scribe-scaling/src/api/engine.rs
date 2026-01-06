@@ -12,14 +12,14 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::adaptive::AdaptiveConfig;
-use crate::caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
-use crate::error::{ScalingError, ScalingResult};
-use crate::memory::MemoryConfig;
-use crate::metrics::{BenchmarkResult, ScalingMetrics};
-use crate::parallel::ParallelConfig;
-use crate::signatures::SignatureConfig;
-use crate::streaming::{FileMetadata, StreamingConfig};
+use crate::api::adaptive::AdaptiveConfig;
+use crate::api::caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
+use crate::core::error::{ScalingError, ScalingResult};
+use crate::core::signatures::SignatureConfig;
+use crate::io::memory::MemoryConfig;
+use crate::io::metrics::{BenchmarkResult, ScalingMetrics};
+use crate::io::parallel::ParallelConfig;
+use crate::io::streaming::{FileMetadata, StreamingConfig};
 use scribe_core::{file, FileInfo, FileType};
 
 /// Complete scaling configuration combining all subsystems
@@ -273,14 +273,14 @@ impl ScalingEngine {
         info!("Using optimized streaming file discovery for basic processing");
 
         // Create a streaming selector even for basic processing to avoid memory issues
-        let streaming_config = crate::streaming::StreamingConfig {
+        let streaming_config = crate::io::streaming::StreamingConfig {
             enable_streaming: true,
             concurrency_limit: self.config.parallel.max_concurrent_tasks,
             memory_limit: self.config.streaming.memory_limit,
             selection_heap_size: 50000, // Large heap for full discovery
         };
 
-        let streaming_selector = crate::streaming::StreamingSelector::new(streaming_config);
+        let streaming_selector = crate::io::streaming::StreamingSelector::new(streaming_config);
 
         // For basic processing, we want all files (within reason), so use very high limits
         let target_count = 50000; // Reasonable limit to prevent memory explosion
@@ -374,7 +374,7 @@ impl ScalingEngine {
 
         // Create ScalingSelector with the configured token budget
         let token_budget = self.config.token_budget.unwrap_or(8000);
-        let mut selector = crate::selector::ScalingSelector::with_token_budget(token_budget);
+        let mut selector = crate::core::selector::ScalingSelector::with_token_budget(token_budget);
 
         // Execute intelligent selection and processing
         let selection_result = selector.select_and_process(path).await?;

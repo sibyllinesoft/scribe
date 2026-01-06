@@ -1,6 +1,7 @@
-use scribe_scaling::profiling::RepositoryType;
-use scribe_scaling::signatures::SignatureLevel;
-use scribe_scaling::{ScalingConfig, ScalingEngine};
+use scribe_scaling::{
+    AdaptiveConfig, CacheConfig, MemoryConfig, ParallelConfig, RepositoryType,
+    ScalingConfig, ScalingEngine, SignatureConfig, SignatureLevel, StreamingConfig,
+};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -202,7 +203,7 @@ async fn test_streaming_vs_batch_loading() {
 
     // Test streaming
     let streaming_config = ScalingConfig {
-        streaming: scribe_scaling::streaming::StreamingConfig {
+        streaming: StreamingConfig {
             enable_streaming: true,
             concurrency_limit: 2,
             memory_limit: 10 * 1024 * 1024, // 10MB
@@ -219,7 +220,7 @@ async fn test_streaming_vs_batch_loading() {
 
     // Test batch
     let batch_config = ScalingConfig {
-        streaming: scribe_scaling::streaming::StreamingConfig {
+        streaming: StreamingConfig {
             enable_streaming: false,
             concurrency_limit: 1,
             memory_limit: 100 * 1024 * 1024, // 100MB
@@ -244,7 +245,7 @@ async fn test_caching_effectiveness() {
     let repo_path = create_rust_project(&temp_dir, 50);
 
     let config = ScalingConfig {
-        caching: scribe_scaling::caching::CacheConfig {
+        caching: CacheConfig {
             enable_persistent_cache: true,
             memory_cache_size: 100,
             compression_enabled: true,
@@ -278,7 +279,7 @@ async fn test_parallel_processing_scaling() {
 
     // Single threaded
     let single_config = ScalingConfig {
-        parallel: scribe_scaling::parallel::ParallelConfig {
+        parallel: ParallelConfig {
             max_concurrent_tasks: 1,
             async_worker_count: 1,
             cpu_worker_count: 1,
@@ -290,7 +291,7 @@ async fn test_parallel_processing_scaling() {
 
     // Multi threaded
     let multi_config = ScalingConfig {
-        parallel: scribe_scaling::parallel::ParallelConfig {
+        parallel: ParallelConfig {
             max_concurrent_tasks: 8,
             async_worker_count: 4,
             cpu_worker_count: 4,
@@ -323,7 +324,7 @@ async fn test_adaptive_configuration() {
     let repo_path = create_rust_project(&temp_dir, 200);
 
     let config = ScalingConfig {
-        adaptive: scribe_scaling::adaptive::AdaptiveConfig {
+        adaptive: AdaptiveConfig {
             enable_adaptive_thresholds: true,
             repository_size_factor: 1.0,
             memory_pressure_factor: 0.8,
@@ -356,7 +357,7 @@ async fn test_signature_extraction_levels() {
         SignatureLevel::Complete,
     ] {
         let config = ScalingConfig {
-            signatures: scribe_scaling::signatures::SignatureConfig {
+            signatures: SignatureConfig {
                 default_level: level,
                 enable_caching: false,
                 budget_pressure_threshold: 1.0,
@@ -399,7 +400,7 @@ async fn test_memory_management() {
     let repo_path = create_rust_project(&temp_dir, 100);
 
     let config = ScalingConfig {
-        memory: scribe_scaling::memory::MemoryConfig {
+        memory: MemoryConfig {
             pool_size: 50,
             max_allocation: 10 * 1024 * 1024, // 10MB
             enable_monitoring: true,
@@ -454,12 +455,12 @@ async fn test_budget_pressure_response() {
 
     // High pressure config (low budget)
     let high_pressure_config = ScalingConfig {
-        signatures: scribe_scaling::signatures::SignatureConfig {
+        signatures: SignatureConfig {
             default_level: SignatureLevel::Complete,
             enable_caching: false,
             budget_pressure_threshold: 0.1, // High pressure
         },
-        adaptive: scribe_scaling::adaptive::AdaptiveConfig {
+        adaptive: AdaptiveConfig {
             enable_adaptive_thresholds: true,
             memory_pressure_factor: 0.3, // High memory pressure
             ..Default::default()
