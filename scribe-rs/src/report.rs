@@ -62,17 +62,17 @@ pub fn generate_report(
     }
 }
 
-pub fn generate_html_output(
-    files: &[ReportFile],
-    metrics: &SelectionMetrics,
-) -> Result<String, Box<dyn Error>> {
-    // Use CDN-based template for smaller output size
-    // This reduces the generated HTML file size by ~60% by using CDN links
-    // for highlight.js instead of embedding a 268KB React bundle
+/// Create handlebars instance with template and helpers registered
+fn create_html_handlebars() -> Result<Handlebars<'static>, Box<dyn Error>> {
     let template_str = include_str!("../templates/report_cdn.html");
     let mut handlebars = Handlebars::new();
     handlebars.register_template_string("report", template_str)?;
+    register_add_helper(&mut handlebars);
+    Ok(handlebars)
+}
 
+/// Register the "add" helper for arithmetic in templates
+fn register_add_helper(handlebars: &mut Handlebars<'static>) {
     handlebars.register_helper(
         "add",
         Box::new(
@@ -89,39 +89,54 @@ pub fn generate_html_output(
             },
         ),
     );
+}
 
+/// Convert a ReportFile to JSON for HTML template
+fn file_to_template_json(file: &ReportFile) -> serde_json::Value {
+    json!({
+        "relative_path": html_escape(&file.relative_path),
+        "content": html_escape(&file.content),
+        "size": format_bytes(file.size),
+        "estimated_tokens": format_number(file.estimated_tokens),
+        "importance_score": format!("{:.2}", file.importance_score),
+        "centrality_score": format!("{:.2}", file.centrality_score),
+        "query_relevance_score": format!("{:.2}", file.query_relevance_score),
+        "entry_point_proximity": format!("{:.2}", file.entry_point_proximity),
+        "content_quality_score": format!("{:.2}", file.content_quality_score),
+        "repository_role_score": format!("{:.2}", file.repository_role_score),
+        "recency_score": format!("{:.2}", file.recency_score),
+        "modified": format_timestamp(file.modified),
+        "icon": get_file_icon(&file.relative_path)
+    })
+}
+
+/// Build template data for HTML report
+fn build_html_template_data(files: &[ReportFile], metrics: &SelectionMetrics) -> serde_json::Value {
     let total_tokens: usize = files.iter().map(|f| f.estimated_tokens).sum();
     let total_size: u64 = files.iter().map(|f| f.size).sum();
-    let total_files = files.len();
 
-    let template_data = json!({
+    json!({
         "repository_name": "Scribe Analysis",
         "algorithm": metrics.algorithm_used,
         "generated_time": Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
         "selection_time_ms": metrics.selection_time_ms,
-        "total_files": total_files,
+        "total_files": files.len(),
         "total_tokens": format_number(total_tokens),
         "total_size": format_bytes(total_size),
         "coverage_percentage": format!("{:.1}", metrics.coverage_score * 100.0),
-        "files": files.iter().map(|file| {
-            json!({
-                "relative_path": html_escape(&file.relative_path),
-                "content": html_escape(&file.content),
-                "size": format_bytes(file.size),
-                "estimated_tokens": format_number(file.estimated_tokens),
-                "importance_score": format!("{:.2}", file.importance_score),
-                "centrality_score": format!("{:.2}", file.centrality_score),
-                "query_relevance_score": format!("{:.2}", file.query_relevance_score),
-                "entry_point_proximity": format!("{:.2}", file.entry_point_proximity),
-                "content_quality_score": format!("{:.2}", file.content_quality_score),
-                "repository_role_score": format!("{:.2}", file.repository_role_score),
-                "recency_score": format!("{:.2}", file.recency_score),
-                "modified": format_timestamp(file.modified),
-                "icon": get_file_icon(&file.relative_path)
-            })
-        }).collect::<Vec<_>>()
-    });
+        "files": files.iter().map(file_to_template_json).collect::<Vec<_>>()
+    })
+}
 
+pub fn generate_html_output(
+    files: &[ReportFile],
+    metrics: &SelectionMetrics,
+) -> Result<String, Box<dyn Error>> {
+    // Use CDN-based template for smaller output size
+    // This reduces the generated HTML file size by ~60% by using CDN links
+    // for highlight.js instead of embedding a 268KB React bundle
+    let handlebars = create_html_handlebars()?;
+    let template_data = build_html_template_data(files, metrics);
     let html = handlebars.render("report", &template_data)?;
     Ok(html)
 }
@@ -346,6 +361,56 @@ fn escape_xml(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Get icon for special file names (README, LICENSE, etc.)
+fn get_special_file_icon(name: &str) -> Option<&'static str> {
+    if name.starts_with("readme") {
+        Some("book-open")
+    } else if name == "license" || name == "licence" {
+        Some("scale")
+    } else if name == "dockerfile" || name.contains("docker-compose") {
+        Some("box")
+    } else if name == "makefile" {
+        Some("settings")
+    } else if name.starts_with(".git") {
+        Some("git-branch")
+    } else if name == "package.json" || name == "cargo.toml" || name == "go.mod" {
+        Some("package")
+    } else {
+        None
+    }
+}
+
+/// Get icon based on file extension
+fn get_extension_icon(ext: &str) -> &'static str {
+    match ext {
+        // Programming languages
+        "py" | "pyw" | "rs" | "go" => "file-code",
+        "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => "file-code",
+        "java" | "kt" | "scala" => "file-code",
+        "c" | "cpp" | "cc" | "h" | "hpp" => "file-code",
+        "cs" | "fs" | "vb" => "file-code",
+        "php" | "rb" | "pl" | "r" | "swift" | "dart" => "file-code",
+        // Web
+        "html" | "htm" | "xml" | "xhtml" => "globe",
+        "css" | "scss" | "sass" | "less" => "palette",
+        // Data formats
+        "json" | "jsonc" | "json5" => "braces",
+        "yml" | "yaml" => "list",
+        "toml" => "settings",
+        // Documentation
+        "md" | "markdown" | "mdx" | "txt" | "text" | "pdf" => "file-text",
+        // Shell scripts
+        "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" => "terminal",
+        // Data
+        "sql" | "sqlite" | "db" => "database",
+        // Media
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico" => "image",
+        // Archives
+        "zip" | "tar" | "gz" | "bz2" | "7z" | "rar" => "archive",
+        _ => "file",
+    }
+}
+
 pub fn get_file_icon(file_path: &str) -> &'static str {
     let path = Path::new(file_path);
     let ext = path
@@ -359,41 +424,11 @@ pub fn get_file_icon(file_path: &str) -> &'static str {
         .unwrap_or("")
         .to_lowercase();
 
-    if name.starts_with("readme") {
-        return "book-open";
-    } else if name == "license" || name == "licence" {
-        return "scale";
-    } else if name == "dockerfile" || name.contains("docker-compose") {
-        return "box";
-    } else if name == "makefile" {
-        return "settings";
-    } else if name.starts_with(".git") {
-        return "git-branch";
-    } else if name == "package.json" || name == "cargo.toml" || name == "go.mod" {
-        return "package";
+    // Check special file names first
+    if let Some(icon) = get_special_file_icon(&name) {
+        return icon;
     }
 
-    match ext.as_str() {
-        "py" | "pyw" => "file-code",
-        "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => "file-code",
-        "html" | "htm" | "xml" | "xhtml" => "globe",
-        "css" | "scss" | "sass" | "less" => "palette",
-        "json" | "jsonc" | "json5" => "braces",
-        "yml" | "yaml" => "list",
-        "md" | "markdown" | "mdx" => "file-text",
-        "txt" | "text" => "file-text",
-        "rs" => "file-code",
-        "go" => "file-code",
-        "java" | "kt" | "scala" => "file-code",
-        "c" | "cpp" | "cc" | "h" | "hpp" => "file-code",
-        "cs" | "fs" | "vb" => "file-code",
-        "php" | "rb" | "pl" | "r" | "swift" | "dart" => "file-code",
-        "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" => "terminal",
-        "sql" | "sqlite" | "db" => "database",
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico" => "image",
-        "pdf" => "file-text",
-        "zip" | "tar" | "gz" | "bz2" | "7z" | "rar" => "archive",
-        "toml" => "settings",
-        _ => "file",
-    }
+    // Fall back to extension-based icon
+    get_extension_icon(&ext)
 }
