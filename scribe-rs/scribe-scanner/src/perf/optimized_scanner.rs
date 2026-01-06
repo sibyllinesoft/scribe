@@ -14,15 +14,14 @@ use scribe_core::{
 use scribe_core::tokenization::{TokenCounter, utils as token_utils};
 
 use crate::{
-    content::ContentAnalyzer,
-    filtering::{DirectoryFilter, FileFilter, FilterResult},
-    git_batch::{BatchMetrics, BulkStatusResult, GitBatchProcessor},
-    metadata::{FileSystemType, MetadataExtractor},
-    parallel::{ParallelController, ParallelConfig, WorkItem},
-    compact_data::CompactFileCollection,
-    incremental::{IncrementalScanner, IncrementalConfig},
-    performance::{PerformanceMonitor, PerfTimer, PERF_MONITOR},
-    language_detection::LanguageDetector,
+    core::filtering::{DirectoryFilter, FileFilter, FilterResult},
+    core::metadata::{FileSystemType, MetadataExtractor},
+    git::git_batch::{BatchMetrics, BulkStatusResult, GitBatchProcessor},
+    perf::parallel::{ParallelController, ParallelConfig, WorkItem},
+    perf::compact_data::CompactFileCollection,
+    perf::incremental::{IncrementalScanner, IncrementalConfig},
+    perf::performance::{PerformanceMonitor, PerfTimer, PERF_MONITOR},
+    analysis::language_detection::LanguageDetector,
 };
 use tokio::sync::Mutex;
 

@@ -4,7 +4,7 @@
 //! persistent manifest of file metadata to avoid re-scanning unchanged files,
 //! dramatically improving performance for large repositories on subsequent runs.
 
-use crate::compact_data::{CompactFileCollection, PackedFileType, PackedLanguage};
+use crate::perf::compact_data::{CompactFileCollection, PackedFileType, PackedLanguage};
 use bincode;
 use fxhash::{FxHashMap, FxHashSet};
 use scribe_core::{FileInfo, FileWeight, Language, RenderDecision, Result, ScribeError};
@@ -559,7 +559,7 @@ impl IncrementalScanner {
 
     /// Scan a single file and create manifest entry
     async fn scan_single_file(&mut self, file_path: &Path) -> Result<SingleFileScanResult> {
-        use crate::language_detection::LanguageDetector;
+        use crate::analysis::language_detection::LanguageDetector;
 
         let io_start = std::time::Instant::now();
         let metadata = fs::metadata(file_path).await?;

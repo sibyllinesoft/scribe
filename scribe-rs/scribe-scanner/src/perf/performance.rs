@@ -204,10 +204,10 @@ pub struct PerfTimer {
 #[macro_export]
 macro_rules! perf_timer {
     ($operation:expr) => {
-        $crate::performance::PerfTimer::start($operation)
+        $crate::perf::performance::PerfTimer::start($operation)
     };
     ($operation:expr, $bytes:expr) => {
-        $crate::performance::PerfTimer::start_with_bytes($operation, $bytes)
+        $crate::perf::performance::PerfTimer::start_with_bytes($operation, $bytes)
     };
 }
 

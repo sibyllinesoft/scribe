@@ -30,29 +30,27 @@
 //! # }
 //! ```
 
-// Core modules
-pub mod git_integration;
-pub mod language_detection;
-pub mod metadata;
-pub mod scanner;
+// Module organization
+pub mod analysis;
+pub mod core;
+pub mod git;
+pub mod perf;
 
-// Performance optimization modules
-pub mod aho_corasick_reference_index;
-pub mod filtering;
-pub mod parallel;
-pub mod performance;
+// Re-export core types
+pub use core::filtering::{DirectoryFilter, FileFilter, FilterReason, FilterResult};
+pub use core::metadata::{FileMetadata, MetadataExtractor, SizeStats};
+pub use core::scanner::{ScanOptions, ScanProgress, ScanResult, Scanner};
 
-// Re-export main types for convenience
-pub use git_integration::{GitCommitInfo, GitFileInfo, GitIntegrator};
-pub use language_detection::{DetectionStrategy, LanguageDetector, LanguageHints};
-pub use metadata::{FileMetadata, MetadataExtractor, SizeStats};
-pub use scanner::{ScanOptions, ScanProgress, ScanResult, Scanner};
+// Re-export git types
+pub use git::git_integration::{GitCommitInfo, GitFileInfo, GitIntegrator};
 
-// Re-export performance optimization types
-pub use aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};
-pub use filtering::{DirectoryFilter, FileFilter, FilterReason, FilterResult};
-pub use parallel::{ParallelConfig, ParallelController, ParallelMetrics, WorkItem};
-pub use performance::{
+// Re-export analysis types
+pub use analysis::aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};
+pub use analysis::language_detection::{DetectionStrategy, LanguageDetector, LanguageHints};
+
+// Re-export performance types
+pub use perf::parallel::{ParallelConfig, ParallelController, ParallelMetrics, WorkItem};
+pub use perf::performance::{
     ErrorType, PerfTimer, PerformanceMonitor, PerformanceReport, PerformanceSnapshot, PERF_MONITOR,
 };
 
