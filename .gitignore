@@ -191,6 +191,10 @@ scribe-rs/frontend/.turbo/
 scribe-rs/build_frontend.sh
 scribe-rs/validate_bundle.js
 
+# Generated JavaScript bundles (these are built from frontend source)
+**/scribe-tree-bundle.js
+**/*-bundle.js
+
 # Rust example outputs
 scribe-rs/examples/debug_*.rs
 scribe-rs/examples/test_*.rs
