@@ -48,25 +48,39 @@ class SecretScanner:
         self.patterns = patterns or dict(self.DEFAULT_PATTERNS)
         self.file_patterns = tuple(file_patterns or self.DEFAULT_FILE_PATTERNS)
 
+    def _check_pattern_on_line(
+        self, pattern: str, line: str, line_num: int, file_path: Path, secret_type: str
+    ) -> List[Dict[str, Any]]:
+        """Check a single pattern against a line and return matches."""
+        return [
+            {
+                "type": secret_type,
+                "file": str(file_path),
+                "line": line_num,
+                "pattern": pattern,
+                "context": line.strip(),
+                "severity": "high",
+                "match": match.group(0),
+            }
+            for match in re.finditer(pattern, line, re.IGNORECASE)
+        ]
+
+    def _scan_line_for_secret_type(
+        self, secret_type: str, patterns: Iterable[str], line: str, line_num: int, file_path: Path
+    ) -> List[Dict[str, Any]]:
+        """Scan a line for a specific secret type."""
+        findings: List[Dict[str, Any]] = []
+        for pattern in patterns:
+            findings.extend(self._check_pattern_on_line(pattern, line, line_num, file_path, secret_type))
+        return findings
+
     def _scan_line_for_patterns(
         self, line: str, line_num: int, file_path: Path
     ) -> List[Dict[str, Any]]:
         """Scan a single line for all secret patterns."""
         findings: List[Dict[str, Any]] = []
         for secret_type, patterns in self.patterns.items():
-            for pattern in patterns:
-                for match in re.finditer(pattern, line, re.IGNORECASE):
-                    findings.append(
-                        {
-                            "type": secret_type,
-                            "file": str(file_path),
-                            "line": line_num,
-                            "pattern": pattern,
-                            "context": line.strip(),
-                            "severity": "high",
-                            "match": match.group(0),
-                        }
-                    )
+            findings.extend(self._scan_line_for_secret_type(secret_type, patterns, line, line_num, file_path))
         return findings
 
     def scan_file(self, file_path: Path) -> List[Dict[str, Any]]:
