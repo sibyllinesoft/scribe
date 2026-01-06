@@ -217,27 +217,68 @@ class ArboristDebugger {
     }
   }
 
+  // Build a node map from tree data for testing
+  buildNodeMapFromTreeData(treeData) {
+    const nodeMap = new Map();
+    const addNodes = (nodes) => {
+      nodes.forEach(node => {
+        nodeMap.set(node.path, node);
+        if (node.children) {
+          addNodes(node.children);
+        }
+      });
+    };
+    addNodes(treeData);
+    return nodeMap;
+  }
+
+  // Test file selection functionality
+  testFileSelection(fileTree, nodeMap, testFilePath) {
+    if (!nodeMap.has(testFilePath)) {
+      this.addIssue('warning', 'checkbox', `Test file ${testFilePath} not found in tree`);
+      return;
+    }
+
+    const initialState = fileTree.checkboxStates.get(testFilePath);
+    if (!initialState || initialState.checked) return;
+
+    fileTree.toggleFileCheckbox(nodeMap, testFilePath, true);
+    const newState = fileTree.checkboxStates.get(testFilePath);
+
+    if (newState.checked && fileTree.selectedFiles.has(testFilePath)) {
+      this.addFinding('checkbox', `File selection works correctly for ${testFilePath}`);
+      log.success('File checkbox toggling works correctly');
+    } else {
+      this.addIssue('error', 'checkbox', `File selection failed for ${testFilePath}`);
+    }
+  }
+
+  // Test folder selection functionality
+  testFolderSelection(fileTree, nodeMap, testFolderPath) {
+    if (!nodeMap.has(testFolderPath)) return;
+
+    fileTree.toggleFileCheckbox(nodeMap, testFolderPath, false);
+    const folderState = fileTree.checkboxStates.get(testFolderPath);
+
+    if (folderState.checked) {
+      this.addFinding('checkbox', `Folder selection works correctly for ${testFolderPath}`);
+      log.success('Folder checkbox toggling works correctly');
+    } else {
+      this.addIssue('error', 'checkbox', `Folder selection failed for ${testFolderPath}`);
+    }
+  }
+
   // Test checkbox state management
   testCheckboxManagement(fileTree, treeData) {
     log.subsection('Testing Checkbox State Management');
-    
+
     if (!fileTree || !treeData) {
       this.addIssue('error', 'checkbox', 'Missing fileTree or treeData for checkbox testing');
       return false;
     }
 
     try {
-      // Build node map for testing
-      const nodeMap = new Map();
-      const buildNodeMap = (nodes) => {
-        nodes.forEach(node => {
-          nodeMap.set(node.path, node);
-          if (node.children) {
-            buildNodeMap(node.children);
-          }
-        });
-      };
-      buildNodeMap(treeData);
+      const nodeMap = this.buildNodeMapFromTreeData(treeData);
 
       // Test initial state
       if (fileTree.checkboxStates.size === 0) {
@@ -246,41 +287,11 @@ class ArboristDebugger {
         this.addFinding('checkbox', `Initialized ${fileTree.checkboxStates.size} checkbox states`);
       }
 
-      // Test file selection
-      const testFilePath = 'src/index.js';
-      if (nodeMap.has(testFilePath)) {
-        const initialState = fileTree.checkboxStates.get(testFilePath);
-        if (initialState && !initialState.checked) {
-          fileTree.toggleFileCheckbox(nodeMap, testFilePath, true);
-          const newState = fileTree.checkboxStates.get(testFilePath);
-          
-          if (newState.checked && fileTree.selectedFiles.has(testFilePath)) {
-            this.addFinding('checkbox', `File selection works correctly for ${testFilePath}`);
-            log.success('File checkbox toggling works correctly');
-          } else {
-            this.addIssue('error', 'checkbox', `File selection failed for ${testFilePath}`);
-          }
-        }
-      } else {
-        this.addIssue('warning', 'checkbox', `Test file ${testFilePath} not found in tree`);
-      }
-
-      // Test folder selection
-      const testFolderPath = 'src';
-      if (nodeMap.has(testFolderPath)) {
-        fileTree.toggleFileCheckbox(nodeMap, testFolderPath, false);
-        const folderState = fileTree.checkboxStates.get(testFolderPath);
-        
-        if (folderState.checked) {
-          this.addFinding('checkbox', `Folder selection works correctly for ${testFolderPath}`);
-          log.success('Folder checkbox toggling works correctly');
-        } else {
-          this.addIssue('error', 'checkbox', `Folder selection failed for ${testFolderPath}`);
-        }
-      }
+      this.testFileSelection(fileTree, nodeMap, 'src/index.js');
+      this.testFolderSelection(fileTree, nodeMap, 'src');
 
       return true;
-      
+
     } catch (error) {
       this.addIssue('error', 'checkbox', `Checkbox testing failed: ${error.message}`, { stack: error.stack });
       log.error(`Checkbox testing failed: ${error.message}`);
