@@ -880,71 +880,41 @@ pub fn language_display_name(language: &Language) -> &'static str {
     language.display_name()
 }
 
-/// Heuristic test-file detection based on path segments and naming conventions
-pub fn is_test_path(path: &Path) -> bool {
-    let path_lower = path.to_string_lossy().to_lowercase();
-    let file_name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
+/// Test directory markers common across languages
+const TEST_DIR_MARKERS: &[&str] = &[
+    "test",
+    "tests",
+    "testing",
+    "__tests__",
+    "integration-tests",
+    "integration_test",
+    "integrationtests",
+    "e2e",
+    "qa",
+    "spec",
+];
 
-    if file_name == "output.md" || file_name.starts_with("output.") {
-        return true;
-    }
+/// Common test file prefixes
+const TEST_PREFIXES: &[&str] = &["test_", "spec_", "itest_", "integration_"];
 
-    let segments: Vec<&str> = path_lower
-        .split(|c| c == '/' || c == '\\')
-        .filter(|segment| !segment.is_empty())
-        .collect();
+/// Common test file suffixes
+const TEST_SUFFIXES: &[&str] = &["_test", "_tests", "_spec", "_itest", "_integration", "_e2e"];
 
-    const TEST_DIR_MARKERS: &[&str] = &[
-        "test",
-        "tests",
-        "testing",
-        "__tests__",
-        "integration-tests",
-        "integration_test",
-        "integrationtests",
-        "e2e",
-        "qa",
-        "spec",
-    ];
-
-    if segments
-        .iter()
-        .any(|segment| TEST_DIR_MARKERS.contains(segment))
-    {
-        return true;
-    }
-
-    const TEST_PREFIXES: &[&str] = &["test_", "spec_", "itest_", "integration_"];
-    if TEST_PREFIXES
+/// Check if file name matches common test name patterns
+fn matches_common_test_patterns(file_name: &str) -> bool {
+    TEST_PREFIXES
         .iter()
         .any(|prefix| file_name.starts_with(prefix))
-    {
-        return true;
-    }
+        || TEST_SUFFIXES
+            .iter()
+            .any(|suffix| file_name.strip_suffix(suffix).is_some())
+        || file_name.contains(".test.")
+        || file_name.contains(".spec.")
+}
 
-    const TEST_SUFFIXES: &[&str] = &["_test", "_tests", "_spec", "_itest", "_integration", "_e2e"];
-    if TEST_SUFFIXES
-        .iter()
-        .any(|suffix| file_name.strip_suffix(suffix).is_some())
-    {
-        return true;
-    }
-
-    if file_name.contains(".test.") || file_name.contains(".spec.") {
-        return true;
-    }
-
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    match ext.as_str() {
+/// Check language-specific test file patterns
+fn is_language_test_file(ext: &str, file_name: &str, segments: &[&str]) -> bool {
+    match ext {
         "rs" => file_name.ends_with("_test.rs") || segments.iter().any(|seg| *seg == "tests"),
         "py" => file_name.starts_with("test_") || file_name.ends_with("_test.py"),
         "go" => file_name.ends_with("_test.go"),
@@ -965,6 +935,70 @@ pub fn is_test_path(path: &Path) -> bool {
     }
 }
 
+/// Heuristic test-file detection based on path segments and naming conventions
+pub fn is_test_path(path: &Path) -> bool {
+    let path_lower = path.to_string_lossy().to_lowercase();
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    // Check for output files (often test artifacts)
+    if file_name == "output.md" || file_name.starts_with("output.") {
+        return true;
+    }
+
+    let segments: Vec<&str> = path_lower
+        .split(|c| c == '/' || c == '\\')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+
+    // Check for test directory markers
+    if segments
+        .iter()
+        .any(|segment| TEST_DIR_MARKERS.contains(segment))
+    {
+        return true;
+    }
+
+    // Check common test name patterns
+    if matches_common_test_patterns(&file_name) {
+        return true;
+    }
+
+    // Check language-specific patterns
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    is_language_test_file(&ext, &file_name, &segments)
+}
+
+/// Get entrypoint file names for a language
+fn entrypoint_files(language: &Language) -> &'static [&'static str] {
+    match language {
+        Language::Rust => &["main.rs", "lib.rs"],
+        Language::Python => &["main.py", "app.py", "__init__.py"],
+        Language::JavaScript | Language::TypeScript => &["index.js", "index.ts"],
+        Language::Go => &["main.go"],
+        Language::Java => &["main.java"],
+        _ => &[],
+    }
+}
+
+/// Get entrypoint path patterns for a language
+fn entrypoint_path_patterns(language: &Language) -> &'static [&'static str] {
+    match language {
+        Language::Python => &["/__main__.py", "/manage.py"],
+        Language::JavaScript | Language::TypeScript => &["/app.js", "/server.js"],
+        Language::Java => &["/main.java"],
+        _ => &[],
+    }
+}
+
 /// Heuristic entrypoint detection based on common file names per language
 pub fn is_entrypoint_path(path: &Path, language: &Language) -> bool {
     let path_lower = path.to_string_lossy().to_lowercase();
@@ -974,25 +1008,28 @@ pub fn is_entrypoint_path(path: &Path, language: &Language) -> bool {
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
 
-    match language {
-        Language::Rust => file_name == "main.rs" || file_name == "lib.rs",
-        Language::Python => {
-            file_name == "main.py"
-                || path_lower.contains("/__main__.py")
-                || path_lower.contains("/manage.py")
-                || file_name == "app.py"
-                || file_name == "__init__.py"
-        }
-        Language::JavaScript | Language::TypeScript => {
-            file_name == "index.js"
-                || file_name == "index.ts"
-                || path_lower.contains("/app.js")
-                || path_lower.contains("/server.js")
-        }
-        Language::Go => file_name == "main.go",
-        Language::Java => file_name == "main.java" || path_lower.contains("/main.java"),
-        _ => file_name.starts_with("main.") || file_name.starts_with("index."),
+    // Check exact file name matches
+    if entrypoint_files(language)
+        .iter()
+        .any(|&name| file_name == name)
+    {
+        return true;
     }
+
+    // Check path pattern matches
+    if entrypoint_path_patterns(language)
+        .iter()
+        .any(|&pattern| path_lower.contains(pattern))
+    {
+        return true;
+    }
+
+    // Fallback for unknown languages
+    if matches!(language, Language::Unknown) {
+        return file_name.starts_with("main.") || file_name.starts_with("index.");
+    }
+
+    false
 }
 
 #[cfg(test)]

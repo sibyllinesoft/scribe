@@ -143,10 +143,42 @@ class ArboristDebugger {
     }
   }
 
+  // Validate a single tree node structure
+  validateTreeNode(node, path = '') {
+    if (!node.id) {
+      this.addIssue('error', 'tree-structure', `Node missing id at path: ${path}`);
+    }
+    if (!node.name) {
+      this.addIssue('error', 'tree-structure', `Node missing name at path: ${path}`);
+    }
+    if (typeof node.isFolder !== 'boolean') {
+      this.addIssue('error', 'tree-structure', `Node isFolder not boolean at path: ${path}`);
+    }
+    if (node.isFolder && !Array.isArray(node.children)) {
+      this.addIssue('warning', 'tree-structure', `Folder node missing children array at path: ${path}`);
+    }
+
+    if (node.children) {
+      node.children.forEach((child, index) => {
+        this.validateTreeNode(child, `${path}[${index}]`);
+      });
+    }
+  }
+
+  // Log tree structure recursively
+  logTreeStructure(nodes, indent = '') {
+    nodes.forEach(node => {
+      log.debug(`${indent}${node.isFolder ? '📁' : '📄'} ${node.name} (${node.path})`);
+      if (node.children) {
+        this.logTreeStructure(node.children, indent + '  ');
+      }
+    });
+  }
+
   // Test tree data building functionality
   testTreeDataBuilding(fileTree) {
     log.subsection('Testing Tree Data Building');
-    
+
     if (!fileTree) {
       this.addIssue('error', 'tree-building', 'No fileTree instance available for testing');
       return false;
@@ -154,7 +186,7 @@ class ArboristDebugger {
 
     try {
       const treeData = fileTree.buildTreeData(mockFiles);
-      
+
       if (!Array.isArray(treeData)) {
         this.addIssue('error', 'tree-building', 'buildTreeData did not return an array');
         return false;
@@ -166,49 +198,18 @@ class ArboristDebugger {
       }
 
       // Validate tree structure
-      const validateNode = (node, path = '') => {
-        if (!node.id) {
-          this.addIssue('error', 'tree-structure', `Node missing id at path: ${path}`);
-        }
-        if (!node.name) {
-          this.addIssue('error', 'tree-structure', `Node missing name at path: ${path}`);
-        }
-        if (typeof node.isFolder !== 'boolean') {
-          this.addIssue('error', 'tree-structure', `Node isFolder not boolean at path: ${path}`);
-        }
-        if (node.isFolder && !Array.isArray(node.children)) {
-          this.addIssue('warning', 'tree-structure', `Folder node missing children array at path: ${path}`);
-        }
-        
-        if (node.children) {
-          node.children.forEach((child, index) => {
-            validateNode(child, `${path}[${index}]`);
-          });
-        }
-      };
-
       treeData.forEach((node, index) => {
-        validateNode(node, `root[${index}]`);
+        this.validateTreeNode(node, `root[${index}]`);
       });
 
       this.addFinding('tree-building', `Successfully built tree with ${treeData.length} root nodes`);
       log.success(`Tree data built successfully with ${treeData.length} root nodes`);
-      
-      // Log tree structure
-      const logTreeStructure = (nodes, indent = '') => {
-        nodes.forEach(node => {
-          log.debug(`${indent}${node.isFolder ? '📁' : '📄'} ${node.name} (${node.path})`);
-          if (node.children) {
-            logTreeStructure(node.children, indent + '  ');
-          }
-        });
-      };
-      
+
       log.debug('Tree structure:');
-      logTreeStructure(treeData);
-      
+      this.logTreeStructure(treeData);
+
       return treeData;
-      
+
     } catch (error) {
       this.addIssue('error', 'tree-building', `Tree building failed: ${error.message}`, { stack: error.stack });
       log.error(`Tree building failed: ${error.message}`);
@@ -375,49 +376,45 @@ class ArboristDebugger {
     }
   }
 
+  // Check a single global dependency
+  checkGlobalDependency(name, required = true) {
+    if (typeof window === 'undefined') return false;
+
+    const isAvailable = !!window[name];
+    if (isAvailable) {
+      this.addFinding('template', `${name} is available globally`);
+    } else if (required) {
+      this.addIssue('error', 'template', `${name} not available globally`);
+      this.addRecommendation('high', `Ensure ${name} is loaded before ScribeFileTree`, `Add ${name} script tag before bundle`);
+    } else {
+      this.addIssue('warning', 'template', `${name} not available globally yet (may be expected)`);
+    }
+    return isAvailable;
+  }
+
   // Check for potential template integration issues
   checkTemplateIntegration() {
     log.subsection('Checking Template Integration Issues');
-    
+
     try {
-      // Check if expected global objects are available
-      if (typeof window !== 'undefined') {
-        this.addFinding('template', 'window object is available');
-        
-        if (window.React) {
-          this.addFinding('template', 'React is available globally');
-        } else {
-          this.addIssue('error', 'template', 'React not available globally - this may cause template integration issues');
-          this.addRecommendation('high', 'Ensure React is loaded before ScribeFileTree', 'Add React script tag before bundle');
-        }
-
-        if (window.ReactDOM) {
-          this.addFinding('template', 'ReactDOM is available globally');
-        } else {
-          this.addIssue('error', 'template', 'ReactDOM not available globally');
-          this.addRecommendation('high', 'Ensure ReactDOM is loaded before ScribeFileTree', 'Add ReactDOM script tag before bundle');
-        }
-
-        if (window.ScribeFileTree) {
-          this.addFinding('template', 'ScribeFileTree is available globally');
-        } else {
-          this.addIssue('warning', 'template', 'ScribeFileTree not available globally yet (may be expected)');
-        }
-      } else {
+      if (typeof window === 'undefined') {
         this.addIssue('info', 'template', 'Running in Node.js environment (not browser)');
+        return true;
       }
 
-      // Check for common DOM issues
-      if (typeof document !== 'undefined') {
-        if (document.getElementById) {
-          this.addFinding('template', 'document.getElementById available');
-        } else {
-          this.addIssue('error', 'template', 'document.getElementById not available');
-        }
+      this.addFinding('template', 'window object is available');
+      this.checkGlobalDependency('React', true);
+      this.checkGlobalDependency('ReactDOM', true);
+      this.checkGlobalDependency('ScribeFileTree', false);
+
+      if (typeof document !== 'undefined' && document.getElementById) {
+        this.addFinding('template', 'document.getElementById available');
+      } else if (typeof document !== 'undefined') {
+        this.addIssue('error', 'template', 'document.getElementById not available');
       }
 
       return true;
-      
+
     } catch (error) {
       this.addIssue('error', 'template', `Template integration check failed: ${error.message}`);
       return false;
@@ -872,59 +869,97 @@ class ArboristDebugger {
     this.generateReport();
   }
 
-  // Generate comprehensive debug report
-  generateReport() {
-    log.section('Debug Report Summary');
-    
-    // Count issues by severity
-    const issueCounts = this.issues.reduce((acc, issue) => {
+  // Count issues by severity
+  countIssuesBySeverity() {
+    return this.issues.reduce((acc, issue) => {
       acc[issue.severity] = (acc[issue.severity] || 0) + 1;
       return acc;
     }, {});
+  }
 
-    // Display summary
-    log.info(`Total Issues Found: ${this.issues.length}`);
+  // Display issue counts by severity
+  displayIssueCounts(issueCounts) {
     Object.entries(issueCounts).forEach(([severity, count]) => {
-      const color = severity === 'error' ? 'red' : severity === 'warning' ? 'yellow' : 'blue';
-      log[severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'info'](`  ${severity.toUpperCase()}: ${count}`);
+      const logFn = severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'info';
+      log[logFn](`  ${severity.toUpperCase()}: ${count}`);
     });
+  }
 
+  // Display detailed issues
+  displayIssues() {
+    if (this.issues.length === 0) return;
+
+    log.subsection('Issues Found');
+    this.issues.forEach((issue) => {
+      const symbol = issue.severity === 'error' ? '❌' : issue.severity === 'warning' ? '⚠️' : 'ℹ️';
+      log[issue.severity](`${symbol} [${issue.category.toUpperCase()}] ${issue.message}`);
+      if (issue.details) {
+        log.debug(`    Details: ${JSON.stringify(issue.details, null, 2)}`);
+      }
+    });
+  }
+
+  // Display findings
+  displayFindings() {
+    if (this.findings.length === 0) return;
+
+    log.subsection('Key Findings');
+    this.findings.forEach((finding) => {
+      log.success(`✅ [${finding.category.toUpperCase()}] ${finding.message}`);
+    });
+  }
+
+  // Display recommendations
+  displayRecommendations() {
+    if (this.recommendations.length === 0) return;
+
+    log.subsection('Recommendations');
+    this.recommendations.forEach((rec) => {
+      const priority = rec.priority === 'high' ? '🔴' : rec.priority === 'medium' ? '🟡' : '🟢';
+      log.info(`${priority} ${rec.message}`);
+      if (rec.action) {
+        log.debug(`    Action: ${rec.action}`);
+      }
+    });
+  }
+
+  // Save report data to file
+  saveReportToFile(reportData) {
+    try {
+      const reportPath = join(process.cwd(), 'arborist-debug-report.json');
+      writeFileSync(reportPath, JSON.stringify(reportData, null, 2));
+      log.success(`Detailed report saved to: ${reportPath}`);
+    } catch (error) {
+      log.error(`Failed to save report: ${error.message}`);
+    }
+  }
+
+  // Display next steps based on issue severity
+  displayNextSteps() {
+    if (this.issues.some(i => i.severity === 'error')) {
+      log.warning('Critical issues found. Address errors before proceeding with integration.');
+    } else if (this.issues.some(i => i.severity === 'warning')) {
+      log.info('Some warnings found. Review and address as needed.');
+    } else {
+      log.success('No critical issues found! Component should integrate successfully.');
+    }
+  }
+
+  // Generate comprehensive debug report
+  generateReport() {
+    log.section('Debug Report Summary');
+
+    const issueCounts = this.countIssuesBySeverity();
+
+    log.info(`Total Issues Found: ${this.issues.length}`);
+    this.displayIssueCounts(issueCounts);
     log.info(`Findings: ${this.findings.length}`);
     log.info(`Recommendations: ${this.recommendations.length}`);
 
-    // Show detailed issues
-    if (this.issues.length > 0) {
-      log.subsection('Issues Found');
-      this.issues.forEach((issue, index) => {
-        const symbol = issue.severity === 'error' ? '❌' : issue.severity === 'warning' ? '⚠️' : 'ℹ️';
-        log[issue.severity](`${symbol} [${issue.category.toUpperCase()}] ${issue.message}`);
-        if (issue.details) {
-          log.debug(`    Details: ${JSON.stringify(issue.details, null, 2)}`);
-        }
-      });
-    }
+    this.displayIssues();
+    this.displayFindings();
+    this.displayRecommendations();
 
-    // Show findings
-    if (this.findings.length > 0) {
-      log.subsection('Key Findings');
-      this.findings.forEach((finding) => {
-        log.success(`✅ [${finding.category.toUpperCase()}] ${finding.message}`);
-      });
-    }
-
-    // Show recommendations
-    if (this.recommendations.length > 0) {
-      log.subsection('Recommendations');
-      this.recommendations.forEach((rec) => {
-        const priority = rec.priority === 'high' ? '🔴' : rec.priority === 'medium' ? '🟡' : '🟢';
-        log.info(`${priority} ${rec.message}`);
-        if (rec.action) {
-          log.debug(`    Action: ${rec.action}`);
-        }
-      });
-    }
-
-    // Save report to file
     const reportData = {
       timestamp: new Date().toISOString(),
       summary: {
@@ -938,24 +973,10 @@ class ArboristDebugger {
       recommendations: this.recommendations
     };
 
-    try {
-      const reportPath = join(process.cwd(), 'arborist-debug-report.json');
-      writeFileSync(reportPath, JSON.stringify(reportData, null, 2));
-      log.success(`Detailed report saved to: ${reportPath}`);
-    } catch (error) {
-      log.error(`Failed to save report: ${error.message}`);
-    }
+    this.saveReportToFile(reportData);
 
     log.section('Debug Session Complete');
-    
-    // Provide next steps
-    if (this.issues.some(i => i.severity === 'error')) {
-      log.warning('Critical issues found. Address errors before proceeding with integration.');
-    } else if (this.issues.some(i => i.severity === 'warning')) {
-      log.info('Some warnings found. Review and address as needed.');
-    } else {
-      log.success('No critical issues found! Component should integrate successfully.');
-    }
+    this.displayNextSteps();
   }
 }
 
