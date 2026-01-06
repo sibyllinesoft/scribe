@@ -383,6 +383,55 @@ impl GitBatchProcessor {
         }
     }
 
+    /// Create a time-sorted revwalk from HEAD
+    fn create_revwalk(repo: &git2::Repository) -> Result<git2::Revwalk> {
+        let mut revwalk = repo
+            .revwalk()
+            .map_err(|e| ScribeError::git(format!("Failed to create revwalk: {}", e)))?;
+        revwalk
+            .push_head()
+            .map_err(|e| ScribeError::git(format!("Failed to push HEAD: {}", e)))?;
+        revwalk
+            .set_sorting(git2::Sort::TIME)
+            .map_err(|e| ScribeError::git(format!("Failed to sort revwalk: {}", e)))?;
+        Ok(revwalk)
+    }
+
+    /// Get the parent tree of a commit, if it has a parent
+    fn get_parent_tree(commit: &git2::Commit) -> Result<Option<git2::Tree>> {
+        if commit.parent_count() == 0 {
+            return Ok(None);
+        }
+        let parent = commit
+            .parent(0)
+            .map_err(|e| ScribeError::git(format!("Failed to access parent commit: {}", e)))?;
+        let tree = parent
+            .tree()
+            .map_err(|e| ScribeError::git(format!("Failed to load parent tree: {}", e)))?;
+        Ok(Some(tree))
+    }
+
+    /// Check if a commit modified the given path
+    fn commit_modified_path(
+        repo: &git2::Repository,
+        commit: &git2::Commit,
+        diff_path: &str,
+    ) -> Result<bool> {
+        let tree = commit
+            .tree()
+            .map_err(|e| ScribeError::git(format!("Failed to load commit tree: {}", e)))?;
+        let parent_tree = Self::get_parent_tree(commit)?;
+
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.pathspec(diff_path);
+
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
+            .map_err(|e| ScribeError::git(format!("Failed to diff trees: {}", e)))?;
+
+        Ok(diff.deltas().len() > 0)
+    }
+
     /// Get cached last commit hash for a file (simplified for performance)
     fn get_cached_last_commit_hash(&mut self, path: &Path) -> Result<Option<u64>> {
         let repo = match &self.repo {
@@ -395,18 +444,8 @@ impl GitBatchProcessor {
             return Ok(*cached);
         }
 
-        let relative_str = relative_path.to_string_lossy();
-        let diff_path = relative_str.replace('\\', "/");
-
-        let mut revwalk = repo
-            .revwalk()
-            .map_err(|e| ScribeError::git(format!("Failed to create revwalk: {}", e)))?;
-        revwalk
-            .push_head()
-            .map_err(|e| ScribeError::git(format!("Failed to push HEAD: {}", e)))?;
-        revwalk
-            .set_sorting(git2::Sort::TIME)
-            .map_err(|e| ScribeError::git(format!("Failed to sort revwalk: {}", e)))?;
+        let diff_path = relative_path.to_string_lossy().replace('\\', "/");
+        let revwalk = Self::create_revwalk(repo)?;
 
         for oid_result in revwalk.take(256) {
             let oid = oid_result
@@ -414,34 +453,8 @@ impl GitBatchProcessor {
             let commit = repo
                 .find_commit(oid)
                 .map_err(|e| ScribeError::git(format!("Failed to find commit: {}", e)))?;
-            let tree = commit
-                .tree()
-                .map_err(|e| ScribeError::git(format!("Failed to load commit tree: {}", e)))?;
 
-            let parent_tree = if commit.parent_count() > 0 {
-                Some(
-                    commit
-                        .parent(0)
-                        .map_err(|e| {
-                            ScribeError::git(format!("Failed to access parent commit: {}", e))
-                        })?
-                        .tree()
-                        .map_err(|e| {
-                            ScribeError::git(format!("Failed to load parent tree: {}", e))
-                        })?,
-                )
-            } else {
-                None
-            };
-
-            let mut diff_opts = git2::DiffOptions::new();
-            diff_opts.pathspec(&diff_path);
-
-            let diff = repo
-                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
-                .map_err(|e| ScribeError::git(format!("Failed to diff trees: {}", e)))?;
-
-            if diff.deltas().len() > 0 {
+            if Self::commit_modified_path(repo, &commit, &diff_path)? {
                 let hash = xxh3_64(commit.id().as_bytes());
                 self.last_commit_cache.insert(path_id, Some(hash));
                 return Ok(Some(hash));
@@ -465,16 +478,7 @@ impl GitBatchProcessor {
         }
 
         let diff_path = relative_path.to_string_lossy().replace('\\', "/");
-
-        let mut revwalk = repo
-            .revwalk()
-            .map_err(|e| ScribeError::git(format!("Failed to create revwalk: {}", e)))?;
-        revwalk
-            .push_head()
-            .map_err(|e| ScribeError::git(format!("Failed to push HEAD: {}", e)))?;
-        revwalk
-            .set_sorting(git2::Sort::TIME)
-            .map_err(|e| ScribeError::git(format!("Failed to sort revwalk: {}", e)))?;
+        let revwalk = Self::create_revwalk(repo)?;
 
         let mut changes = 0usize;
         let mut total = 0usize;
@@ -486,34 +490,8 @@ impl GitBatchProcessor {
             let commit = repo
                 .find_commit(oid)
                 .map_err(|e| ScribeError::git(format!("Failed to find commit: {}", e)))?;
-            let tree = commit
-                .tree()
-                .map_err(|e| ScribeError::git(format!("Failed to load commit tree: {}", e)))?;
 
-            let parent_tree = if commit.parent_count() > 0 {
-                Some(
-                    commit
-                        .parent(0)
-                        .map_err(|e| {
-                            ScribeError::git(format!("Failed to access parent commit: {}", e))
-                        })?
-                        .tree()
-                        .map_err(|e| {
-                            ScribeError::git(format!("Failed to load parent tree: {}", e))
-                        })?,
-                )
-            } else {
-                None
-            };
-
-            let mut diff_opts = git2::DiffOptions::new();
-            diff_opts.pathspec(&diff_path);
-
-            let diff = repo
-                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
-                .map_err(|e| ScribeError::git(format!("Failed to diff trees: {}", e)))?;
-
-            if diff.deltas().len() > 0 {
+            if Self::commit_modified_path(repo, &commit, &diff_path)? {
                 changes += 1;
             }
             total += 1;
