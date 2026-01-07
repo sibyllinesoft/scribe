@@ -49,6 +49,54 @@ Agent wants to understand `authenticate_user()` in auth.rs
 
 **Scribe's covering set feature understands your code's dependency graph and returns only what's needed.**
 
+## Why Not Just Give Agents LSP Access?
+
+LSP (Language Server Protocol) is a big step up from grep—agents can look up symbol definitions, find references, and navigate code. But LSP solves a different problem:
+
+**LSP answers point queries:** "What is this symbol?"
+
+**Scribe answers context queries:** "What do I need to understand this symbol?"
+
+```
+Agent wants to understand `authenticate_user()` using LSP:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LSP APPROACH (iterative discovery)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. Get definition of authenticate_user      → Found in auth.rs             │
+│  2. See it calls verify_password             → Need to look that up         │
+│  3. Get definition of verify_password        → Found in crypto.rs           │
+│  4. See it uses PasswordHash type            → Need to look that up         │
+│  5. Get definition of PasswordHash           → Found in types.rs            │
+│  6. Back to authenticate_user, see Session   → Need to look that up         │
+│  7. ...keep discovering dependencies one by one...                          │
+│                                                                              │
+│  Problem: Agent doesn't know what it doesn't know                           │
+│  - Each lookup is a tool call (latency + tokens)                            │
+│  - May miss non-obvious dependencies (configs, constants, type aliases)     │
+│  - No way to know when you have "enough" context                            │
+│  - Easy to go down rabbit holes or miss critical paths                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SCRIBE APPROACH (complete context in one call)                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  $ scribe --covering-set "auth.rs:authenticate_user" --stdout               │
+│                                                                              │
+│  Returns the complete dependency cone:                                       │
+│  - authenticate_user (target)                                                │
+│  - verify_password, create_session (direct dependencies)                    │
+│  - PasswordHash, Session, AuthConfig (type dependencies)                    │
+│  - AUTH_TIMEOUT constant (implicit dependency)                              │
+│                                                                              │
+│  One call. Complete context. No iterative discovery.                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**LSP helps agents navigate code. Scribe helps agents understand code.**
+
 ## Key Differentiator: Surgical Code Retrieval
 
 Unlike tools like repomix that bundle entire repositories, Scribe provides **surgical precision**:
@@ -56,6 +104,7 @@ Unlike tools like repomix that bundle entire repositories, Scribe provides **sur
 | Approach | Tool Calls | Tokens Used | Relevance |
 |----------|------------|-------------|-----------|
 | Manual grep + read | 4-10+ | ~15,000 | ~5% relevant |
+| LSP iterative lookup | 5-15+ | ~8,000 | ~40% relevant |
 | Repomix (full bundle) | 1 | ~500,000 | ~1% relevant |
 | **Scribe covering set** | **1** | **~2,000** | **95%+ relevant** |
 
@@ -288,14 +337,15 @@ scribe = { version = "0.5", default-features = false, features = ["core", "analy
 
 ## Comparison with Other Tools
 
-| Feature | Scribe | Repomix | Manual |
-|---------|--------|---------|--------|
-| Dependency-aware selection | ✅ | ❌ | ❌ |
-| Entity-level granularity | ✅ | ❌ | ❌ |
-| Single-command context | ✅ | ✅ | ❌ |
-| Token-efficient output | ✅ | ❌ | ❌ |
-| Multi-language support | ✅ | ✅ | N/A |
-| Git diff analysis | ✅ | ❌ | ❌ |
+| Feature | Scribe | LSP Tools | Repomix | Manual |
+|---------|--------|-----------|---------|--------|
+| Dependency-aware selection | ✅ | ❌ | ❌ | ❌ |
+| Transitive context in one call | ✅ | ❌ | ❌ | ❌ |
+| Entity-level granularity | ✅ | ✅ | ❌ | ❌ |
+| Single-command context | ✅ | ❌ | ✅ | ❌ |
+| Token-efficient output | ✅ | ⚠️ | ❌ | ❌ |
+| Multi-language support | ✅ | ⚠️ | ✅ | N/A |
+| Git diff analysis | ✅ | ❌ | ❌ | ❌ |
 
 ## License
 
