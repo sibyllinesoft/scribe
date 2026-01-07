@@ -1,0 +1,70 @@
+site_name: Scribe Docs
+site_description: Documentation for Scribe - Intelligent Code Context for AI Agents
+site_url: https://scribe.sibylline.dev
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - toc.integrate
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - codehilite
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_css:
+  - templates/themes/sibylline.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quickstart: quickstart.md
+      - Installation: installation.md
+      - CLI Usage: cli-usage.md
+  - Core Concepts:
+      - Why Scribe: why-scribe.md
+      - Covering Sets: covering-sets.md
+      - Context Positioning: context-positioning.md
+  - Architecture:
+      - Overview: architecture.md
+      - Crate Reference: crate-reference.md
+  - Reference:
+      - CLI Reference: cli-reference.md
+      - Configuration: configuration.md
+      - Output Formats: output-formats.md
+  - Contributing: contributing.md
