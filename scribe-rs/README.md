@@ -11,40 +11,35 @@ Scribe is a code analysis tool designed for AI agents and LLM-powered developmen
 
 When an AI agent needs to understand a function and its dependencies, the traditional approach is painful:
 
+**Traditional approach** (4-10+ tool calls, ~30 seconds, wastes tokens):
+
+```bash
+# Agent wants to understand authenticate_user() in auth.rs
+
+grep "authenticate_user" --include="*.rs"   # Find the function
+cat auth.rs                                  # Read ENTIRE 800-line file
+grep "use crate::" auth.rs                   # Find imports manually
+cat session.rs                               # Read ENTIRE dependency
+grep "use crate::" session.rs                # Find transitive imports
+cat crypto.rs                                # Another full file read
+cat config.rs                                # Keep going...
+
+# Result: Agent reads 4000+ lines, but only ~200 are relevant
+# Cost: Multiple round-trips, 95% wasted tokens, slow iteration
 ```
-Agent wants to understand `authenticate_user()` in auth.rs
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  TRADITIONAL APPROACH (4-10+ tool calls, ~30 seconds, wastes tokens)        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  1. grep "authenticate_user" --include="*.rs"     → Find the function      │
-│  2. read auth.rs                                  → Read ENTIRE 800-line file│
-│  3. grep "use crate::" auth.rs                    → Find imports manually  │
-│  4. read session.rs                               → Read ENTIRE dependency │
-│  5. grep "use crate::" session.rs                 → Find transitive imports│
-│  6. read crypto.rs                                → Another full file read │
-│  7. read config.rs                                → Keep going...          │
-│  ...                                                                        │
-│                                                                             │
-│  Result: Agent reads 4000+ lines, but only ~200 are relevant               │
-│  Cost: Multiple round-trips, 95% wasted tokens, slow iteration             │
-└─────────────────────────────────────────────────────────────────────────────┘
+**Scribe approach** (1 tool call, ~0.7 seconds, precise context):
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  SCRIBE APPROACH (1 tool call, ~0.7 seconds, precise context)               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  $ scribe --covering-set "auth.rs:authenticate_user" --stdout              │
-│                                                                             │
-│  Result: Returns authenticate_user + only the functions/types it uses       │
-│  - auth.rs:authenticate_user (target)                                       │
-│  - session.rs:create_session (direct dependency)                           │
-│  - crypto.rs:verify_password (direct dependency)                           │
-│  - config.rs:AuthConfig (type dependency)                                  │
-│                                                                             │
-│  Cost: Single call, ~200 lines of precisely relevant code                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+```bash
+scribe --covering-set "auth.rs:authenticate_user" --stdout
+
+# Returns authenticate_user + only the functions/types it uses:
+#   - auth.rs:authenticate_user (target)
+#   - session.rs:create_session (direct dependency)
+#   - crypto.rs:verify_password (direct dependency)
+#   - config.rs:AuthConfig (type dependency)
+#
+# Cost: Single call, ~200 lines of precisely relevant code
 ```
 
 **Scribe's covering set feature understands your code's dependency graph and returns only what's needed.**
@@ -57,42 +52,38 @@ LSP (Language Server Protocol) is a big step up from grep—agents can look up s
 
 **Scribe answers context queries:** "What do I need to understand this symbol?"
 
+**LSP approach** (iterative discovery):
+
+```bash
+# Agent wants to understand authenticate_user() using LSP
+
+# 1. Get definition of authenticate_user      → Found in auth.rs
+# 2. See it calls verify_password             → Need to look that up
+# 3. Get definition of verify_password        → Found in crypto.rs
+# 4. See it uses PasswordHash type            → Need to look that up
+# 5. Get definition of PasswordHash           → Found in types.rs
+# 6. Back to authenticate_user, see Session   → Need to look that up
+# 7. ...keep discovering dependencies one by one...
+
+# Problem: Agent doesn't know what it doesn't know
+#   - Each lookup is a tool call (latency + tokens)
+#   - May miss non-obvious dependencies (configs, constants, type aliases)
+#   - No way to know when you have "enough" context
+#   - Easy to go down rabbit holes or miss critical paths
 ```
-Agent wants to understand `authenticate_user()` using LSP:
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  LSP APPROACH (iterative discovery)                                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  1. Get definition of authenticate_user      → Found in auth.rs             │
-│  2. See it calls verify_password             → Need to look that up         │
-│  3. Get definition of verify_password        → Found in crypto.rs           │
-│  4. See it uses PasswordHash type            → Need to look that up         │
-│  5. Get definition of PasswordHash           → Found in types.rs            │
-│  6. Back to authenticate_user, see Session   → Need to look that up         │
-│  7. ...keep discovering dependencies one by one...                          │
-│                                                                              │
-│  Problem: Agent doesn't know what it doesn't know                           │
-│  - Each lookup is a tool call (latency + tokens)                            │
-│  - May miss non-obvious dependencies (configs, constants, type aliases)     │
-│  - No way to know when you have "enough" context                            │
-│  - Easy to go down rabbit holes or miss critical paths                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+**Scribe approach** (complete context in one call):
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  SCRIBE APPROACH (complete context in one call)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  $ scribe --covering-set "auth.rs:authenticate_user" --stdout               │
-│                                                                              │
-│  Returns the complete dependency cone:                                       │
-│  - authenticate_user (target)                                                │
-│  - verify_password, create_session (direct dependencies)                    │
-│  - PasswordHash, Session, AuthConfig (type dependencies)                    │
-│  - AUTH_TIMEOUT constant (implicit dependency)                              │
-│                                                                              │
-│  One call. Complete context. No iterative discovery.                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+```bash
+scribe --covering-set "auth.rs:authenticate_user" --stdout
+
+# Returns the complete dependency cone:
+#   - authenticate_user (target)
+#   - verify_password, create_session (direct dependencies)
+#   - PasswordHash, Session, AuthConfig (type dependencies)
+#   - AUTH_TIMEOUT constant (implicit dependency)
+#
+# One call. Complete context. No iterative discovery.
 ```
 
 **LSP helps agents navigate code. Scribe helps agents understand code.**
@@ -310,23 +301,15 @@ scribe = { version = "0.5", default-features = false, features = ["core", "analy
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          scribe-cli                             │
-├─────────────────────────────────────────────────────────────────┤
-│  scribe (main library)                                          │
-│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
-│  │ scribe-core │ │scribe-scanner │ │   scribe-patterns       │  │
-│  │  (types,    │ │ (file system  │ │ (glob, gitignore)       │  │
-│  │  config)    │ │  traversal)   │ │                         │  │
-│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
-│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
-│  │  scribe-    │ │ scribe-graph  │ │   scribe-selection      │  │
-│  │  analysis   │ │  (PageRank,   │ │  (covering sets,        │  │
-│  │ (heuristics)│ │  dependency   │ │   token budgeting)      │  │
-│  │             │ │   graphs)     │ │                         │  │
-│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```bash
+# scribe-cli (binary)
+#   └── scribe (main library)
+#         ├── scribe-core       # Shared types and configuration
+#         ├── scribe-scanner    # File system traversal
+#         ├── scribe-patterns   # Glob and gitignore handling
+#         ├── scribe-analysis   # AST parsing and heuristics
+#         ├── scribe-graph      # PageRank, dependency graphs
+#         └── scribe-selection  # Covering sets, token budgeting
 ```
 
 ## Performance
