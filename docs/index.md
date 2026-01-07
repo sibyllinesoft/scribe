@@ -45,38 +45,9 @@ Returns:
 
 ## Quick Links
 
-<div class="grid cards" markdown>
-
--   :material-rocket-launch:{ .lg .middle } **Getting Started**
-
-    ---
-
-    Install Scribe and run your first covering set analysis
-
-    [:octicons-arrow-right-24: Quickstart](quickstart.md)
-
--   :material-file-tree:{ .lg .middle } **Core Concepts**
-
-    ---
-
-    Understand covering sets, context positioning, and more
-
-    [:octicons-arrow-right-24: Why Scribe](why-scribe.md)
-
--   :material-console:{ .lg .middle } **CLI Reference**
-
-    ---
-
-    Complete command-line interface documentation
-
-    [:octicons-arrow-right-24: CLI Reference](cli-reference.md)
-
--   :material-cog:{ .lg .middle } **Architecture**
-
-    ---
-
-    Learn about Scribe's internal design
-
-    [:octicons-arrow-right-24: Architecture](architecture.md)
-
-</div>
+| | |
+|---|---|
+| **[Quickstart](quickstart.md)** | Install Scribe and run your first covering set analysis |
+| **[Why Scribe](why-scribe.md)** | Understand covering sets, context positioning, and more |
+| **[CLI Reference](cli-reference.md)** | Complete command-line interface documentation |
+| **[Architecture](architecture.md)** | Learn about Scribe's internal design |
