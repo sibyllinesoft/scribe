@@ -665,4 +665,207 @@ mod tests {
         assert!(!matcher.should_process("README.md").unwrap());
         assert!(!matcher.should_process("docs/guide.md").unwrap());
     }
+
+    #[test]
+    fn test_version_constant() {
+        assert!(!VERSION.is_empty());
+        assert!(VERSION.chars().any(|c| c.is_numeric()));
+    }
+
+    #[test]
+    fn test_quick_matcher_from_patterns_none() {
+        let mut matcher = QuickMatcher::from_patterns(None, None).unwrap();
+        // With no patterns, everything should match
+        assert!(matcher.matches("anything.rs").unwrap());
+    }
+
+    #[test]
+    fn test_quick_matcher_match_details() {
+        let mut matcher = QuickMatcher::new(&["**/*.rs"], &[]).unwrap();
+        let result = matcher.match_details("src/lib.rs").unwrap();
+        assert!(result.should_process());
+    }
+
+    #[test]
+    fn test_pattern_builder_default() {
+        let builder = PatternBuilder::default();
+        assert!(builder.includes.is_empty());
+        assert!(builder.excludes.is_empty());
+        assert!(builder.case_sensitive);
+    }
+
+    #[test]
+    fn test_pattern_builder_new() {
+        let builder = PatternBuilder::new();
+        assert!(builder.includes.is_empty());
+        assert!(builder.excludes.is_empty());
+        assert!(builder.case_sensitive);
+        assert!(builder.gitignore_files.is_empty());
+    }
+
+    #[test]
+    fn test_pattern_builder_chaining() {
+        let builder = PatternBuilder::new()
+            .include("**/*.rs")
+            .include("**/*.py")
+            .exclude("**/target/**")
+            .case_sensitive(false);
+
+        assert_eq!(builder.includes.len(), 2);
+        assert_eq!(builder.excludes.len(), 1);
+        assert!(!builder.case_sensitive);
+    }
+
+    #[test]
+    fn test_pattern_builder_includes_excludes() {
+        let builder = PatternBuilder::new()
+            .includes(["**/*.rs", "**/*.py"])
+            .excludes(["**/target/**", "**/build/**"]);
+
+        assert_eq!(builder.includes.len(), 2);
+        assert_eq!(builder.excludes.len(), 2);
+    }
+
+    #[test]
+    fn test_pattern_builder_gitignore() {
+        let builder = PatternBuilder::new()
+            .gitignore("/path/to/.gitignore");
+
+        assert_eq!(builder.gitignore_files.len(), 1);
+        assert_eq!(
+            builder.gitignore_files[0],
+            PathBuf::from("/path/to/.gitignore")
+        );
+    }
+
+    #[test]
+    fn test_pattern_builder_build() {
+        let result = PatternBuilder::new()
+            .include("**/*.rs")
+            .exclude("**/target/**")
+            .build();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pattern_builder_build_with_gitignore() {
+        // Create temp file for gitignore
+        let temp_dir = TempDir::new().unwrap();
+        let gitignore_path = temp_dir.path().join(".gitignore");
+        fs::write(&gitignore_path, "*.pyc\n__pycache__/").unwrap();
+
+        let result = PatternBuilder::new()
+            .include("**/*")
+            .gitignore(&gitignore_path)
+            .build();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_utils_normalize_path_edge_cases() {
+        use super::utils::*;
+
+        // Empty path
+        assert_eq!(normalize_path(""), PathBuf::from(""));
+
+        // Just dots
+        assert_eq!(normalize_path("."), PathBuf::from(""));
+        assert_eq!(normalize_path(".."), PathBuf::from(".."));
+
+        // Multiple parent refs
+        assert_eq!(
+            normalize_path("a/b/c/../../../d"),
+            PathBuf::from("d")
+        );
+
+        // Leading parent refs should be preserved
+        assert_eq!(
+            normalize_path("../../a/b"),
+            PathBuf::from("../../a/b")
+        );
+    }
+
+    #[test]
+    fn test_utils_is_valid_glob_pattern_invalid() {
+        use super::utils::*;
+
+        // Invalid patterns (unclosed brackets)
+        assert!(!is_valid_glob_pattern("[abc"));
+        assert!(!is_valid_glob_pattern("{a,b"));
+    }
+
+    #[test]
+    fn test_presets_source_code_extensions() {
+        let mut matcher = presets::source_code().unwrap();
+
+        // Test all supported extensions
+        assert!(matcher.should_process("file.kt").unwrap());
+        assert!(matcher.should_process("file.scala").unwrap());
+        assert!(matcher.should_process("file.swift").unwrap());
+        assert!(matcher.should_process("file.dart").unwrap());
+        assert!(matcher.should_process("file.rb").unwrap());
+        assert!(matcher.should_process("file.php").unwrap());
+        assert!(matcher.should_process("file.bash").unwrap());
+        assert!(matcher.should_process("file.zsh").unwrap());
+        assert!(matcher.should_process("file.cxx").unwrap());
+        assert!(matcher.should_process("file.cc").unwrap());
+    }
+
+    #[test]
+    fn test_presets_documentation_extensions() {
+        let mut matcher = presets::documentation().unwrap();
+
+        assert!(matcher.should_process("file.adoc").unwrap());
+        assert!(matcher.should_process("file.org").unwrap());
+        assert!(matcher.should_process("file.tex").unwrap());
+        assert!(matcher.should_process("file.latex").unwrap());
+        assert!(matcher.should_process("LICENSE").unwrap());
+        assert!(matcher.should_process("COPYING").unwrap());
+    }
+
+    #[test]
+    fn test_presets_configuration_extensions() {
+        let mut matcher = presets::configuration().unwrap();
+
+        assert!(matcher.should_process("file.ini").unwrap());
+        assert!(matcher.should_process("file.cfg").unwrap());
+        assert!(matcher.should_process("file.conf").unwrap());
+        // .env files might be hidden and need specific patterns
+        assert!(matcher.should_process("config.env").unwrap());
+        assert!(matcher.should_process("Makefile").unwrap());
+        assert!(matcher.should_process("Dockerfile").unwrap());
+    }
+
+    #[test]
+    fn test_presets_web_assets_extensions() {
+        let mut matcher = presets::web_assets().unwrap();
+
+        assert!(matcher.should_process("file.scss").unwrap());
+        assert!(matcher.should_process("file.sass").unwrap());
+        assert!(matcher.should_process("file.less").unwrap());
+        assert!(matcher.should_process("App.vue").unwrap());
+        assert!(matcher.should_process("App.svelte").unwrap());
+
+        // Minified files should be excluded
+        assert!(!matcher.should_process("bundle.min.css").unwrap());
+    }
+
+    #[test]
+    fn test_presets_no_build_artifacts_extensions() {
+        let mut matcher = presets::no_build_artifacts().unwrap();
+
+        // Object files and libraries should be excluded
+        assert!(!matcher.should_process("lib.o").unwrap());
+        assert!(!matcher.should_process("lib.a").unwrap());
+        assert!(!matcher.should_process("lib.so").unwrap());
+        assert!(!matcher.should_process("lib.dylib").unwrap());
+        assert!(!matcher.should_process("lib.dll").unwrap());
+        assert!(!matcher.should_process("app.exe").unwrap());
+
+        // Coverage directories should be excluded
+        assert!(!matcher.should_process("coverage/lcov.info").unwrap());
+        assert!(!matcher.should_process(".nyc_output/coverage.json").unwrap());
+    }
 }

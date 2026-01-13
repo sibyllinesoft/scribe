@@ -746,4 +746,25 @@ mod tests {
         assert_eq!(stats.total_edges, 0);
         assert_eq!(stats.graph_density, 0.0);
     }
+
+    #[test]
+    fn test_range_multiline_length() {
+        // Multi-line range should calculate approximate length
+        let start = Position::new(1, 5);
+        let end = Position::new(3, 10); // 2 lines apart
+        let range = Range::new(start, end);
+
+        // Formula: (end.line - start.line) * 80 + end.column
+        // = (3 - 1) * 80 + 10 = 170
+        assert_eq!(range.length(), 170);
+    }
+
+    #[test]
+    fn test_file_type_stats_default() {
+        let stats = FileTypeStats::default();
+        assert_eq!(stats.source_files, 0);
+        assert_eq!(stats.test_files, 0);
+        assert_eq!(stats.binary_files, 0);
+        assert_eq!(stats.total(), 0);
+    }
 }

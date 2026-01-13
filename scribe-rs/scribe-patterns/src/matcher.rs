@@ -643,4 +643,219 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_match_result_should_process() {
+        assert!(MatchResult::Include.should_process());
+        assert!(MatchResult::NoMatch.should_process());
+        assert!(!MatchResult::Exclude.should_process());
+        assert!(!MatchResult::Ignore.should_process());
+    }
+
+    #[test]
+    fn test_match_result_should_skip() {
+        assert!(!MatchResult::Include.should_skip());
+        assert!(!MatchResult::NoMatch.should_skip());
+        assert!(MatchResult::Exclude.should_skip());
+        assert!(MatchResult::Ignore.should_skip());
+    }
+
+    #[test]
+    fn test_matcher_options_default() {
+        let options = MatcherOptions::default();
+        assert!(options.respect_gitignore);
+        assert!(options.case_sensitive);
+        assert!(!options.include_hidden);
+        assert!(options.custom_gitignore_files.is_empty());
+        assert!(options.override_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_pattern_matcher_new() {
+        let options = MatcherOptions::default();
+        let matcher = PatternMatcher::new(options);
+        assert!(matcher.is_empty());
+        assert_eq!(matcher.pattern_count(), 0);
+    }
+
+    #[test]
+    fn test_builder_includes_multiple() -> Result<()> {
+        let matcher = PatternMatcherBuilder::new()
+            .includes(vec!["*.rs", "*.py"])
+            .build()?;
+
+        assert!(!matcher.is_empty());
+        assert_eq!(matcher.pattern_count(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_builder_excludes_multiple() -> Result<()> {
+        let matcher = PatternMatcherBuilder::new()
+            .excludes(vec!["*.tmp", "*.log"])
+            .build()?;
+
+        assert!(!matcher.is_empty());
+        assert_eq!(matcher.pattern_count(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_excluded_hidden_file() {
+        assert!(PatternMatcher::is_excluded_hidden_file(Path::new(".hidden")));
+        assert!(PatternMatcher::is_excluded_hidden_file(Path::new(".gitignore")));
+        assert!(!PatternMatcher::is_excluded_hidden_file(Path::new("normal.txt")));
+        assert!(!PatternMatcher::is_excluded_hidden_file(Path::new(".."))); // Parent dir
+        assert!(!PatternMatcher::is_excluded_hidden_file(Path::new("."))); // Current dir
+    }
+
+    #[test]
+    fn test_pattern_matcher_builder_new() {
+        let builder = PatternMatcherBuilder::new();
+        assert!(builder.include_patterns.is_empty());
+        assert!(builder.exclude_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_pattern_matcher_builder_fluent_api() -> Result<()> {
+        let matcher = PatternMatcherBuilder::new()
+            .include("*.rs")
+            .exclude("*.tmp")
+            .respect_gitignore(false)
+            .case_sensitive(false)
+            .include_hidden(true)
+            .build()?;
+
+        assert!(!matcher.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_result_clone() {
+        let result = MatchResult::Include;
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+    }
+
+    #[test]
+    fn test_match_result_eq() {
+        assert_eq!(MatchResult::Include, MatchResult::Include);
+        assert_ne!(MatchResult::Include, MatchResult::Exclude);
+        assert_ne!(MatchResult::Exclude, MatchResult::Ignore);
+        assert_ne!(MatchResult::Ignore, MatchResult::NoMatch);
+    }
+
+    #[test]
+    fn test_compile_empty_matcher() -> Result<()> {
+        let mut matcher = PatternMatcher::new(MatcherOptions::default());
+        // Compiling an empty matcher should work without error
+        matcher.compile()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_case_insensitive_gitignore() -> Result<()> {
+        // Tests line 146 (case_insensitive gitignore branch)
+        let temp_dir = TempDir::new()?;
+        create_test_files(temp_dir.path())?;
+
+        let mut matcher = PatternMatcherBuilder::new()
+            .respect_gitignore(true)
+            .case_sensitive(false)
+            .base_path(temp_dir.path())
+            .build()?;
+
+        // Should still work with case insensitive matching
+        assert!(matcher.should_process("test.rs")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_gitignore_files() -> Result<()> {
+        // Tests lines 155-156 (custom gitignore files loading)
+        let temp_dir = TempDir::new()?;
+        create_test_files(temp_dir.path())?;
+
+        // Create a custom gitignore file
+        let custom_gitignore = temp_dir.path().join("custom.ignore");
+        fs::write(&custom_gitignore, "*.custom\n")?;
+        fs::write(temp_dir.path().join("test.custom"), "custom file")?;
+
+        let mut matcher = PatternMatcherBuilder::new()
+            .respect_gitignore(true)
+            .custom_gitignore_files(vec![custom_gitignore])
+            .base_path(temp_dir.path())
+            .build()?;
+
+        // Should ignore files matching custom gitignore
+        assert!(matcher.should_skip("test.custom")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_builder_includes_method() -> Result<()> {
+        // Tests line 351 (includes builder method)
+        let matcher = PatternMatcherBuilder::new()
+            .includes(["*.rs", "*.py"])
+            .build()?;
+
+        assert_eq!(matcher.pattern_count(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_builder_custom_gitignore_files_method() -> Result<()> {
+        // Tests lines 403-406 (custom_gitignore_files builder method)
+        let temp_dir = TempDir::new()?;
+        let ignore_file1 = temp_dir.path().join("ignore1");
+        let ignore_file2 = temp_dir.path().join("ignore2");
+        fs::write(&ignore_file1, "")?;
+        fs::write(&ignore_file2, "")?;
+
+        let _ = PatternMatcherBuilder::new()
+            .custom_gitignore_files([ignore_file1, ignore_file2])
+            .build()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_builder_override_patterns_method() -> Result<()> {
+        // Tests line 416 (override_patterns builder method)
+        let temp_dir = TempDir::new()?;
+        create_test_files(temp_dir.path())?;
+
+        let _ = PatternMatcherBuilder::new()
+            .override_patterns(["!*.tmp", "!*.log"])
+            .base_path(temp_dir.path())
+            .build()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nonexistent_custom_gitignore_skipped() -> Result<()> {
+        // Tests that nonexistent custom gitignore files are skipped
+        let temp_dir = TempDir::new()?;
+        create_test_files(temp_dir.path())?;
+
+        let nonexistent = temp_dir.path().join("nonexistent.ignore");
+
+        // Should not error with nonexistent custom gitignore
+        let mut matcher = PatternMatcherBuilder::new()
+            .respect_gitignore(true)
+            .custom_gitignore_files(vec![nonexistent])
+            .base_path(temp_dir.path())
+            .build()?;
+
+        // Should still work normally
+        assert!(matcher.should_process("test.rs")?);
+
+        Ok(())
+    }
 }

@@ -233,3 +233,443 @@ impl Default for StatisticsConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_degree_distribution_default() {
+        let dist = DegreeDistribution::default();
+        assert!(dist.in_degree_histogram.is_empty());
+        assert!(dist.out_degree_histogram.is_empty());
+        assert!(dist.power_law_alpha.is_none());
+    }
+
+    #[test]
+    fn test_degree_distribution_clone() {
+        let dist = DegreeDistribution::default();
+        let cloned = dist.clone();
+        assert_eq!(dist, cloned);
+    }
+
+    #[test]
+    fn test_degree_distribution_serialize() {
+        let dist = DegreeDistribution::default();
+        let json = serde_json::to_string(&dist).unwrap();
+        let deserialized: DegreeDistribution = serde_json::from_str(&json).unwrap();
+        assert_eq!(dist, deserialized);
+    }
+
+    #[test]
+    fn test_degree_stats_default() {
+        let stats = DegreeStats::default();
+        assert_eq!(stats.min, 0);
+        assert_eq!(stats.max, 0);
+        assert_eq!(stats.mean, 0.0);
+        assert_eq!(stats.median, 0.0);
+        assert_eq!(stats.std_dev, 0.0);
+    }
+
+    #[test]
+    fn test_degree_stats_custom() {
+        let stats = DegreeStats {
+            min: 1,
+            max: 100,
+            mean: 25.0,
+            median: 20.0,
+            std_dev: 15.0,
+            percentile_25: 10.0,
+            percentile_75: 40.0,
+            percentile_90: 60.0,
+            percentile_95: 80.0,
+            percentile_99: 95.0,
+        };
+
+        assert_eq!(stats.min, 1);
+        assert_eq!(stats.max, 100);
+        assert_eq!(stats.mean, 25.0);
+    }
+
+    #[test]
+    fn test_connectivity_analysis_default() {
+        let analysis = ConnectivityAnalysis::default();
+        assert_eq!(analysis.weakly_connected_components, 0);
+        assert_eq!(analysis.strongly_connected_components, 0);
+        assert_eq!(analysis.largest_scc_size, 0);
+        assert!(!analysis.is_acyclic);
+    }
+
+    #[test]
+    fn test_connectivity_analysis_clone() {
+        let analysis = ConnectivityAnalysis {
+            weakly_connected_components: 5,
+            strongly_connected_components: 3,
+            largest_scc_size: 100,
+            graph_density: 0.05,
+            average_clustering: 0.3,
+            global_clustering: 0.25,
+            average_path_length: Some(4.5),
+            diameter: Some(10),
+            is_acyclic: true,
+        };
+
+        let cloned = analysis.clone();
+        assert_eq!(analysis, cloned);
+    }
+
+    #[test]
+    fn test_structural_patterns_default() {
+        let patterns = StructuralPatterns::default();
+        assert!(patterns.hubs.is_empty());
+        assert!(patterns.authorities.is_empty());
+        assert!(patterns.bottlenecks.is_empty());
+        assert!(patterns.bridges.is_empty());
+        assert!(patterns.isolated_nodes.is_empty());
+    }
+
+    #[test]
+    fn test_node_info_creation() {
+        let info = NodeInfo {
+            node_id: "test.rs".to_string(),
+            score: 0.85,
+            in_degree: 10,
+            out_degree: 5,
+            metadata: Some("important file".to_string()),
+        };
+
+        assert_eq!(info.node_id, "test.rs");
+        assert_eq!(info.score, 0.85);
+        assert_eq!(info.in_degree, 10);
+        assert_eq!(info.out_degree, 5);
+    }
+
+    #[test]
+    fn test_node_info_serialize() {
+        let info = NodeInfo {
+            node_id: "main.rs".to_string(),
+            score: 0.5,
+            in_degree: 5,
+            out_degree: 3,
+            metadata: None,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: NodeInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, deserialized);
+    }
+
+    #[test]
+    fn test_import_insights_default() {
+        let insights = ImportInsights::default();
+        assert_eq!(insights.average_import_depth, 0.0);
+        assert_eq!(insights.max_import_depth, 0);
+        assert!(insights.circular_dependencies.is_empty());
+        assert!(insights.dependency_layers.is_empty());
+    }
+
+    #[test]
+    fn test_circular_dependency_creation() {
+        let dep = CircularDependency {
+            nodes: vec![
+                "a.rs".to_string(),
+                "b.rs".to_string(),
+                "a.rs".to_string(),
+            ],
+            cycle_length: 2,
+            strength: 1.0,
+        };
+
+        assert_eq!(dep.nodes.len(), 3);
+        assert_eq!(dep.cycle_length, 2);
+        assert_eq!(dep.strength, 1.0);
+    }
+
+    #[test]
+    fn test_circular_dependency_serialize() {
+        let dep = CircularDependency {
+            nodes: vec!["x.rs".to_string()],
+            cycle_length: 1,
+            strength: 0.5,
+        };
+
+        let json = serde_json::to_string(&dep).unwrap();
+        let deserialized: CircularDependency = serde_json::from_str(&json).unwrap();
+        assert_eq!(dep, deserialized);
+    }
+
+    #[test]
+    fn test_dependency_path_creation() {
+        let path = DependencyPath {
+            path: vec![
+                "main.rs".to_string(),
+                "lib.rs".to_string(),
+                "utils.rs".to_string(),
+            ],
+            length: 3,
+            importance_score: 0.9,
+        };
+
+        assert_eq!(path.path.len(), 3);
+        assert_eq!(path.length, 3);
+        assert_eq!(path.importance_score, 0.9);
+    }
+
+    #[test]
+    fn test_performance_profile_default() {
+        let profile = PerformanceProfile::default();
+        assert_eq!(profile.pagerank_memory_estimate_mb, 0.0);
+        assert_eq!(profile.pagerank_time_estimate_ms, 0);
+    }
+
+    #[test]
+    fn test_performance_profile_custom() {
+        let profile = PerformanceProfile {
+            pagerank_memory_estimate_mb: 50.0,
+            pagerank_time_estimate_ms: 1000,
+            traversal_complexity: TraversalComplexity {
+                time_complexity_class: "O(V + E)".to_string(),
+                space_complexity_class: "O(V)".to_string(),
+                expected_iterations: 20,
+            },
+            storage_efficiency: StorageEfficiency {
+                adjacency_list_size_bytes: 1_000_000,
+                edges_per_node: 5.0,
+                memory_overhead_ratio: 1.2,
+                sparsity: 0.95,
+            },
+        };
+
+        assert_eq!(profile.pagerank_memory_estimate_mb, 50.0);
+        assert_eq!(profile.traversal_complexity.time_complexity_class, "O(V + E)");
+    }
+
+    #[test]
+    fn test_traversal_complexity_default() {
+        let complexity = TraversalComplexity::default();
+        assert!(complexity.time_complexity_class.is_empty());
+        assert!(complexity.space_complexity_class.is_empty());
+        assert_eq!(complexity.expected_iterations, 0);
+    }
+
+    #[test]
+    fn test_storage_efficiency_default() {
+        let efficiency = StorageEfficiency::default();
+        assert_eq!(efficiency.adjacency_list_size_bytes, 0);
+        assert_eq!(efficiency.edges_per_node, 0.0);
+        assert_eq!(efficiency.memory_overhead_ratio, 0.0);
+        assert_eq!(efficiency.sparsity, 0.0);
+    }
+
+    #[test]
+    fn test_analysis_metadata_default() {
+        let metadata = AnalysisMetadata::default();
+        assert_eq!(metadata.analysis_duration_ms, 0);
+        assert!(!metadata.used_parallel);
+        assert_eq!(metadata.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_analysis_metadata_custom() {
+        let metadata = AnalysisMetadata {
+            timestamp: chrono::Utc::now(),
+            analysis_duration_ms: 500,
+            used_parallel: true,
+            config: StatisticsConfig::default(),
+            version: "2.0.0".to_string(),
+        };
+
+        assert_eq!(metadata.analysis_duration_ms, 500);
+        assert!(metadata.used_parallel);
+        assert_eq!(metadata.version, "2.0.0");
+    }
+
+    #[test]
+    fn test_statistics_config_default() {
+        let config = StatisticsConfig::default();
+        assert!(config.compute_expensive_metrics);
+        assert!(config.use_parallel);
+        assert_eq!(config.max_nodes_for_expensive_ops, 10000);
+        assert_eq!(config.top_nodes_count, 10);
+        assert_eq!(config.pattern_threshold, 0.1);
+    }
+
+    #[test]
+    fn test_statistics_config_custom() {
+        let config = StatisticsConfig {
+            compute_expensive_metrics: false,
+            use_parallel: false,
+            max_nodes_for_expensive_ops: 5000,
+            top_nodes_count: 20,
+            pattern_threshold: 0.05,
+        };
+
+        assert!(!config.compute_expensive_metrics);
+        assert!(!config.use_parallel);
+        assert_eq!(config.max_nodes_for_expensive_ops, 5000);
+    }
+
+    #[test]
+    fn test_statistics_config_clone() {
+        let config = StatisticsConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+
+    #[test]
+    fn test_statistics_config_serialize() {
+        let config = StatisticsConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: StatisticsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn test_degree_stats_serialize() {
+        let stats = DegreeStats {
+            min: 1,
+            max: 50,
+            mean: 10.0,
+            median: 8.0,
+            std_dev: 5.0,
+            percentile_25: 5.0,
+            percentile_75: 15.0,
+            percentile_90: 25.0,
+            percentile_95: 35.0,
+            percentile_99: 45.0,
+        };
+
+        let json = serde_json::to_string(&stats).unwrap();
+        let deserialized: DegreeStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, deserialized);
+    }
+
+    #[test]
+    fn test_connectivity_analysis_serialize() {
+        let analysis = ConnectivityAnalysis {
+            weakly_connected_components: 1,
+            strongly_connected_components: 1,
+            largest_scc_size: 100,
+            graph_density: 0.1,
+            average_clustering: 0.5,
+            global_clustering: 0.4,
+            average_path_length: Some(3.5),
+            diameter: Some(8),
+            is_acyclic: false,
+        };
+
+        let json = serde_json::to_string(&analysis).unwrap();
+        let deserialized: ConnectivityAnalysis = serde_json::from_str(&json).unwrap();
+        assert_eq!(analysis, deserialized);
+    }
+
+    #[test]
+    fn test_import_insights_serialize() {
+        let insights = ImportInsights {
+            average_import_depth: 3.5,
+            max_import_depth: 10,
+            fan_out_distribution: DegreeStats::default(),
+            fan_in_distribution: DegreeStats::default(),
+            circular_dependencies: vec![],
+            dependency_layers: vec![vec!["a.rs".to_string()]],
+            critical_paths: vec![],
+        };
+
+        let json = serde_json::to_string(&insights).unwrap();
+        let deserialized: ImportInsights = serde_json::from_str(&json).unwrap();
+        assert_eq!(insights, deserialized);
+    }
+
+    #[test]
+    fn test_dependency_path_serialize() {
+        let path = DependencyPath {
+            path: vec!["a.rs".to_string(), "b.rs".to_string()],
+            length: 2,
+            importance_score: 0.75,
+        };
+
+        let json = serde_json::to_string(&path).unwrap();
+        let deserialized: DependencyPath = serde_json::from_str(&json).unwrap();
+        assert_eq!(path, deserialized);
+    }
+
+    #[test]
+    fn test_performance_profile_serialize() {
+        let profile = PerformanceProfile::default();
+        let json = serde_json::to_string(&profile).unwrap();
+        let deserialized: PerformanceProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(profile, deserialized);
+    }
+
+    #[test]
+    fn test_traversal_complexity_serialize() {
+        let complexity = TraversalComplexity {
+            time_complexity_class: "O(V log V)".to_string(),
+            space_complexity_class: "O(V)".to_string(),
+            expected_iterations: 15,
+        };
+
+        let json = serde_json::to_string(&complexity).unwrap();
+        let deserialized: TraversalComplexity = serde_json::from_str(&json).unwrap();
+        assert_eq!(complexity, deserialized);
+    }
+
+    #[test]
+    fn test_storage_efficiency_serialize() {
+        let efficiency = StorageEfficiency {
+            adjacency_list_size_bytes: 500_000,
+            edges_per_node: 3.5,
+            memory_overhead_ratio: 1.1,
+            sparsity: 0.98,
+        };
+
+        let json = serde_json::to_string(&efficiency).unwrap();
+        let deserialized: StorageEfficiency = serde_json::from_str(&json).unwrap();
+        assert_eq!(efficiency, deserialized);
+    }
+
+    #[test]
+    fn test_structural_patterns_with_data() {
+        let patterns = StructuralPatterns {
+            hubs: vec![NodeInfo {
+                node_id: "hub.rs".to_string(),
+                score: 0.9,
+                in_degree: 5,
+                out_degree: 50,
+                metadata: None,
+            }],
+            authorities: vec![],
+            bottlenecks: vec![],
+            bridges: vec![],
+            isolated_nodes: vec!["isolated.rs".to_string()],
+            dangling_nodes: vec![],
+            leaf_nodes: vec![],
+        };
+
+        assert_eq!(patterns.hubs.len(), 1);
+        assert_eq!(patterns.isolated_nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_node_info_debug() {
+        let info = NodeInfo {
+            node_id: "test.rs".to_string(),
+            score: 0.5,
+            in_degree: 3,
+            out_degree: 2,
+            metadata: None,
+        };
+
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("NodeInfo"));
+        assert!(debug_str.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_statistics_config_debug() {
+        let config = StatisticsConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("StatisticsConfig"));
+        assert!(debug_str.contains("compute_expensive_metrics"));
+    }
+}

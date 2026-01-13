@@ -507,4 +507,518 @@ mod tests {
         // In practice Binary is returned because scribe_core detects .png as binary first
         assert_eq!(classify_file_type(&PathBuf::from("image.png")), "Binary");
     }
+
+    #[test]
+    fn test_streaming_config_default() {
+        let config = StreamingConfig::default();
+        assert!(config.enable_streaming);
+        assert!(config.concurrency_limit > 0);
+        assert_eq!(config.memory_limit, 100 * 1024 * 1024);
+        assert_eq!(config.selection_heap_size, 10000);
+    }
+
+    #[test]
+    fn test_streaming_config_custom() {
+        let config = StreamingConfig {
+            enable_streaming: false,
+            concurrency_limit: 4,
+            memory_limit: 50 * 1024 * 1024,
+            selection_heap_size: 5000,
+        };
+
+        assert!(!config.enable_streaming);
+        assert_eq!(config.concurrency_limit, 4);
+        assert_eq!(config.memory_limit, 50 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_file_metadata_clone() {
+        let metadata = FileMetadata {
+            path: PathBuf::from("src/lib.rs"),
+            size: 1024,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let cloned = metadata.clone();
+        assert_eq!(metadata.path, cloned.path);
+        assert_eq!(metadata.size, cloned.size);
+        assert_eq!(metadata.language, cloned.language);
+    }
+
+    #[test]
+    fn test_file_metadata_equality() {
+        let now = SystemTime::now();
+        let m1 = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: now,
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let m2 = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: now,
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn test_scored_file_clone() {
+        let metadata = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let scored = ScoredFile {
+            metadata,
+            score: 1.5,
+            tokens: 50,
+        };
+
+        let cloned = scored.clone();
+        assert_eq!(scored.score, cloned.score);
+        assert_eq!(scored.tokens, cloned.tokens);
+    }
+
+    #[test]
+    fn test_scored_file_equal_scores_prefer_smaller_tokens() {
+        let file1 = FileMetadata {
+            path: PathBuf::from("large.rs"),
+            size: 1000,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let file2 = FileMetadata {
+            path: PathBuf::from("small.rs"),
+            size: 100,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let scored1 = ScoredFile {
+            metadata: file1,
+            score: 1.0,
+            tokens: 250, // More tokens
+        };
+        let scored2 = ScoredFile {
+            metadata: file2,
+            score: 1.0,
+            tokens: 25, // Fewer tokens - should be preferred
+        };
+
+        // With equal scores, smaller token files are preferred (greater in ordering)
+        assert!(scored2 > scored1);
+    }
+
+    #[test]
+    fn test_file_chunk_creation() {
+        let files = vec![
+            FileMetadata {
+                path: PathBuf::from("a.rs"),
+                size: 100,
+                modified: SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: PathBuf::from("b.rs"),
+                size: 200,
+                modified: SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+        ];
+
+        let chunk = FileChunk::new(files, 0, 5);
+
+        assert_eq!(chunk.len(), 2);
+        assert!(!chunk.is_empty());
+        assert_eq!(chunk.total_size(), 300);
+        assert_eq!(chunk.index, 0);
+        assert_eq!(chunk.total_chunks, 5);
+    }
+
+    #[test]
+    fn test_file_chunk_empty() {
+        let chunk = FileChunk::new(vec![], 0, 1);
+
+        assert_eq!(chunk.len(), 0);
+        assert!(chunk.is_empty());
+        assert_eq!(chunk.total_size(), 0);
+    }
+
+    #[test]
+    fn test_language_detection_more_types() {
+        assert_eq!(detect_language(&PathBuf::from("test.ts")), "TypeScript");
+        assert_eq!(detect_language(&PathBuf::from("test.go")), "Go");
+        assert_eq!(detect_language(&PathBuf::from("Test.java")), "Java");
+        assert_eq!(detect_language(&PathBuf::from("test.h")), "Header");
+        assert_eq!(detect_language(&PathBuf::from("test.hpp")), "Header");
+        assert_eq!(detect_language(&PathBuf::from("test.hxx")), "Header");
+    }
+
+    #[test]
+    fn test_language_detection_dockerfile() {
+        assert_eq!(detect_language(&PathBuf::from("Dockerfile")), "Dockerfile");
+        assert_eq!(detect_language(&PathBuf::from("dockerfile")), "Dockerfile");
+        assert_eq!(detect_language(&PathBuf::from("DOCKERFILE")), "Dockerfile");
+    }
+
+    #[test]
+    fn test_language_detection_no_extension() {
+        // Files without extensions that aren't Dockerfile
+        assert_eq!(detect_language(&PathBuf::from("Makefile")), "Unknown");
+        assert_eq!(detect_language(&PathBuf::from("LICENSE")), "Unknown");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_selector_nonexistent_path() {
+        let selector = StreamingSelector::with_defaults();
+        let score_fn = |_: &FileMetadata| 1.0;
+        let token_fn = |_: &FileMetadata| 10;
+
+        let result = selector
+            .select_files_streaming(
+                Path::new("/nonexistent/path/that/does/not/exist"),
+                10,
+                1000,
+                score_fn,
+                token_fn,
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_streaming_selector_file_not_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        fs::write(&file_path, "test content").unwrap();
+
+        let selector = StreamingSelector::with_defaults();
+        let score_fn = |_: &FileMetadata| 1.0;
+        let token_fn = |_: &FileMetadata| 10;
+
+        let result = selector
+            .select_files_streaming(&file_path, 10, 1000, score_fn, token_fn)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_streaming_selector_new() {
+        let config = StreamingConfig {
+            enable_streaming: true,
+            concurrency_limit: 8,
+            memory_limit: 200 * 1024 * 1024,
+            selection_heap_size: 20000,
+        };
+
+        let selector = StreamingSelector::new(config);
+        assert_eq!(selector.config.concurrency_limit, 8);
+        assert_eq!(selector.config.selection_heap_size, 20000);
+    }
+
+    #[test]
+    fn test_file_chunk_clone() {
+        let files = vec![
+            FileMetadata {
+                path: PathBuf::from("test.rs"),
+                size: 50,
+                modified: SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+        ];
+
+        let chunk = FileChunk::new(files, 2, 10);
+        let cloned = chunk.clone();
+
+        assert_eq!(chunk.index, cloned.index);
+        assert_eq!(chunk.total_chunks, cloned.total_chunks);
+        assert_eq!(chunk.len(), cloned.len());
+    }
+
+    #[test]
+    fn test_scored_file_partial_ord() {
+        let metadata = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let scored1 = ScoredFile {
+            metadata: metadata.clone(),
+            score: 1.0,
+            tokens: 10,
+        };
+        let scored2 = ScoredFile {
+            metadata: metadata.clone(),
+            score: 2.0,
+            tokens: 10,
+        };
+
+        // Test partial_cmp
+        assert!(scored1.partial_cmp(&scored2).is_some());
+        assert_eq!(scored1.partial_cmp(&scored2), Some(Ordering::Less));
+        assert_eq!(scored2.partial_cmp(&scored1), Some(Ordering::Greater));
+    }
+
+    #[test]
+    fn test_file_metadata_debug() {
+        let metadata = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let debug_str = format!("{:?}", metadata);
+        assert!(debug_str.contains("FileMetadata"));
+        assert!(debug_str.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_scored_file_debug() {
+        let metadata = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let scored = ScoredFile {
+            metadata,
+            score: 1.5,
+            tokens: 25,
+        };
+
+        let debug_str = format!("{:?}", scored);
+        assert!(debug_str.contains("ScoredFile"));
+        assert!(debug_str.contains("score"));
+    }
+
+    #[test]
+    fn test_file_chunk_debug() {
+        let chunk = FileChunk::new(vec![], 0, 1);
+        let debug_str = format!("{:?}", chunk);
+        assert!(debug_str.contains("FileChunk"));
+    }
+
+    #[test]
+    fn test_optimize_heap_for_budget() {
+        let selector = StreamingSelector::with_defaults();
+        let mut heap: BinaryHeap<Reverse<ScoredFile>> = BinaryHeap::new();
+        let mut current_tokens = 0usize;
+
+        // Add some files to the heap
+        for i in 0..5 {
+            let metadata = FileMetadata {
+                path: PathBuf::from(format!("file_{}.rs", i)),
+                size: 100,
+                modified: SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            };
+            let scored = ScoredFile {
+                metadata,
+                score: (i + 1) as f64,
+                tokens: 100,
+            };
+            current_tokens += scored.tokens;
+            heap.push(Reverse(scored));
+        }
+
+        assert_eq!(current_tokens, 500);
+        assert_eq!(heap.len(), 5);
+
+        // Optimize to fit within budget of 300 tokens
+        selector.optimize_heap_for_budget(&mut heap, &mut current_tokens, 300);
+
+        // Should have removed some files
+        assert!(current_tokens <= 300);
+        assert!(heap.len() < 5);
+    }
+
+    #[test]
+    fn test_optimize_heap_for_budget_empty_heap() {
+        let selector = StreamingSelector::with_defaults();
+        let mut heap: BinaryHeap<Reverse<ScoredFile>> = BinaryHeap::new();
+        let mut current_tokens = 100usize;
+
+        // Optimize an empty heap - should not crash
+        selector.optimize_heap_for_budget(&mut heap, &mut current_tokens, 50);
+
+        // Tokens should stay at 100 since heap was empty (nothing to remove)
+        assert_eq!(current_tokens, 100);
+    }
+
+    #[test]
+    fn test_optimize_heap_for_budget_already_fits() {
+        let selector = StreamingSelector::with_defaults();
+        let mut heap: BinaryHeap<Reverse<ScoredFile>> = BinaryHeap::new();
+
+        let metadata = FileMetadata {
+            path: PathBuf::from("small.rs"),
+            size: 50,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let scored = ScoredFile {
+            metadata,
+            score: 1.0,
+            tokens: 50,
+        };
+        let mut current_tokens = scored.tokens;
+        heap.push(Reverse(scored));
+
+        // Already fits budget - no changes
+        selector.optimize_heap_for_budget(&mut heap, &mut current_tokens, 100);
+
+        assert_eq!(current_tokens, 50);
+        assert_eq!(heap.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_with_large_files_exceeding_budget() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Create test files - one large, one small
+        fs::create_dir_all(repo_path.join("src")).unwrap();
+        fs::write(
+            repo_path.join("src").join("small.rs"),
+            "fn main() {}",
+        ).unwrap();
+        fs::write(
+            repo_path.join("src").join("large.rs"),
+            "x".repeat(10000), // Large file
+        ).unwrap();
+
+        let selector = StreamingSelector::with_defaults();
+
+        // Token function that makes large files exceed budget
+        let score_fn = |_: &FileMetadata| 1.0;
+        let token_fn = |file: &FileMetadata| file.size as usize;
+
+        // Very small budget - should only fit small file
+        let selected = selector
+            .select_files_streaming(repo_path, 10, 100, score_fn, token_fn)
+            .await
+            .unwrap();
+
+        // Should have selected only the small file
+        assert!(selected.len() >= 1);
+        for file in &selected {
+            assert!(file.tokens <= 100);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_selection_replaces_lower_score() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Create 20 files
+        fs::create_dir_all(repo_path.join("src")).unwrap();
+        for i in 0..20 {
+            let content = format!("// file {}\nfn func{}() {{}}", i, i);
+            fs::write(
+                repo_path.join("src").join(format!("file_{:02}.rs", i)),
+                content,
+            ).unwrap();
+        }
+
+        let selector = StreamingSelector::with_defaults();
+
+        // Score function that gives higher scores to higher numbered files
+        let score_fn = |file: &FileMetadata| {
+            let path_str = file.path.to_string_lossy();
+            if path_str.contains("file_1") {
+                10.0 // Files with 1 (10-19) get higher score
+            } else {
+                1.0
+            }
+        };
+        let token_fn = |_: &FileMetadata| 10;
+
+        // Select only 5 files - should prefer higher scored ones
+        let selected = selector
+            .select_files_streaming(repo_path, 5, 10000, score_fn, token_fn)
+            .await
+            .unwrap();
+
+        assert_eq!(selected.len(), 5);
+        // Higher scored files should be selected
+        let high_score_count = selected.iter().filter(|f| f.score >= 10.0).count();
+        assert!(high_score_count > 0);
+    }
+
+    #[test]
+    fn test_scored_file_equality() {
+        let now = SystemTime::now();
+        let m1 = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: now,
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let m2 = m1.clone();
+
+        let s1 = ScoredFile { metadata: m1, score: 1.0, tokens: 10 };
+        let s2 = ScoredFile { metadata: m2, score: 1.0, tokens: 10 };
+
+        // Test Eq trait
+        assert!(s1 == s2);
+    }
+
+    #[test]
+    fn test_file_metadata_serialize_deserialize() {
+        let metadata = FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 100,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        let deserialized: FileMetadata = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(metadata.path, deserialized.path);
+        assert_eq!(metadata.size, deserialized.size);
+        assert_eq!(metadata.language, deserialized.language);
+    }
+
+    #[test]
+    fn test_streaming_config_serialize_deserialize() {
+        let config = StreamingConfig::default();
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: StreamingConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(config.enable_streaming, deserialized.enable_streaming);
+        assert_eq!(config.concurrency_limit, deserialized.concurrency_limit);
+    }
 }

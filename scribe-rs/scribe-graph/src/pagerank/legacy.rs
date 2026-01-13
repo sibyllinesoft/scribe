@@ -96,3 +96,157 @@ impl LegacyIterations {
             .sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_graph() -> DependencyGraph {
+        let mut graph = DependencyGraph::new();
+        graph.add_node("A".to_string()).unwrap();
+        graph.add_node("B".to_string()).unwrap();
+        graph.add_node("C".to_string()).unwrap();
+        graph.add_edge("A".to_string(), "B".to_string()).unwrap();
+        graph.add_edge("B".to_string(), "C".to_string()).unwrap();
+        graph.add_edge("C".to_string(), "A".to_string()).unwrap();
+        graph
+    }
+
+    #[test]
+    fn test_compute_convergence_diff_identical() {
+        let mut scores = HashMap::new();
+        scores.insert("A".to_string(), 0.5);
+        scores.insert("B".to_string(), 0.3);
+        scores.insert("C".to_string(), 0.2);
+
+        let diff = LegacyIterations::compute_convergence_diff(&scores, &scores);
+        assert!((diff - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compute_convergence_diff_different() {
+        let mut current = HashMap::new();
+        current.insert("A".to_string(), 0.5);
+        current.insert("B".to_string(), 0.3);
+
+        let mut previous = HashMap::new();
+        previous.insert("A".to_string(), 0.4);
+        previous.insert("B".to_string(), 0.2);
+
+        let diff = LegacyIterations::compute_convergence_diff(&current, &previous);
+        // |0.5 - 0.4| + |0.3 - 0.2| = 0.1 + 0.1 = 0.2
+        assert!((diff - 0.2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compute_convergence_diff_missing_previous() {
+        let mut current = HashMap::new();
+        current.insert("A".to_string(), 0.5);
+
+        let previous = HashMap::new(); // Empty
+
+        let diff = LegacyIterations::compute_convergence_diff(&current, &previous);
+        // |0.5 - 0.0| = 0.5
+        assert!((diff - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compute_iteration_sequential() {
+        let graph = create_test_graph();
+        let nodes: Vec<NodeId> = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+
+        let mut previous_scores = HashMap::new();
+        for node in &nodes {
+            previous_scores.insert(node.clone(), 1.0 / 3.0);
+        }
+
+        let mut current_scores = HashMap::new();
+
+        LegacyIterations::compute_iteration_sequential(
+            0.85,
+            &graph,
+            &nodes,
+            &previous_scores,
+            &mut current_scores,
+        )
+        .unwrap();
+
+        // All nodes should have scores
+        assert_eq!(current_scores.len(), 3);
+
+        // Scores should sum to approximately 1.0
+        let sum: f64 = current_scores.values().sum();
+        assert!((sum - 1.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_compute_iteration_parallel() {
+        let graph = create_test_graph();
+        let nodes: Vec<NodeId> = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+
+        let mut previous_scores = HashMap::new();
+        for node in &nodes {
+            previous_scores.insert(node.clone(), 1.0 / 3.0);
+        }
+
+        let mut current_scores = HashMap::new();
+
+        LegacyIterations::compute_iteration_parallel(
+            0.85,
+            &graph,
+            &nodes,
+            &previous_scores,
+            &mut current_scores,
+        )
+        .unwrap();
+
+        // All nodes should have scores
+        assert_eq!(current_scores.len(), 3);
+
+        // Scores should sum to approximately 1.0
+        let sum: f64 = current_scores.values().sum();
+        assert!((sum - 1.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_convergence_after_iterations() {
+        let graph = create_test_graph();
+        let nodes: Vec<NodeId> = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+
+        let mut previous_scores = HashMap::new();
+        for node in &nodes {
+            previous_scores.insert(node.clone(), 1.0 / 3.0);
+        }
+
+        let mut current_scores = HashMap::new();
+
+        // Run a few iterations
+        for _ in 0..10 {
+            LegacyIterations::compute_iteration_sequential(
+                0.85,
+                &graph,
+                &nodes,
+                &previous_scores,
+                &mut current_scores,
+            )
+            .unwrap();
+
+            std::mem::swap(&mut previous_scores, &mut current_scores);
+            current_scores.clear();
+        }
+
+        // After several iterations, scores should be relatively stable
+        LegacyIterations::compute_iteration_sequential(
+            0.85,
+            &graph,
+            &nodes,
+            &previous_scores,
+            &mut current_scores,
+        )
+        .unwrap();
+
+        let diff = LegacyIterations::compute_convergence_diff(&current_scores, &previous_scores);
+        // Diff should be small after convergence
+        assert!(diff < 0.01);
+    }
+}

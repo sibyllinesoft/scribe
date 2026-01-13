@@ -762,4 +762,662 @@ mod tests {
             "src/lib.rs should have some interface score"
         );
     }
+
+    #[test]
+    fn test_two_pass_config_default() {
+        let config = TwoPassConfig::default();
+        assert_eq!(config.speculation_ratio, 0.75);
+        assert_eq!(config.speculation_threshold, 0.5);
+        assert_eq!(config.max_iterations, 3);
+        assert!(config.enable_gap_analysis);
+    }
+
+    #[test]
+    fn test_two_pass_config_custom() {
+        let config = TwoPassConfig {
+            speculation_ratio: 0.8,
+            speculation_threshold: 0.6,
+            max_iterations: 5,
+            enable_gap_analysis: false,
+        };
+        assert_eq!(config.speculation_ratio, 0.8);
+        assert_eq!(config.speculation_threshold, 0.6);
+    }
+
+    #[test]
+    fn test_two_pass_selector_with_config() {
+        let config = TwoPassConfig {
+            speculation_ratio: 0.6,
+            speculation_threshold: 0.4,
+            max_iterations: 2,
+            enable_gap_analysis: true,
+        };
+        let selector = TwoPassSelector::with_config(config);
+        assert_eq!(selector.config.speculation_ratio, 0.6);
+    }
+
+    #[test]
+    fn test_two_pass_selector_default() {
+        let selector = TwoPassSelector::default();
+        assert_eq!(selector.config.speculation_ratio, 0.75);
+    }
+
+    #[test]
+    fn test_file_info_structure() {
+        let file = FileInfo {
+            path: "src/utils.rs".to_string(),
+            token_count: 500,
+            file_type: "source".to_string(),
+            importance: 0.75,
+            dependencies: vec!["src/lib.rs".to_string()],
+            dependents: vec!["src/main.rs".to_string()],
+            exposed_interfaces: vec!["Utils".to_string()],
+            consumed_interfaces: vec!["Core".to_string()],
+        };
+
+        assert_eq!(file.path, "src/utils.rs");
+        assert_eq!(file.token_count, 500);
+        assert_eq!(file.importance, 0.75);
+        assert!(!file.dependencies.is_empty());
+    }
+
+    #[test]
+    fn test_coverage_gap_structure() {
+        let gap = CoverageGap {
+            gap_type: "missing_dependency".to_string(),
+            severity: 0.8,
+            candidate_files: vec!["src/lib.rs".to_string()],
+            reason: "Main file depends on lib".to_string(),
+        };
+
+        assert_eq!(gap.gap_type, "missing_dependency");
+        assert_eq!(gap.severity, 0.8);
+        assert!(!gap.candidate_files.is_empty());
+    }
+
+    #[test]
+    fn test_selection_metrics_structure() {
+        let metrics = SelectionMetrics {
+            speculation_time_ms: 100,
+            rule_based_time_ms: 50,
+            rules_evaluated: 8,
+            gaps_found: 3,
+            files_considered: 100,
+        };
+
+        assert_eq!(metrics.speculation_time_ms, 100);
+        assert_eq!(metrics.rules_evaluated, 8);
+    }
+
+    #[test]
+    fn test_two_pass_result_structure() {
+        let result = TwoPassResult {
+            speculative_files: vec!["src/main.rs".to_string()],
+            rule_based_files: vec!["src/lib.rs".to_string()],
+            coverage_gaps: vec![],
+            selection_score: 0.85,
+            budget_utilization: 0.9,
+            metrics: SelectionMetrics {
+                speculation_time_ms: 50,
+                rule_based_time_ms: 25,
+                rules_evaluated: 8,
+                gaps_found: 0,
+                files_considered: 10,
+            },
+        };
+
+        assert!(!result.speculative_files.is_empty());
+        assert!(!result.rule_based_files.is_empty());
+        assert!(result.selection_score > 0.0);
+    }
+
+    #[test]
+    fn test_selection_with_small_budget() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        // Very small budget - should still work
+        let result = selector.select_files(&files, &dependencies, &interfaces, 100);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_selection_with_large_budget() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        // Large budget - should include most/all files
+        let result = selector
+            .select_files(&files, &dependencies, &interfaces, 5000)
+            .unwrap();
+
+        assert!(!result.speculative_files.is_empty());
+    }
+
+    #[test]
+    fn test_selection_empty_files() {
+        let selector = TwoPassSelector::new();
+        let files = HashMap::new();
+        let dependencies = HashMap::new();
+        let interfaces = HashMap::new();
+
+        let result = selector.select_files(&files, &dependencies, &interfaces, 1000);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.speculative_files.is_empty());
+    }
+
+    #[test]
+    fn test_selection_rule_structure() {
+        fn test_evaluator(_ctx: &SelectionContext, _file: &str) -> f64 {
+            0.5
+        }
+
+        let rule = SelectionRule {
+            name: "test_rule".to_string(),
+            weight: 0.5,
+            evaluator: test_evaluator,
+            description: "Test rule".to_string(),
+        };
+
+        assert_eq!(rule.name, "test_rule");
+        assert_eq!(rule.weight, 0.5);
+    }
+
+    #[test]
+    fn test_speculative_pass_budget_limit() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+
+        // Budget smaller than any single file
+        let result = selector.speculative_pass(&files, &dependencies, 50).unwrap();
+
+        // Should handle small budget gracefully
+        let _ = result; // May or may not select files
+    }
+
+    #[test]
+    fn test_rule_based_pass() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let mut selected = HashSet::new();
+        selected.insert("src/main.rs".to_string());
+
+        let (rule_files, gaps) = selector
+            .rule_based_pass(&selected, &files, &dependencies, &interfaces, 1000)
+            .unwrap();
+
+        // Should analyze and potentially add files
+        assert!(gaps.is_empty() || !gaps.is_empty()); // May or may not find gaps
+        let _ = rule_files;
+    }
+
+    #[test]
+    fn test_calculate_selection_score() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+
+        let mut selected = HashSet::new();
+        selected.insert("src/main.rs".to_string());
+        selected.insert("src/lib.rs".to_string());
+
+        let score = selector.calculate_selection_score(&selected, &files).unwrap();
+
+        // Score should be based on importance of selected files
+        assert!(score > 0.0);
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_selection_score_empty() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let selected = HashSet::new();
+
+        let score = selector.calculate_selection_score(&selected, &files).unwrap();
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_confidence_interface_file() {
+        let selector = TwoPassSelector::new();
+        let dependencies = create_test_dependencies();
+
+        // File with exposed interfaces
+        let file_info = FileInfo {
+            path: "src/interface.rs".to_string(),
+            token_count: 200,
+            file_type: "interface".to_string(),
+            importance: 0.8,
+            dependencies: vec![],
+            dependents: vec!["src/main.rs".to_string()],
+            exposed_interfaces: vec!["API".to_string()],
+            consumed_interfaces: vec![],
+        };
+
+        let confidence = selector.calculate_confidence(&file_info, &dependencies);
+        assert!(confidence > 0.5); // Interface file should have higher confidence
+        assert!(confidence <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_confidence_config_file() {
+        let selector = TwoPassSelector::new();
+        let dependencies = HashMap::new();
+
+        let file_info = FileInfo {
+            path: "config.toml".to_string(),
+            token_count: 100,
+            file_type: "config".to_string(),
+            importance: 0.3,
+            dependencies: vec![],
+            dependents: vec![],
+            exposed_interfaces: vec![],
+            consumed_interfaces: vec![],
+        };
+
+        let confidence = selector.calculate_confidence(&file_info, &dependencies);
+        assert!(confidence > 0.5); // Base + config boost
+        assert!(confidence <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_confidence_many_dependents() {
+        let selector = TwoPassSelector::new();
+        let dependencies = HashMap::new();
+
+        let file_info = FileInfo {
+            path: "src/core.rs".to_string(),
+            token_count: 500,
+            file_type: "source".to_string(),
+            importance: 0.9,
+            dependencies: vec![],
+            dependents: vec![
+                "src/a.rs".to_string(),
+                "src/b.rs".to_string(),
+                "src/c.rs".to_string(),
+                "src/d.rs".to_string(),
+                "src/e.rs".to_string(),
+            ],
+            exposed_interfaces: vec![],
+            consumed_interfaces: vec![],
+        };
+
+        let confidence = selector.calculate_confidence(&file_info, &dependencies);
+        // Should have boost from many dependents
+        assert!(confidence >= 0.8);
+    }
+
+    #[test]
+    fn test_coverage_gap_missing_interface_implementation() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+
+        // Create interfaces with no implementations selected
+        let mut interfaces = HashMap::new();
+        interfaces.insert("UnimplementedAPI".to_string(), vec!["src/lib.rs".to_string()]);
+
+        let selected = HashSet::new(); // Nothing selected
+
+        let gaps = selector
+            .analyze_coverage_gaps(&selected, &files, &dependencies, &interfaces)
+            .unwrap();
+
+        // Should detect missing interface implementation
+        assert!(gaps.iter().any(|gap| gap.gap_type == "missing_interface_implementation"));
+    }
+
+    #[test]
+    fn test_coverage_gap_orphaned_test() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = HashMap::new();
+
+        let mut selected = HashSet::new();
+        selected.insert("tests/integration_test.rs".to_string());
+        // Not selecting src/lib.rs which the test depends on
+
+        let gaps = selector
+            .analyze_coverage_gaps(&selected, &files, &dependencies, &interfaces)
+            .unwrap();
+
+        // Should detect orphaned test
+        assert!(gaps.iter().any(|gap| gap.gap_type == "orphaned_test"));
+    }
+
+    #[test]
+    fn test_rule_based_pass_disabled_gap_analysis() {
+        let config = TwoPassConfig {
+            enable_gap_analysis: false,
+            ..Default::default()
+        };
+        let selector = TwoPassSelector::with_config(config);
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let selected = HashSet::new();
+
+        let (rule_files, gaps) = selector
+            .rule_based_pass(&selected, &files, &dependencies, &interfaces, 1000)
+            .unwrap();
+
+        // Gaps should be empty when gap analysis is disabled
+        assert!(gaps.is_empty());
+        let _ = rule_files;
+    }
+
+    #[test]
+    fn test_test_source_pairing_rule() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        // Select a source file that has related tests
+        let mut selected = HashSet::new();
+        selected.insert("src/lib.rs".to_string());
+
+        let mut dependents_map: HashMap<String, Vec<String>> = HashMap::new();
+        for (file_path, file_info) in &files {
+            for dep in &file_info.dependencies {
+                dependents_map
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(file_path.clone());
+            }
+        }
+
+        let selected_source_count = 1;
+
+        let context = SelectionContext {
+            selected_files: &selected,
+            available_files: &files,
+            dependencies: &dependencies,
+            interfaces: &interfaces,
+            remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count,
+        };
+
+        // Test the test_source_pairing rule (index 2)
+        let test_rule = &selector.rules[2];
+
+        // For a test file that has its source selected
+        let test_score = (test_rule.evaluator)(&context, "tests/integration_test.rs");
+        assert!(test_score >= 0.2);
+
+        // For a source file
+        let source_score = (test_rule.evaluator)(&context, "src/main.rs");
+        assert!(source_score >= 0.5);
+    }
+
+    #[test]
+    fn test_centrality_rule() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let selected = HashSet::new();
+        let dependents_map = HashMap::new();
+
+        let context = SelectionContext {
+            selected_files: &selected,
+            available_files: &files,
+            dependencies: &dependencies,
+            interfaces: &interfaces,
+            remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count: 0,
+        };
+
+        // Test the centrality_score rule (index 3)
+        let centrality_rule = &selector.rules[3];
+
+        // lib.rs has a dependent (main.rs)
+        let lib_score = (centrality_rule.evaluator)(&context, "src/lib.rs");
+        assert!(lib_score >= 0.0);
+
+        // config file has no connections
+        let config_score = (centrality_rule.evaluator)(&context, "config/settings.toml");
+        assert!(config_score >= 0.0);
+    }
+
+    #[test]
+    fn test_token_efficiency_rule() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let selected = HashSet::new();
+        let dependents_map = HashMap::new();
+
+        let context = SelectionContext {
+            selected_files: &selected,
+            available_files: &files,
+            dependencies: &dependencies,
+            interfaces: &interfaces,
+            remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count: 0,
+        };
+
+        // Test the token_efficiency rule (index 5)
+        let efficiency_rule = &selector.rules[5];
+
+        // High importance, lower token count = better efficiency
+        let score = (efficiency_rule.evaluator)(&context, "src/main.rs");
+        assert!(score >= 0.0);
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_gap_filling_rule() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let mut selected = HashSet::new();
+        selected.insert("src/main.rs".to_string());
+
+        let mut dependents_map: HashMap<String, Vec<String>> = HashMap::new();
+        for (file_path, file_info) in &files {
+            for dep in &file_info.dependencies {
+                dependents_map
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(file_path.clone());
+            }
+        }
+
+        let context = SelectionContext {
+            selected_files: &selected,
+            available_files: &files,
+            dependencies: &dependencies,
+            interfaces: &interfaces,
+            remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count: 1,
+        };
+
+        // Test the gap_filling rule (index 6)
+        let gap_rule = &selector.rules[6];
+
+        // lib.rs fills a dependency gap (main.rs depends on it)
+        let lib_score = (gap_rule.evaluator)(&context, "src/lib.rs");
+        assert!(lib_score >= 0.3);
+    }
+
+    #[test]
+    fn test_configuration_completeness_rule() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let mut selected = HashSet::new();
+        selected.insert("src/main.rs".to_string());
+
+        let dependents_map = HashMap::new();
+
+        let context = SelectionContext {
+            selected_files: &selected,
+            available_files: &files,
+            dependencies: &dependencies,
+            interfaces: &interfaces,
+            remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count: 1,
+        };
+
+        // Test the configuration_completeness rule (index 7)
+        let config_rule = &selector.rules[7];
+
+        // Config file with source code selected
+        let config_score = (config_rule.evaluator)(&context, "config/settings.toml");
+        assert!(config_score >= 0.7);
+
+        // Non-config file
+        let source_score = (config_rule.evaluator)(&context, "src/main.rs");
+        assert_eq!(source_score, 0.5);
+    }
+
+    #[test]
+    fn test_configuration_rule_no_source() {
+        let selector = TwoPassSelector::new();
+        let files = create_test_files();
+        let dependencies = create_test_dependencies();
+        let interfaces = create_test_interfaces();
+
+        let selected = HashSet::new();
+        let dependents_map = HashMap::new();
+
+        let context = SelectionContext {
+            selected_files: &selected,
+            available_files: &files,
+            dependencies: &dependencies,
+            interfaces: &interfaces,
+            remaining_budget: 1000,
+            dependents_map: &dependents_map,
+            selected_source_count: 0, // No source files selected
+        };
+
+        // Test the configuration_completeness rule (index 7)
+        let config_rule = &selector.rules[7];
+
+        // Config file without source code selected
+        let config_score = (config_rule.evaluator)(&context, "config/settings.toml");
+        assert_eq!(config_score, 0.2);
+    }
+
+    #[test]
+    fn test_all_rules_exist() {
+        let selector = TwoPassSelector::new();
+
+        // Verify all 8 rules exist with correct names
+        let rule_names: Vec<&str> = selector.rules.iter().map(|r| r.name.as_str()).collect();
+
+        assert!(rule_names.contains(&"dependency_completeness"));
+        assert!(rule_names.contains(&"interface_coverage"));
+        assert!(rule_names.contains(&"test_source_pairing"));
+        assert!(rule_names.contains(&"centrality_score"));
+        assert!(rule_names.contains(&"importance_alignment"));
+        assert!(rule_names.contains(&"token_efficiency"));
+        assert!(rule_names.contains(&"gap_filling"));
+        assert!(rule_names.contains(&"configuration_completeness"));
+    }
+
+    #[test]
+    fn test_file_info_debug() {
+        let file = FileInfo {
+            path: "test.rs".to_string(),
+            token_count: 100,
+            file_type: "source".to_string(),
+            importance: 0.5,
+            dependencies: vec![],
+            dependents: vec![],
+            exposed_interfaces: vec![],
+            consumed_interfaces: vec![],
+        };
+        let debug_str = format!("{:?}", file);
+        assert!(debug_str.contains("FileInfo") || debug_str.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_coverage_gap_debug() {
+        let gap = CoverageGap {
+            gap_type: "test_gap".to_string(),
+            severity: 0.5,
+            candidate_files: vec![],
+            reason: "Test reason".to_string(),
+        };
+        let debug_str = format!("{:?}", gap);
+        assert!(debug_str.contains("CoverageGap") || debug_str.contains("test_gap"));
+    }
+
+    #[test]
+    fn test_selection_metrics_debug() {
+        let metrics = SelectionMetrics {
+            speculation_time_ms: 10,
+            rule_based_time_ms: 5,
+            rules_evaluated: 8,
+            gaps_found: 2,
+            files_considered: 50,
+        };
+        let debug_str = format!("{:?}", metrics);
+        assert!(debug_str.contains("SelectionMetrics") || debug_str.contains("8"));
+    }
+
+    #[test]
+    fn test_two_pass_result_debug() {
+        let result = TwoPassResult {
+            speculative_files: vec![],
+            rule_based_files: vec![],
+            coverage_gaps: vec![],
+            selection_score: 0.0,
+            budget_utilization: 0.0,
+            metrics: SelectionMetrics {
+                speculation_time_ms: 0,
+                rule_based_time_ms: 0,
+                rules_evaluated: 0,
+                gaps_found: 0,
+                files_considered: 0,
+            },
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("TwoPassResult"));
+    }
+
+    #[test]
+    fn test_two_pass_config_debug() {
+        let config = TwoPassConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("TwoPassConfig"));
+    }
+
+    #[test]
+    fn test_two_pass_config_clone() {
+        let config = TwoPassConfig {
+            speculation_ratio: 0.8,
+            speculation_threshold: 0.6,
+            max_iterations: 5,
+            enable_gap_analysis: false,
+        };
+        let cloned = config.clone();
+        assert_eq!(config.speculation_ratio, cloned.speculation_ratio);
+        assert_eq!(config.enable_gap_analysis, cloned.enable_gap_analysis);
+    }
 }

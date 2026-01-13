@@ -418,3 +418,246 @@ impl Default for SimpleAstParser {
         Self::new().expect("Failed to create SimpleAstParser")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parser_creation() {
+        let parser = SimpleAstParser::new();
+        assert!(parser.is_ok());
+    }
+
+    #[test]
+    fn test_parser_default() {
+        let parser = SimpleAstParser::default();
+        // Just verify it doesn't panic
+        let _ = parser;
+    }
+
+    #[test]
+    fn test_python_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+import os
+import sys
+from pathlib import Path
+from collections import defaultdict
+from typing import List, Dict
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Python).unwrap();
+
+        assert!(!imports.is_empty());
+        assert!(imports.iter().any(|i| i.module.contains("os")));
+        assert!(imports.iter().any(|i| i.module.contains("sys")));
+        assert!(imports.iter().any(|i| i.module.contains("pathlib")));
+    }
+
+    #[test]
+    fn test_javascript_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+import React from 'react';
+import { useState, useEffect } from 'react';
+const fs = require('fs');
+const path = require('path');
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::JavaScript).unwrap();
+
+        assert!(!imports.is_empty());
+        assert!(imports.iter().any(|i| i.module.contains("react")));
+    }
+
+    #[test]
+    fn test_typescript_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+import { Component } from '@angular/core';
+import type { Config } from './config';
+import * as utils from './utils';
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::TypeScript).unwrap();
+
+        assert!(!imports.is_empty());
+    }
+
+    #[test]
+    fn test_rust_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+use std::collections::HashMap;
+use std::path::PathBuf;
+use crate::module::SubModule;
+use super::parent_module;
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Rust).unwrap();
+
+        assert!(!imports.is_empty());
+        assert!(imports.iter().any(|i| i.module.contains("std")));
+    }
+
+    #[test]
+    fn test_go_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+package main
+
+import (
+    "fmt"
+    "os"
+    "path/filepath"
+)
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Go).unwrap();
+
+        assert!(!imports.is_empty());
+        assert!(imports.iter().any(|i| i.module.contains("fmt")));
+    }
+
+    #[test]
+    fn test_empty_code() {
+        let parser = SimpleAstParser::new().unwrap();
+
+        let imports = parser.extract_imports("", ImportLanguage::Python).unwrap();
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_no_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+def main():
+    print("Hello, world!")
+
+if __name__ == "__main__":
+    main()
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Python).unwrap();
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_simple_import_struct() {
+        let import = SimpleImport {
+            module: "std::collections".to_string(),
+            line_number: 5,
+        };
+
+        assert_eq!(import.module, "std::collections");
+        assert_eq!(import.line_number, 5);
+    }
+
+    #[test]
+    fn test_simple_import_clone() {
+        let import = SimpleImport {
+            module: "test::module".to_string(),
+            line_number: 10,
+        };
+
+        let cloned = import.clone();
+        assert_eq!(import.module, cloned.module);
+        assert_eq!(import.line_number, cloned.line_number);
+    }
+
+    #[test]
+    fn test_simple_import_debug() {
+        let import = SimpleImport {
+            module: "my::module".to_string(),
+            line_number: 1,
+        };
+
+        let debug_str = format!("{:?}", import);
+        assert!(debug_str.contains("SimpleImport"));
+        assert!(debug_str.contains("my::module"));
+    }
+
+    #[test]
+    fn test_import_language_variants() {
+        // Test that all variants exist and can be created
+        let _python = ImportLanguage::Python;
+        let _javascript = ImportLanguage::JavaScript;
+        let _typescript = ImportLanguage::TypeScript;
+        let _rust = ImportLanguage::Rust;
+        let _go = ImportLanguage::Go;
+    }
+
+    #[test]
+    fn test_import_language_copy() {
+        let lang = ImportLanguage::Python;
+        let copied = lang; // Copy trait
+        assert_eq!(lang, copied);
+    }
+
+    #[test]
+    fn test_import_language_clone() {
+        let lang = ImportLanguage::Rust;
+        let cloned = lang.clone();
+        assert_eq!(lang, cloned);
+    }
+
+    #[test]
+    fn test_import_language_debug() {
+        let lang = ImportLanguage::TypeScript;
+        let debug_str = format!("{:?}", lang);
+        assert!(debug_str.contains("TypeScript"));
+    }
+
+    #[test]
+    fn test_parallel_extraction() {
+        let parser = SimpleAstParser::new().unwrap();
+
+        let files = vec![
+            ("file1.py".to_string(), "import os\nimport sys".to_string(), ImportLanguage::Python),
+            ("file2.py".to_string(), "from pathlib import Path".to_string(), ImportLanguage::Python),
+            ("file3.rs".to_string(), "use std::collections::HashMap;".to_string(), ImportLanguage::Rust),
+        ];
+
+        let results = parser.extract_imports_parallel(&files).unwrap();
+
+        assert_eq!(results.len(), 3);
+        for (path, imports) in &results {
+            if path.ends_with(".py") {
+                assert!(!imports.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_batch_extraction() {
+        let parser = SimpleAstParser::new().unwrap();
+
+        let contents: Vec<&str> = vec![
+            "import os",
+            "import sys\nimport json",
+            "from collections import Counter",
+        ];
+
+        let results = parser.extract_imports_batch(&contents, ImportLanguage::Python).unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert!(!results[0].is_empty());
+        assert!(!results[1].is_empty());
+        assert!(!results[2].is_empty());
+    }
+
+    #[test]
+    fn test_line_numbers_correct() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"# Comment
+import os
+import sys
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Python).unwrap();
+
+        // Line numbers should be 1-indexed
+        assert!(imports.iter().any(|i| i.line_number >= 2));
+    }
+}

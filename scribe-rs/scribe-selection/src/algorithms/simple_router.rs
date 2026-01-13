@@ -286,4 +286,32 @@ mod tests {
         // Time constraint should take priority over project size
         assert_eq!(decision.strategy, SelectionStrategy::ImportanceGreedy);
     }
+
+    #[test]
+    fn test_selection_strategy_names() {
+        assert_eq!(SelectionStrategy::ImportanceGreedy.name(), "importance_greedy");
+        assert_eq!(SelectionStrategy::DependencyAware.name(), "dependency_aware");
+        assert_eq!(SelectionStrategy::CoverageOptimized.name(), "coverage_optimized");
+        assert_eq!(SelectionStrategy::Random.name(), "random");
+        assert_eq!(SelectionStrategy::TwoPassSpeculative.name(), "two_pass_speculative");
+        assert_eq!(SelectionStrategy::QuotaManaged.name(), "quota_managed");
+    }
+
+    #[test]
+    fn test_router_default() {
+        let router = SimpleRouter::default();
+        let context = create_test_context();
+        // Should work just like new()
+        let decision = router.route_selection(&context);
+        assert_eq!(decision.strategy, SelectionStrategy::CoverageOptimized);
+    }
+
+    #[test]
+    fn test_routing_decision_has_reason() {
+        let router = SimpleRouter::new();
+        let context = create_test_context();
+        let decision = router.route_selection(&context);
+        // All decisions should have a non-empty reason
+        assert!(!decision.reason.is_empty());
+    }
 }

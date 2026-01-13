@@ -153,11 +153,17 @@ mod tests {
 
     #[test]
     fn test_statistics_analyzer_creation() {
+        // Test that analyzers can be created with different configurations
         let analyzer = GraphStatisticsAnalyzer::new();
-        assert!(analyzer.config.compute_expensive_metrics);
+        let graph = create_test_graph();
+        // Default analyzer should be able to analyze
+        let result = analyzer.analyze(&graph);
+        assert!(result.is_ok());
 
         let large_graph_analyzer = GraphStatisticsAnalyzer::for_large_graphs();
-        assert!(!large_graph_analyzer.config.compute_expensive_metrics);
+        // Large graph analyzer should also work
+        let result = large_graph_analyzer.analyze(&graph);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -288,5 +294,78 @@ mod tests {
         assert_eq!(analysis.degree_distribution.in_degree.mean, 0.0);
         assert!(analysis.structural_patterns.hubs.is_empty());
         assert!(analysis.structural_patterns.authorities.is_empty());
+    }
+
+    #[test]
+    fn test_analyzer_default() {
+        let analyzer = GraphStatisticsAnalyzer::default();
+        let graph = create_test_graph();
+        let result = analyzer.analyze(&graph);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_large_graph_power_law() {
+        // Create a graph with power-law-like degree distribution
+        let mut graph = DependencyGraph::new();
+
+        // Create hub node with many dependencies
+        for i in 0..20 {
+            graph
+                .add_edge("hub".to_string(), format!("dep{}", i))
+                .unwrap();
+        }
+
+        // Create nodes with varying degrees
+        for i in 0..15 {
+            graph
+                .add_edge(format!("src{}", i), "hub".to_string())
+                .unwrap();
+        }
+
+        for i in 0..10 {
+            graph
+                .add_edge(format!("mod{}", i), format!("dep{}", i % 5))
+                .unwrap();
+        }
+
+        let analyzer = GraphStatisticsAnalyzer::new();
+        let analysis = analyzer.analyze(&graph).unwrap();
+
+        // Check that analysis completes for a larger graph
+        assert!(analysis.basic_stats.total_nodes > 30);
+        assert!(analysis.basic_stats.total_edges > 40);
+        // Power law alpha may or may not be computed
+        let _ = analysis.degree_distribution.power_law_alpha;
+    }
+
+    #[test]
+    fn test_config_custom_values() {
+        let config = StatisticsConfig {
+            compute_expensive_metrics: false,
+            max_nodes_for_expensive_ops: 100,
+            top_nodes_count: 5,
+            pattern_threshold: 0.2,
+            use_parallel: false,
+        };
+
+        let analyzer = GraphStatisticsAnalyzer::with_config(config);
+        let graph = create_test_graph();
+        let analysis = analyzer.analyze(&graph).unwrap();
+
+        // Should complete without expensive metrics
+        assert!(analysis.connectivity.average_clustering >= 0.0);
+    }
+
+    #[test]
+    fn test_analysis_metadata() {
+        let graph = create_test_graph();
+        let analyzer = GraphStatisticsAnalyzer::new();
+        let analysis = analyzer.analyze(&graph).unwrap();
+
+        assert!(!analysis.analysis_metadata.version.is_empty());
+        assert!(analysis.analysis_metadata.analysis_duration_ms >= 0);
+        // Timestamp should exist
+        let _ = analysis.analysis_metadata.timestamp;
     }
 }

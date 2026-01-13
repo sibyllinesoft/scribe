@@ -232,3 +232,106 @@ impl ScoringFeatures {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_weights() {
+        let weights = HeuristicWeights::default();
+        assert!(weights.doc_weight > 0.0);
+        assert!(weights.readme_weight > 0.0);
+        assert!(weights.entrypoint_weight > 0.0);
+    }
+
+    #[test]
+    fn test_documentation_weights() {
+        let weights = HeuristicWeights::for_documentation();
+        let default = HeuristicWeights::default();
+        assert!(weights.doc_weight > default.doc_weight);
+        assert!(weights.readme_weight > default.readme_weight);
+    }
+
+    #[test]
+    fn test_core_code_weights() {
+        let weights = HeuristicWeights::for_core_code();
+        let default = HeuristicWeights::default();
+        assert!(weights.centrality_weight > default.centrality_weight);
+        assert!(weights.entrypoint_weight > default.entrypoint_weight);
+    }
+
+    #[test]
+    fn test_test_weights() {
+        let weights = HeuristicWeights::for_tests();
+        let default = HeuristicWeights::default();
+        assert!(weights.test_link_weight > default.test_link_weight);
+    }
+
+    #[test]
+    fn test_normalized_weights() {
+        let weights = HeuristicWeights::default().normalized();
+        let total = weights.doc_weight
+            + weights.readme_weight
+            + weights.import_weight
+            + weights.test_link_weight
+            + weights.churn_weight
+            + weights.centrality_weight
+            + weights.entrypoint_weight
+            + weights.examples_weight;
+        assert!((total - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_v2_features() {
+        let weights = HeuristicWeights::with_v2_features();
+        assert!(weights.features.enable_centrality);
+        assert!(weights.features.enable_template_boost);
+    }
+
+    #[test]
+    fn test_scoring_features_all_enabled() {
+        let features = ScoringFeatures::all_enabled();
+        assert!(features.enable_centrality);
+        assert!(features.enable_template_boost);
+        assert!(features.enable_doc_analysis);
+        assert!(features.enable_test_linking);
+        assert!(features.enable_churn_analysis);
+        assert!(features.enable_examples_detection);
+    }
+
+    #[test]
+    fn test_scoring_features_minimal() {
+        let features = ScoringFeatures::minimal();
+        assert!(!features.enable_centrality);
+        assert!(!features.enable_template_boost);
+        assert!(features.enable_doc_analysis);
+        assert!(!features.enable_test_linking);
+    }
+
+    #[test]
+    fn test_score_components_as_map() {
+        let weights = HeuristicWeights::default();
+        let components = ScoreComponents {
+            final_score: 1.5,
+            doc_score: 0.5,
+            readme_score: 1.0,
+            import_score: 0.3,
+            path_score: -0.2,
+            test_link_score: 0.0,
+            churn_score: 0.1,
+            centrality_score: 0.4,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights,
+        };
+
+        let map = components.as_map();
+        assert_eq!(map.get("final_score"), Some(&1.5));
+        assert_eq!(map.get("doc_score"), Some(&0.5));
+        assert_eq!(map.get("readme_score"), Some(&1.0));
+    }
+
+}

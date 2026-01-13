@@ -203,4 +203,340 @@ mod tests {
         assert!(lower <= score_components.final_score);
         assert!(upper >= score_components.final_score);
     }
+
+    #[test]
+    fn test_is_high_confidence() {
+        // High confidence score with multiple factors
+        let high_conf = ScoreComponents {
+            final_score: 2.5,
+            doc_score: 0.5,
+            readme_score: 0.3,
+            import_score: 0.4,
+            path_score: 0.2,
+            test_link_score: 0.0,
+            churn_score: 0.3,
+            centrality_score: 0.5,
+            entrypoint_score: 0.3,
+            examples_score: 0.2,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        // Low confidence score with few factors
+        let low_conf = ScoreComponents {
+            final_score: 0.5,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        // High conf should have multiple significant factors
+        // Low conf should not
+        assert!(!low_conf.is_high_confidence());
+    }
+
+    #[test]
+    fn test_primary_importance_reason_doc() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 1.0, // Highest score
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("Documentation"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_readme() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 1.0, // Highest score
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("README"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_import() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 1.0, // Highest score
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("import connectivity"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_entrypoint() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 1.0, // Highest score
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("entrypoint"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_centrality() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 1.0, // Highest score
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("Central") || reason.contains("PageRank"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_examples() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 1.0, // Highest score
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("examples"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_churn() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 1.0, // Highest score
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("modified"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_test_link() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 1.0, // Highest score
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("Test"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_priority_boost() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 1.0, // Highest
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("prioritized"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_template_boost() {
+        let score = ScoreComponents {
+            final_score: 2.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 1.0, // Highest
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        assert!(reason.contains("Template") || reason.contains("config"));
+    }
+
+    #[test]
+    fn test_primary_importance_reason_no_factors() {
+        let score = ScoreComponents {
+            final_score: 0.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let reason = score.primary_importance_reason();
+        // Should still return something
+        assert!(!reason.is_empty());
+    }
+
+    #[test]
+    fn test_confidence_interval_varying_factors() {
+        // Test with very few significant factors
+        let low_factors = ScoreComponents {
+            final_score: 1.0,
+            doc_score: 0.0,
+            readme_score: 0.0,
+            import_score: 0.0,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let (lower, upper) = low_factors.confidence_interval();
+        let interval_width = upper - lower;
+
+        // Wide interval for low confidence
+        assert!(interval_width >= 0.5);
+    }
+
+    #[test]
+    fn test_top_factors_sorting() {
+        let score = ScoreComponents {
+            final_score: 3.0,
+            doc_score: 0.1,
+            readme_score: 0.5,
+            import_score: 0.3,
+            path_score: 0.0,
+            test_link_score: 0.0,
+            churn_score: 0.0,
+            centrality_score: 0.0,
+            entrypoint_score: 0.0,
+            examples_score: 0.0,
+            priority_boost: 0.0,
+            template_boost: 0.0,
+            weights: HeuristicWeights::default(),
+        };
+
+        let top = score.top_factors(5);
+
+        // Should be sorted by descending score
+        for i in 1..top.len() {
+            assert!(top[i - 1].1 >= top[i].1);
+        }
+    }
 }

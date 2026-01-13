@@ -774,4 +774,243 @@ mod tests {
 
         println!("Summary:\n{}", summary);
     }
+
+    #[test]
+    fn test_pagerank_for_code_analysis() {
+        let graph = create_test_graph();
+        let computer = PageRankComputer::for_code_analysis();
+        let results = computer.compute(&graph).unwrap();
+
+        assert!(!results.scores.is_empty());
+        assert!(results.converged());
+    }
+
+    #[test]
+    fn test_pagerank_for_large_codebases() {
+        let graph = create_test_graph();
+        let computer = PageRankComputer::for_large_codebases();
+        let results = computer.compute(&graph).unwrap();
+
+        assert!(!results.scores.is_empty());
+        assert!(results.converged());
+    }
+
+    #[test]
+    fn test_pagerank_default() {
+        let computer = PageRankComputer::default();
+        let graph = create_test_graph();
+        let results = computer.compute(&graph).unwrap();
+
+        assert!(!results.scores.is_empty());
+    }
+
+    #[test]
+    fn test_nodes_above_threshold() {
+        let graph = create_test_graph();
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        // Get nodes above very low threshold - should get all
+        let above_low = results.nodes_above_threshold(0.01);
+        assert!(!above_low.is_empty());
+
+        // Get nodes above very high threshold - should get none
+        let above_high = results.nodes_above_threshold(10.0);
+        assert!(above_high.is_empty());
+
+        // Intermediate threshold
+        let stats = results.score_statistics();
+        let above_median = results.nodes_above_threshold(stats.median);
+        assert!(!above_median.is_empty());
+    }
+
+    #[test]
+    fn test_node_score() {
+        let graph = create_test_graph();
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        // Existing node should return Some
+        let score_a = results.node_score(&"A".to_string());
+        assert!(score_a.is_some());
+        assert!(score_a.unwrap() > 0.0);
+
+        // Non-existing node should return None
+        let score_x = results.node_score(&"X".to_string());
+        assert!(score_x.is_none());
+    }
+
+    #[test]
+    fn test_score_statistics_empty() {
+        let graph = DependencyGraph::new();
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        let stats = results.score_statistics();
+        assert_eq!(stats.total_nodes, 0);
+    }
+
+    #[test]
+    fn test_score_statistics_even_count() {
+        // Create graph with 4 nodes to test even median calculation
+        let mut graph = DependencyGraph::new();
+        graph.add_edge("A".to_string(), "B".to_string()).unwrap();
+        graph.add_edge("C".to_string(), "D".to_string()).unwrap();
+
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        let stats = results.score_statistics();
+        assert_eq!(stats.total_nodes, 4);
+        // Median should be average of 2nd and 3rd sorted values
+        assert!(stats.median > 0.0);
+    }
+
+    #[test]
+    fn test_specialized_personalized_pagerank() {
+        let graph = create_test_graph();
+        let personalization = HashMap::from([
+            ("A".to_string(), 0.5),
+            ("B".to_string(), 0.3),
+            ("C".to_string(), 0.2),
+        ]);
+        let config = PageRankConfig::default();
+
+        let results = SpecializedPageRank::personalized_pagerank(&graph, &personalization, config).unwrap();
+        assert!(!results.scores.is_empty());
+    }
+
+    #[test]
+    fn test_specialized_entrypoint_focused() {
+        let graph = create_test_graph();
+        let config = PageRankConfig::default();
+
+        let results = SpecializedPageRank::entrypoint_focused_pagerank(&graph, config).unwrap();
+        assert!(!results.scores.is_empty());
+    }
+
+    #[test]
+    fn test_pagerank_sequential_mode() {
+        let graph = create_test_graph();
+
+        // Force sequential mode
+        let config = PageRankConfig {
+            use_parallel: false,
+            ..PageRankConfig::default()
+        };
+        let computer = PageRankComputer::with_config(config).unwrap();
+        let results = computer.compute(&graph).unwrap();
+
+        assert!(!results.scores.is_empty());
+        assert!(!results.performance_metrics.used_parallel);
+    }
+
+    #[test]
+    fn test_pagerank_results_clone() {
+        let graph = create_test_graph();
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        let cloned = results.clone();
+        assert_eq!(results.scores, cloned.scores);
+        assert_eq!(results.iterations_converged, cloned.iterations_converged);
+    }
+
+    #[test]
+    fn test_pagerank_results_eq() {
+        let graph = create_test_graph();
+        let computer = PageRankComputer::new();
+
+        let results1 = computer.compute(&graph).unwrap();
+        let results2 = computer.compute(&graph).unwrap();
+
+        // Results should be equal (or very close)
+        assert_eq!(results1.scores.len(), results2.scores.len());
+    }
+
+    #[test]
+    fn test_convergence_rate_calculation() {
+        let mut graph = DependencyGraph::new();
+
+        // Create larger graph to test convergence more thoroughly
+        for i in 0..10 {
+            graph.add_edge(format!("A{}", i), format!("B{}", i)).unwrap();
+            graph.add_edge(format!("B{}", i), format!("C{}", i)).unwrap();
+        }
+
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        // Convergence rate should be non-negative
+        assert!(results.performance_metrics.convergence_rate >= 0.0);
+    }
+
+    #[test]
+    fn test_empty_graph_stats() {
+        // Tests line 315: GraphStatistics::empty() path
+        let graph = DependencyGraph::new();
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        // Graph stats should be empty
+        assert_eq!(results.graph_stats.total_nodes, 0);
+        assert_eq!(results.graph_stats.total_edges, 0);
+    }
+
+    #[test]
+    fn test_entrypoint_focused_pagerank_with_entrypoints() {
+        // Tests lines 500-511: entrypoint_focused_pagerank with actual entrypoints
+        let mut graph = DependencyGraph::new();
+
+        // Create a graph with nodes - main.py is auto-detected as entrypoint
+        graph.add_node("main.py".to_string()).unwrap();
+        graph.add_edge("main.py".to_string(), "utils.py".to_string()).unwrap();
+        graph.add_edge("utils.py".to_string(), "config.py".to_string()).unwrap();
+
+        // Verify entrypoint is detected
+        let entrypoints = graph.entrypoint_nodes();
+        assert!(!entrypoints.is_empty(), "main.py should be detected as entrypoint");
+
+        let config = PageRankConfig::default();
+        let results = SpecializedPageRank::entrypoint_focused_pagerank(&graph, config).unwrap();
+
+        // The entrypoint should have weight in personalization
+        assert!(!results.scores.is_empty());
+
+        // main.py should have a higher score due to personalization
+        let main_score = results.node_score(&"main.py".to_string());
+        let utils_score = results.node_score(&"utils.py".to_string());
+
+        assert!(main_score.is_some());
+        assert!(utils_score.is_some());
+    }
+
+    #[test]
+    fn test_entrypoint_focused_no_entrypoints() {
+        // Tests line 496: no entrypoints falls back to regular pagerank
+        let mut graph = DependencyGraph::new();
+
+        // Create a graph without entrypoints
+        graph.add_edge("a.py".to_string(), "b.py".to_string()).unwrap();
+
+        let config = PageRankConfig::default();
+        let results = SpecializedPageRank::entrypoint_focused_pagerank(&graph, config).unwrap();
+
+        assert!(!results.scores.is_empty());
+    }
+
+    #[test]
+    fn test_convergence_rate_first_zero() {
+        // Tests line 175: convergence rate when first value is 0
+        // This is hard to trigger directly, but we can test with a minimal graph
+        // where convergence happens immediately
+        let mut graph = DependencyGraph::new();
+        graph.add_node("solo".to_string()).unwrap();
+
+        let computer = PageRankComputer::new();
+        let results = computer.compute(&graph).unwrap();
+
+        // With a single node, convergence rate should be calculated
+        assert!(results.performance_metrics.convergence_rate >= 0.0);
+    }
 }

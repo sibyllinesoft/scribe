@@ -521,4 +521,240 @@ fn process_data(input: &str) -> Result<HashMap<String, i32>, Box<dyn std::error:
         assert!(mixed_budget > code_budget);
         assert!(mixed_budget < doc_budget);
     }
+
+    #[test]
+    fn test_global_token_counter() {
+        let global = TokenCounter::global();
+        let count = global.count_tokens("Hello").unwrap();
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn test_count_tokens_batch() {
+        let counter = TokenCounter::default().unwrap();
+        let contents = &["Hello", "World", "Test"];
+        let total = counter.count_tokens_batch(contents).unwrap();
+        assert!(total > 0);
+        assert!(total > counter.count_tokens("Hello").unwrap());
+    }
+
+    #[test]
+    fn test_fits_budget() {
+        let counter = TokenCounter::default().unwrap();
+        assert!(counter.fits_budget("Hello").unwrap());
+
+        // Very large content should fit default GPT-4 budget but let's test small
+        let large_content = "word ".repeat(10000);
+        let fits = counter.fits_budget(&large_content).unwrap();
+        assert!(fits); // Should fit 128k budget
+    }
+
+    #[test]
+    fn test_fits_budget_no_limit() {
+        let config = TokenizerConfig {
+            token_budget: None,
+            ..Default::default()
+        };
+        let counter = TokenCounter::new(config).unwrap();
+        assert!(counter.fits_budget("any content").unwrap());
+    }
+
+    #[test]
+    fn test_remaining_budget() {
+        let counter = TokenCounter::default().unwrap();
+        let remaining = counter.remaining_budget(1000);
+        assert!(remaining.is_some());
+        assert!(remaining.unwrap() < counter.config().token_budget.unwrap());
+
+        let config = TokenizerConfig {
+            token_budget: None,
+            ..Default::default()
+        };
+        let counter_no_budget = TokenCounter::new(config).unwrap();
+        assert!(counter_no_budget.remaining_budget(1000).is_none());
+    }
+
+    #[test]
+    fn test_set_token_budget() {
+        let mut counter = TokenCounter::default().unwrap();
+        counter.set_token_budget(Some(50000));
+        assert_eq!(counter.config().token_budget, Some(50000));
+
+        counter.set_token_budget(None);
+        assert!(counter.config().token_budget.is_none());
+    }
+
+    #[test]
+    fn test_token_budget_can_allocate() {
+        let budget = TokenBudget::new(100);
+        assert!(budget.can_allocate(50));
+        assert!(budget.can_allocate(100));
+        assert!(!budget.can_allocate(101));
+    }
+
+    #[test]
+    fn test_token_budget_allocate_fails() {
+        let mut budget = TokenBudget::new(100);
+        assert!(budget.allocate(80));
+        assert!(!budget.allocate(30)); // Only 20 left
+        assert_eq!(budget.used(), 80);
+    }
+
+    #[test]
+    fn test_token_budget_reserve_fails() {
+        let mut budget = TokenBudget::new(100);
+        budget.allocate(80);
+        assert!(!budget.reserve(30)); // Only 20 available
+        assert_eq!(budget.reserved(), 0);
+    }
+
+    #[test]
+    fn test_token_budget_release_reservation() {
+        let mut budget = TokenBudget::new(100);
+        budget.reserve(50);
+        assert_eq!(budget.reserved(), 50);
+        budget.release_reservation(30);
+        assert_eq!(budget.reserved(), 20);
+        budget.release_reservation(50); // Release more than reserved
+        assert_eq!(budget.reserved(), 0);
+    }
+
+    #[test]
+    fn test_token_budget_utilization() {
+        let mut budget = TokenBudget::new(100);
+        budget.allocate(50);
+        assert!((budget.utilization() - 50.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_token_budget_reset() {
+        let mut budget = TokenBudget::new(100);
+        budget.allocate(50);
+        budget.reserve(20);
+        budget.reset();
+        assert_eq!(budget.used(), 0);
+        assert_eq!(budget.reserved(), 0);
+        assert_eq!(budget.available(), 100);
+    }
+
+    #[test]
+    fn test_estimate_tokens_legacy() {
+        let tokens = utils::estimate_tokens_legacy("Hello, World!");
+        assert!(tokens > 0);
+        assert!(tokens < 10);
+    }
+
+    #[test]
+    fn test_tokenizer_config_default() {
+        let config = TokenizerConfig::default();
+        assert_eq!(config.encoding_model, "gpt-4");
+        assert!(config.enable_caching);
+        assert_eq!(config.token_budget, Some(128000));
+    }
+
+    #[test]
+    fn test_budget_recommendations_all_models() {
+        // Test various models
+        let gpt4 = utils::recommend_token_budget("gpt-4", ContentType::Code);
+        let gpt4_turbo = utils::recommend_token_budget("gpt-4-turbo", ContentType::Code);
+        let gpt4_32k = utils::recommend_token_budget("gpt-4-32k", ContentType::Code);
+        let gpt35 = utils::recommend_token_budget("gpt-3.5-turbo", ContentType::Code);
+        let gpt35_16k = utils::recommend_token_budget("gpt-3.5-turbo-16k", ContentType::Code);
+        let unknown = utils::recommend_token_budget("unknown-model", ContentType::Code);
+
+        assert!(gpt4 > 0);
+        assert_eq!(gpt4, gpt4_turbo);
+        assert!(gpt4_32k < gpt4);
+        assert!(gpt35 < gpt4);
+        assert_eq!(gpt35, gpt35_16k);
+        assert!(unknown < gpt35);
+    }
+
+    #[test]
+    fn test_language_multiplier_all() {
+        let counter = TokenCounter::default().unwrap();
+
+        // Just test that different file types get different multipliers
+        // and that the function runs without panicking
+        let files = vec![
+            "test.java",
+            "test.cs",
+            "test.py",
+            "test.js",
+            "test.ts",
+            "test.rs",
+            "test.go",
+            "test.json",
+            "test.yaml",
+            "test.yml",
+            "test.toml",
+            "test.xml",
+            "test.html",
+            "test.htm",
+            "test.md",
+            "test.markdown",
+            "test.txt",
+            "test.unknown",
+        ];
+
+        for file in files {
+            let tokens = counter
+                .estimate_file_tokens("test content", Path::new(file))
+                .unwrap();
+            assert!(tokens > 0, "File {} should have positive token count", file);
+        }
+    }
+
+    #[test]
+    fn test_tokenizer_debug_format() {
+        let counter = TokenCounter::default().unwrap();
+        let debug = format!("{:?}", counter);
+        assert!(debug.contains("TokenCounter"));
+        assert!(debug.contains("config"));
+    }
+
+    #[test]
+    fn test_tokenization_comparison_format() {
+        let comparison = TokenizationComparison {
+            tiktoken_count: 100,
+            legacy_count: 120,
+            accuracy_ratio: 0.833,
+            improvement: Some(16.7),
+        };
+        let formatted = comparison.format();
+        assert!(formatted.contains("100"));
+        assert!(formatted.contains("120"));
+        assert!(formatted.contains("accurate"));
+
+        let comparison_no_improvement = TokenizationComparison {
+            tiktoken_count: 100,
+            legacy_count: 80,
+            accuracy_ratio: 1.25,
+            improvement: None,
+        };
+        let formatted2 = comparison_no_improvement.format();
+        assert!(formatted2.contains("ratio"));
+    }
+
+    #[test]
+    fn test_confirm_reservation_partial() {
+        let mut budget = TokenBudget::new(100);
+        budget.reserve(50);
+        budget.confirm_reservation(30);
+        assert_eq!(budget.used(), 30);
+        assert_eq!(budget.reserved(), 20);
+
+        // Confirm more than reserved
+        budget.confirm_reservation(100);
+        assert_eq!(budget.used(), 50);
+        assert_eq!(budget.reserved(), 0);
+    }
+
+    #[test]
+    fn test_compare_tokenization_empty() {
+        let counter = TokenCounter::default().unwrap();
+        let comparison = utils::compare_tokenization_accuracy("", &counter).unwrap();
+        assert_eq!(comparison.tiktoken_count, 0);
+        assert_eq!(comparison.accuracy_ratio, 1.0); // Default when legacy is 0
+    }
 }

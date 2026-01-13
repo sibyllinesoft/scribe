@@ -387,8 +387,8 @@ mod tests {
 
         let service = new_service(config.clone());
 
-        // Test that app_state has the correct config
-        let cfg_guard = service.app_state.config.blocking_read();
+        // Test that app_state has the correct config (use async read)
+        let cfg_guard = service.app_state.config.read().await;
         assert_eq!(cfg_guard.port, config.port);
         assert_eq!(cfg_guard.host, config.host);
         assert_eq!(cfg_guard.token_budget, config.token_budget);
@@ -396,8 +396,8 @@ mod tests {
         assert_eq!(cfg_guard.max_file_size, config.max_file_size);
         assert_eq!(cfg_guard.auto_exclude_tests, config.auto_exclude_tests);
 
-        // Test that bundle_state is initialized
-        let bundle_state = service.app_state.bundle_state.try_read().unwrap();
+        // Test that bundle_state is initialized (use async read)
+        let bundle_state = service.app_state.bundle_state.read().await;
         assert_eq!(bundle_state.included_files.len(), 0);
         assert_eq!(bundle_state.excluded_files.len(), 0);
         assert_eq!(bundle_state.token_estimate, 0);
@@ -527,5 +527,63 @@ mod tests {
                 .num_seconds()
                 < 5
         );
+    }
+
+    #[test]
+    fn test_format_modified_with_time() {
+        let time = SystemTime::now();
+        let result = format_modified(Some(time));
+        // Should be formatted like "YYYY-MM-DD HH:MM:SS"
+        assert!(result.contains("-"));
+        assert!(result.contains(":"));
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_format_modified_without_time() {
+        let result = format_modified(None);
+        assert_eq!(result, "N/A");
+    }
+
+    #[test]
+    fn test_webservice_config_default() {
+        let config = WebServiceConfig::default();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.token_budget, 50000);
+        assert!(config.auto_open_browser);
+        assert!(config.auto_exclude_tests);
+        assert!(config.auto_shutdown);
+        assert_eq!(config.auto_shutdown_timeout, 60);
+    }
+
+    #[test]
+    fn test_webservice_error_display() {
+        let err = WebServiceError::RepositoryNotFound {
+            path: PathBuf::from("/test/path"),
+        };
+        let error_str = format!("{}", err);
+        assert!(error_str.contains("/test/path") || error_str.contains("Repository not found"));
+    }
+
+    #[test]
+    fn test_webservice_config_clone() {
+        let config = WebServiceConfig {
+            repo_path: PathBuf::from("/test"),
+            port: 9000,
+            host: "localhost".to_string(),
+            token_budget: 100000,
+            auto_open_browser: true,
+            max_file_size: 2048,
+            auto_exclude_tests: false,
+            auto_shutdown: true,
+            auto_shutdown_timeout: 120,
+        };
+
+        let cloned = config.clone();
+        assert_eq!(config.port, cloned.port);
+        assert_eq!(config.host, cloned.host);
+        assert_eq!(config.token_budget, cloned.token_budget);
+        assert_eq!(config.auto_shutdown_timeout, cloned.auto_shutdown_timeout);
     }
 }

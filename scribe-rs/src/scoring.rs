@@ -129,4 +129,142 @@ mod tests {
         assert!(analysis.code_block_count > 0);
         assert!(analysis.link_count > 0);
     }
+
+    #[test]
+    fn test_detect_javascript_entrypoint_module_exports() {
+        let content = "module.exports = myFunction;";
+        assert!(detect_entrypoint_from_content(content, &Language::JavaScript));
+    }
+
+    #[test]
+    fn test_detect_javascript_entrypoint_export_default() {
+        let content = "export default function App() {}";
+        assert!(detect_entrypoint_from_content(content, &Language::JavaScript));
+    }
+
+    #[test]
+    fn test_detect_typescript_entrypoint() {
+        let content = "export default class MyComponent {}";
+        assert!(detect_entrypoint_from_content(content, &Language::TypeScript));
+    }
+
+    #[test]
+    fn test_detect_go_entrypoint() {
+        let content = "func main() { fmt.Println(\"Hello\") }";
+        assert!(detect_entrypoint_from_content(content, &Language::Go));
+    }
+
+    #[test]
+    fn test_detect_java_entrypoint() {
+        let content = "public static void main(String[] args) {}";
+        assert!(detect_entrypoint_from_content(content, &Language::Java));
+    }
+
+    #[test]
+    fn test_detect_unknown_language_no_entrypoint() {
+        let content = "fn main() { }";
+        assert!(!detect_entrypoint_from_content(content, &Language::Unknown));
+    }
+
+    #[test]
+    fn test_detect_no_entrypoint_rust() {
+        let content = "fn helper() { println!(\"Not main\"); }";
+        assert!(!detect_entrypoint_from_content(content, &Language::Rust));
+    }
+
+    #[test]
+    fn test_detect_no_entrypoint_python() {
+        let content = "def helper(): pass";
+        assert!(!detect_entrypoint_from_content(content, &Language::Python));
+    }
+
+    #[test]
+    fn test_lib_boost() {
+        let file = make_file_info("src/lib.rs");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.1);
+    }
+
+    #[test]
+    fn test_build_rs_boost() {
+        let file = make_file_info("build.rs");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.1);
+    }
+
+    #[test]
+    fn test_setup_py_boost() {
+        let file = make_file_info("setup.py");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.1);
+    }
+
+    #[test]
+    fn test_requirements_txt_boost() {
+        let file = make_file_info("requirements.txt");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_pyproject_toml_boost() {
+        let file = make_file_info("pyproject.toml");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_index_js_boost() {
+        let file = make_file_info("index.js");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_index_ts_boost() {
+        let file = make_file_info("src/index.ts");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_main_py_boost() {
+        let file = make_file_info("main.py");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_main_go_boost() {
+        let file = make_file_info("cmd/main.go");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_case_insensitive_readme() {
+        let file = make_file_info("readme.md");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.3);
+    }
+
+    #[test]
+    fn test_combined_boost_capped_at_1() {
+        // README.md + main.rs would normally be > 0.7, but should be capped
+        let file = make_file_info("README.md");
+        let boost = compute_priority_boost(&file);
+        assert!(boost <= 1.0);
+    }
+
+    #[test]
+    fn test_apply_boost_direct() {
+        let path = "test/package.json";
+        let patterns = &["package.json", "Cargo.toml"];
+        let boost = apply_boost(path, patterns, 0.5);
+        assert_eq!(boost, 0.5);
+
+        let no_match_path = "test/other.txt";
+        let no_boost = apply_boost(no_match_path, patterns, 0.5);
+        assert_eq!(no_boost, 0.0);
+    }
 }

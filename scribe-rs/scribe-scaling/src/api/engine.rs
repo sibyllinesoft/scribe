@@ -515,4 +515,249 @@ mod tests {
             "Configuration"
         );
     }
+
+    #[test]
+    fn test_scaling_config_default() {
+        let config = ScalingConfig::default();
+        assert!(config.token_budget.is_none());
+        assert!(!config.enable_intelligent_selection);
+        assert!(!config.enable_context_positioning);
+        assert!(config.positioning_query.is_none());
+        assert!(config.selection_algorithm.is_none());
+    }
+
+    #[test]
+    fn test_scaling_config_with_token_budget() {
+        // Small budget should use quotas
+        let small = ScalingConfig::with_token_budget(1000);
+        assert_eq!(small.token_budget, Some(1000));
+        assert!(small.enable_intelligent_selection);
+        assert_eq!(small.selection_algorithm, Some("v2_quotas".to_string()));
+
+        // Medium budget should use integrated
+        let medium = ScalingConfig::with_token_budget(10000);
+        assert_eq!(medium.token_budget, Some(10000));
+        assert_eq!(medium.selection_algorithm, Some("v5_integrated".to_string()));
+
+        // Large budget should also use integrated
+        let large = ScalingConfig::with_token_budget(20000);
+        assert_eq!(large.token_budget, Some(20000));
+        assert_eq!(large.selection_algorithm, Some("v5_integrated".to_string()));
+    }
+
+    #[test]
+    fn test_scaling_config_small_repository() {
+        let config = ScalingConfig::small_repository();
+        assert!(!config.streaming.enable_streaming);
+        assert_eq!(config.streaming.concurrency_limit, 2);
+        assert_eq!(config.streaming.memory_limit, 50 * 1024 * 1024);
+        assert_eq!(config.parallel.max_concurrent_tasks, 2);
+        assert_eq!(config.parallel.async_worker_count, 1);
+        assert!(!config.parallel.enable_work_stealing);
+        assert_eq!(config.token_budget, Some(8000));
+        assert!(config.enable_intelligent_selection);
+        assert_eq!(config.selection_algorithm, Some("v2_quotas".to_string()));
+    }
+
+    #[test]
+    fn test_scaling_config_large_repository() {
+        let config = ScalingConfig::large_repository();
+        assert!(config.streaming.enable_streaming);
+        assert_eq!(config.streaming.concurrency_limit, 8);
+        assert_eq!(config.streaming.memory_limit, 500 * 1024 * 1024);
+        assert_eq!(config.parallel.max_concurrent_tasks, 16);
+        assert_eq!(config.parallel.async_worker_count, 8);
+        assert!(config.parallel.enable_work_stealing);
+        assert_eq!(config.token_budget, Some(15000));
+        assert!(config.enable_intelligent_selection);
+        assert_eq!(config.selection_algorithm, Some("v5_integrated".to_string()));
+    }
+
+    #[test]
+    fn test_scaling_config_clone() {
+        let config = ScalingConfig::large_repository();
+        let cloned = config.clone();
+        assert_eq!(config.token_budget, cloned.token_budget);
+        assert_eq!(config.enable_intelligent_selection, cloned.enable_intelligent_selection);
+    }
+
+    #[test]
+    fn test_processing_result_fields() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 10,
+            processing_time: Duration::from_millis(100),
+            memory_peak: 1024 * 1024,
+            cache_hits: 5,
+            cache_misses: 5,
+            metrics: ScalingMetrics::default(),
+        };
+        assert_eq!(result.total_files, 10);
+        assert_eq!(result.processing_time.as_millis(), 100);
+        assert_eq!(result.memory_peak, 1024 * 1024);
+        assert_eq!(result.cache_hits, 5);
+        assert_eq!(result.cache_misses, 5);
+    }
+
+    #[test]
+    fn test_processing_result_clone() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 5,
+            processing_time: Duration::from_secs(1),
+            memory_peak: 2048,
+            cache_hits: 3,
+            cache_misses: 2,
+            metrics: ScalingMetrics::default(),
+        };
+        let cloned = result.clone();
+        assert_eq!(result.total_files, cloned.total_files);
+        assert_eq!(result.cache_hits, cloned.cache_hits);
+    }
+
+    #[test]
+    fn test_language_detection_more_extensions() {
+        assert_eq!(detect_language(Path::new("test.js")), "JavaScript");
+        assert_eq!(detect_language(Path::new("test.ts")), "TypeScript");
+        assert_eq!(detect_language(Path::new("test.go")), "Go");
+        assert_eq!(detect_language(Path::new("test.java")), "Java");
+        assert_eq!(detect_language(Path::new("test.cpp")), "C++");
+        assert_eq!(detect_language(Path::new("test.c")), "C");
+        assert_eq!(detect_language(Path::new("test.rb")), "Ruby");
+        assert_eq!(detect_language(Path::new("test.php")), "PHP");
+    }
+
+    #[test]
+    fn test_file_type_classification_more_types() {
+        assert_eq!(classify_file_type(Path::new("test_spec.rb")), "Test");
+        assert_eq!(classify_file_type(Path::new("tests/unit.py")), "Test");
+        assert_eq!(classify_file_type(Path::new("app.test.js")), "Test");
+        assert_eq!(classify_file_type(Path::new("config.yaml")), "Configuration");
+        assert_eq!(classify_file_type(Path::new("Cargo.toml")), "Configuration");
+    }
+
+    #[tokio::test]
+    async fn test_scaling_engine_with_config() {
+        let config = ScalingConfig::small_repository();
+        let engine = ScalingEngine::with_config(config.clone());
+        assert_eq!(engine.config.token_budget, config.token_budget);
+    }
+
+    #[tokio::test]
+    async fn test_scaling_engine_new() {
+        let config = ScalingConfig::default();
+        let engine = ScalingEngine::new(config).await;
+        assert!(engine.is_ok());
+    }
+
+    #[test]
+    fn test_language_detection_header_files() {
+        assert_eq!(detect_language(Path::new("test.h")), "Header");
+        assert_eq!(detect_language(Path::new("test.hpp")), "Header");
+        assert_eq!(detect_language(Path::new("test.hxx")), "Header");
+    }
+
+    #[test]
+    fn test_language_detection_dockerfile() {
+        assert_eq!(detect_language(Path::new("Dockerfile")), "Dockerfile");
+        assert_eq!(detect_language(Path::new("dockerfile")), "Dockerfile");
+    }
+
+    #[test]
+    fn test_estimate_memory_usage() {
+        assert_eq!(estimate_memory_usage(1), 1024);
+        assert_eq!(estimate_memory_usage(10), 10240);
+        assert_eq!(estimate_memory_usage(100), 102400);
+    }
+
+    #[tokio::test]
+    async fn test_process_repository_with_file_path() {
+        // Test that process_repository returns error for file path (not dir)
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        fs::write(&file_path, "fn main() {}").unwrap();
+
+        let mut engine = ScalingEngine::with_defaults().await.unwrap();
+        let result = engine.process_repository(&file_path).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scaling_engine_is_ready() {
+        let engine = ScalingEngine::with_defaults().await.unwrap();
+        assert!(engine.is_ready());
+    }
+
+    #[tokio::test]
+    async fn test_scaling_engine_config_getter() {
+        let config = ScalingConfig::large_repository();
+        let engine = ScalingEngine::with_config(config.clone());
+        let retrieved = engine.config();
+        assert_eq!(retrieved.token_budget, Some(15000));
+    }
+
+    #[tokio::test]
+    async fn test_scaling_engine_without_cache() {
+        let config = ScalingConfig {
+            caching: crate::api::caching::CacheConfig {
+                memory_cache_size: 0,
+                enable_persistent_cache: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut engine = ScalingEngine::with_config(config);
+
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        let result = engine.process_repository(temp_dir.path()).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_processing_result_debug() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 5,
+            processing_time: Duration::from_secs(1),
+            memory_peak: 2048,
+            cache_hits: 3,
+            cache_misses: 2,
+            metrics: ScalingMetrics::default(),
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("ProcessingResult"));
+    }
+
+    #[test]
+    fn test_scaling_config_debug() {
+        let config = ScalingConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("ScalingConfig"));
+    }
+
+    #[test]
+    fn test_scaling_config_serialization() {
+        let config = ScalingConfig::small_repository();
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: ScalingConfig = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(config.token_budget, deserialized.token_budget);
+    }
+
+    #[test]
+    fn test_processing_result_serialization() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 10,
+            processing_time: Duration::from_millis(500),
+            memory_peak: 1024,
+            cache_hits: 5,
+            cache_misses: 5,
+            metrics: ScalingMetrics::default(),
+        };
+        let serialized = serde_json::to_string(&result).unwrap();
+        let deserialized: ProcessingResult = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(result.total_files, deserialized.total_files);
+    }
 }

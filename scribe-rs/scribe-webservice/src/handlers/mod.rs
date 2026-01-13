@@ -764,4 +764,289 @@ mod tests {
             scan_result.selected_files + scan_result.excluded_files
         );
     }
+
+    #[tokio::test]
+    async fn test_generated_bundle_structure() {
+        let bundle = GeneratedBundle {
+            format: "markdown".to_string(),
+            content: "# Test".to_string(),
+            filename: "test.md".to_string(),
+            size: 6,
+        };
+
+        assert_eq!(bundle.format, "markdown");
+        assert_eq!(bundle.filename, "test.md");
+        assert_eq!(bundle.size, 6);
+        assert_eq!(bundle.content, "# Test");
+    }
+
+    #[tokio::test]
+    async fn test_generate_bundle_request_serialization() {
+        let request = GenerateBundleRequest {
+            format: "json".to_string(),
+            options: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("json"));
+
+        let deserialized: GenerateBundleRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.format, "json");
+    }
+
+    #[tokio::test]
+    async fn test_save_bundle_request_serialization() {
+        let request = SaveBundleRequest {
+            path: "/tmp/bundle.md".to_string(),
+            format: "markdown".to_string(),
+            options: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("/tmp/bundle.md"));
+        assert!(json.contains("markdown"));
+
+        let deserialized: SaveBundleRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.path, "/tmp/bundle.md");
+        assert_eq!(deserialized.format, "markdown");
+    }
+
+    #[tokio::test]
+    async fn test_save_result_structure() {
+        let result = SaveResult {
+            path: "/path/to/bundle.html".to_string(),
+            size: 12345,
+            format: "html".to_string(),
+        };
+
+        assert_eq!(result.path, "/path/to/bundle.html");
+        assert_eq!(result.size, 12345);
+        assert_eq!(result.format, "html");
+    }
+
+    #[tokio::test]
+    async fn test_covering_set_response_error() {
+        let response = CoveringSetResponse {
+            success: false,
+            target_entity: None,
+            files: Vec::new(),
+            statistics: CoveringSetStats {
+                total_files_examined: 0,
+                files_in_set: 0,
+                files_excluded: 0,
+                max_depth_reached: 0,
+                limits_reached: false,
+            },
+            error: Some("Test error".to_string()),
+        };
+
+        assert!(!response.success);
+        assert!(response.error.is_some());
+        assert_eq!(response.files.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_covering_set_stats_default() {
+        let stats = CoveringSetStats {
+            total_files_examined: 100,
+            files_in_set: 25,
+            files_excluded: 75,
+            max_depth_reached: 3,
+            limits_reached: false,
+        };
+
+        assert_eq!(stats.total_files_examined, 100);
+        assert_eq!(stats.files_in_set, 25);
+        assert_eq!(stats.files_excluded, 75);
+        assert!(!stats.limits_reached);
+    }
+
+    #[tokio::test]
+    async fn test_entity_info_serialization() {
+        let entity = EntityInfo {
+            entity_name: "MyFunction".to_string(),
+            entity_type: "function".to_string(),
+            file_path: "src/lib.rs".to_string(),
+            start_line: 10,
+            end_line: 25,
+            is_public: true,
+        };
+
+        let json = serde_json::to_string(&entity).unwrap();
+        assert!(json.contains("MyFunction"));
+        assert!(json.contains("function"));
+    }
+
+    #[tokio::test]
+    async fn test_file_in_covering_set_serialization() {
+        let file = FileInCoveringSet {
+            path: "src/utils.rs".to_string(),
+            reason: "direct_dependency".to_string(),
+            distance: 1,
+            explanation: "Used by target".to_string(),
+        };
+
+        let json = serde_json::to_string(&file).unwrap();
+        assert!(json.contains("src/utils.rs"));
+        assert!(json.contains("direct_dependency"));
+    }
+
+    #[tokio::test]
+    async fn test_build_scan_result() {
+        let analysis = AnalysisOutput {
+            selected_files: Vec::new(),
+            selected_file_infos: Vec::new(),
+            metrics: WebSelectionMetrics {
+                total_files_discovered: 10,
+                files_selected: 5,
+                total_tokens_estimated: 1000,
+                selection_time_ms: 50,
+                algorithm_used: "test".to_string(),
+                coverage_score: 0.5,
+                relevance_score: 0.8,
+            },
+            repository_files: Vec::new(),
+            token_budget: 10000,
+        };
+
+        let bundle_state = BundleState {
+            included_files: vec!["file1.rs".to_string(), "file2.rs".to_string()],
+            excluded_files: HashMap::new(),
+            token_estimate: 500,
+            total_size: 2048,
+            last_updated: chrono::Utc::now(),
+        };
+
+        let categories = HashMap::new();
+        let result = build_scan_result(&analysis, &bundle_state, None, categories);
+
+        assert_eq!(result.total_files, 0); // No repository_files
+        assert_eq!(result.selected_files, 2);
+        assert_eq!(result.token_estimate, 500);
+        assert_eq!(result.total_size, 2048);
+        assert!(result.rendered_html.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_scan_result_with_html() {
+        let analysis = AnalysisOutput {
+            selected_files: Vec::new(),
+            selected_file_infos: Vec::new(),
+            metrics: WebSelectionMetrics {
+                total_files_discovered: 5,
+                files_selected: 3,
+                total_tokens_estimated: 500,
+                selection_time_ms: 25,
+                algorithm_used: "quick".to_string(),
+                coverage_score: 0.6,
+                relevance_score: 0.9,
+            },
+            repository_files: Vec::new(),
+            token_budget: 5000,
+        };
+
+        let bundle_state = BundleState::default();
+        let categories = HashMap::new();
+        let html = Some("<html>test</html>".to_string());
+
+        let result = build_scan_result(&analysis, &bundle_state, html, categories);
+
+        assert!(result.rendered_html.is_some());
+        assert!(result.rendered_html.unwrap().contains("<html>"));
+    }
+
+    #[tokio::test]
+    async fn test_get_config_handler() {
+        let state = create_test_app_state();
+        let response = get_config(State(state)).await;
+        let api_response = response.0;
+
+        assert!(api_response.success);
+        assert!(api_response.data.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_error_html_function() {
+        let html = error_html("Test error message");
+
+        assert!(html.contains("Error"));
+        assert!(html.contains("Test error message"));
+    }
+
+    #[tokio::test]
+    async fn test_status_info_structure() {
+        let info = StatusInfo {
+            service: "scribe-webservice".to_string(),
+            version: "1.0.0".to_string(),
+            status: "healthy".to_string(),
+        };
+
+        assert_eq!(info.service, "scribe-webservice");
+        assert_eq!(info.status, "healthy");
+        assert_eq!(info.version, "1.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_file_entry_clone() {
+        let entry = FileEntry {
+            path: "src/main.rs".to_string(),
+            size: 2048,
+            tokens: 512,
+            file_type: "rust".to_string(),
+            included: false,
+        };
+
+        let cloned = entry.clone();
+        assert_eq!(entry.path, cloned.path);
+        assert_eq!(entry.size, cloned.size);
+        assert_eq!(entry.tokens, cloned.tokens);
+        assert_eq!(entry.included, cloned.included);
+    }
+
+    #[tokio::test]
+    async fn test_covering_set_file_with_distance() {
+        let file = FileInCoveringSet {
+            path: "src/helpers.rs".to_string(),
+            reason: "transitive".to_string(),
+            distance: 2,
+            explanation: "Imported by direct dependency".to_string(),
+        };
+
+        assert_eq!(file.path, "src/helpers.rs");
+        assert_eq!(file.distance, 2);
+        assert_eq!(file.reason, "transitive");
+    }
+
+    #[tokio::test]
+    async fn test_scan_result_clone() {
+        let mut categories = HashMap::new();
+        categories.insert("included".to_string(), vec![]);
+
+        let scan_result = ScanResult {
+            total_files: 10,
+            selected_files: 5,
+            excluded_files: 5,
+            token_estimate: 5000,
+            total_size: 10240,
+            categories,
+            rendered_html: Some("<html></html>".to_string()),
+        };
+
+        let cloned = scan_result.clone();
+        assert_eq!(scan_result.total_files, cloned.total_files);
+        assert_eq!(scan_result.selected_files, cloned.selected_files);
+        assert!(cloned.rendered_html.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_ping_response_structure() {
+        let response = PingResponse {
+            timestamp: chrono::Utc::now(),
+            auto_shutdown_enabled: true,
+            timeout_seconds: 300,
+        };
+
+        assert!(response.auto_shutdown_enabled);
+        assert_eq!(response.timeout_seconds, 300);
+    }
 }

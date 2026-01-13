@@ -643,4 +643,662 @@ mod tests {
         assert!(calculator.is_entrypoint_file("src/main.rs"));
         assert!(calculator.is_entrypoint_file("index.js"));
     }
+
+    #[test]
+    fn test_build_graph_only() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("utils.py"),
+        ];
+
+        let graph = calculator.build_graph_only(&scan_results).unwrap();
+        assert!(graph.node_count() > 0);
+    }
+
+    #[test]
+    fn test_apply_entrypoint_boost() {
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                boost_entrypoints: true,
+                entrypoint_boost_factor: 1.5,
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        // Entrypoint file should get boosted
+        let boosted = calculator.apply_entrypoint_boost(0.5, "main.py");
+        assert!(boosted > 0.5);
+
+        // Non-entrypoint should stay same
+        let not_boosted = calculator.apply_entrypoint_boost(0.5, "utils.py");
+        assert_eq!(not_boosted, 0.5);
+    }
+
+    #[test]
+    fn test_apply_entrypoint_boost_disabled() {
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                boost_entrypoints: false,
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        // Should not boost even entrypoint files when disabled
+        let score = calculator.apply_entrypoint_boost(0.5, "main.py");
+        assert_eq!(score, 0.5);
+    }
+
+    #[test]
+    fn test_combine_scores() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let combined = calculator.combine_scores(0.8, 0.6);
+        assert!(combined > 0.0);
+        assert!(combined <= 1.0);
+    }
+
+    #[test]
+    fn test_centrality_config_default() {
+        let config = CentralityConfig::default();
+        assert!(config.analyze_graph_structure);
+        assert!(config.integration.boost_entrypoints);
+    }
+
+    #[test]
+    fn test_integration_config_default() {
+        let config = IntegrationConfig::default();
+        assert!(config.centrality_weight >= 0.0);
+        assert!(config.centrality_weight <= 1.0);
+    }
+
+    #[test]
+    fn test_centrality_results_structure() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("src/lib.rs").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("src/utils.rs"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        assert!(!results.pagerank_scores.is_empty());
+        assert!(results.integration_metadata.computation_time_ms >= 0);
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_more_entrypoint_patterns() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        // Test various entrypoint patterns (path patterns need leading /)
+        assert!(calculator.is_entrypoint_file("/project/app.js"));
+        assert!(calculator.is_entrypoint_file("app.py")); // app.py is an entrypoint file for Python
+        assert!(calculator.is_entrypoint_file("lib.rs")); // lib.rs is an entrypoint file for Rust
+        assert!(calculator.is_entrypoint_file("main.go")); // main.go is an entrypoint file for Go
+
+        // Non-entrypoints
+        assert!(!calculator.is_entrypoint_file("utils.py"));
+        assert!(!calculator.is_entrypoint_file("helpers.rs"));
+    }
+
+    #[test]
+    fn test_empty_scan_results() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results: Vec<MockScanResult> = vec![];
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        assert!(results.pagerank_scores.is_empty());
+    }
+
+    #[test]
+    fn test_single_file_no_imports() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![MockScanResult::new("single.py")];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_heuristics_integration_empty() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![MockScanResult::new("file.py")];
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let heuristic_scores: HashMap<String, f64> = HashMap::new();
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        // Should still work with empty heuristic scores
+        let _ = integrated;
+    }
+
+    #[test]
+    fn test_large_codebase_calculator() {
+        let calculator = CentralityCalculator::for_large_codebases().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("utils.py"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_build_graph_with_imports() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        // Create files with resolvable imports
+        let scan_results = vec![
+            MockScanResult::new("src/main.py").with_imports(vec![
+                "utils".to_string(),
+                "config".to_string(),
+                "helpers".to_string(),
+            ]),
+            MockScanResult::new("src/utils.py").with_imports(vec!["config".to_string()]),
+            MockScanResult::new("src/config.py"),
+            MockScanResult::new("src/helpers.py").with_imports(vec!["utils".to_string()]),
+        ];
+
+        let graph = calculator.build_graph_only(&scan_results).unwrap();
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        assert_eq!(graph.node_count(), 4);
+        assert!(results.import_stats.files_processed > 0);
+    }
+
+    #[test]
+    fn test_import_detection_stats() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("app.js").with_imports(vec![
+                "./utils".to_string(),
+                "./components/Button".to_string(),
+            ]),
+            MockScanResult::new("utils.js"),
+            MockScanResult::new("components/Button.js"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        let stats = &results.import_stats;
+
+        assert_eq!(stats.files_processed, 3);
+        assert!(stats.imports_detected >= 2);
+    }
+
+    #[test]
+    fn test_centrality_with_complex_imports() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        // Create a more complex import graph
+        let scan_results = vec![
+            MockScanResult::new("index.ts").with_imports(vec![
+                "utils".to_string(),
+                "api".to_string(),
+                "components".to_string(),
+            ]),
+            MockScanResult::new("utils.ts").with_imports(vec!["types".to_string()]),
+            MockScanResult::new("api.ts").with_imports(vec!["utils".to_string(), "types".to_string()]),
+            MockScanResult::new("components.ts").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("types.ts"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        // types.ts should have high centrality (imported by many)
+        assert!(results.pagerank_scores.contains_key("types.ts"));
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_sequential_vs_parallel_config() {
+        // Test with parallel disabled
+        let config = CentralityConfig {
+            pagerank_config: PageRankConfig {
+                use_parallel: false,
+                ..PageRankConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.rs").with_imports(vec!["lib".to_string()]),
+            MockScanResult::new("lib.rs"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_language_breakdown_stats() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("utils.py"),
+            MockScanResult::new("helper.js").with_imports(vec!["config".to_string()]),
+            MockScanResult::new("config.js"),
+            MockScanResult::new("app.rs"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        let stats = &results.import_stats;
+
+        assert_eq!(stats.files_processed, 5);
+        // Should have multiple languages detected
+        assert!(!stats.language_breakdown.is_empty());
+    }
+
+    #[test]
+    fn test_resolution_rate_calculation() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        // Files with imports that may or may not resolve
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec![
+                "utils".to_string(),      // Should try to resolve
+                "nonexistent".to_string(), // Won't resolve
+            ]),
+            MockScanResult::new("utils.py"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        let stats = &results.import_stats;
+
+        // Resolution rate should be calculated
+        assert!(stats.imports_detected >= 2);
+        // Rate is between 0 and 1
+        assert!(stats.resolution_rate >= 0.0);
+        assert!(stats.resolution_rate <= 1.0);
+    }
+
+    #[test]
+    fn test_files_without_imports() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        // Files with no imports
+        let scan_results = vec![
+            MockScanResult::new("standalone1.py"),
+            MockScanResult::new("standalone2.py"),
+            MockScanResult::new("standalone3.py"),
+        ];
+
+        let graph = calculator.build_graph_only(&scan_results).unwrap();
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        let stats = &results.import_stats;
+
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(stats.files_processed, 3);
+        assert_eq!(stats.imports_detected, 0);
+        assert_eq!(stats.resolution_rate, 0.0);
+    }
+
+    #[test]
+    fn test_centrality_config_clone() {
+        let config = CentralityConfig::default();
+        let cloned = config.clone();
+
+        assert_eq!(config.analyze_graph_structure, cloned.analyze_graph_structure);
+        assert_eq!(
+            config.integration.centrality_weight,
+            cloned.integration.centrality_weight
+        );
+    }
+
+    #[test]
+    fn test_centrality_config_debug() {
+        let config = CentralityConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("CentralityConfig"));
+    }
+
+    #[test]
+    fn test_integration_metadata() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("utils.py"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        // Check integration metadata is populated
+        assert!(results.integration_metadata.computation_time_ms >= 0);
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_import_stats_struct() {
+        let stats = ImportDetectionStats {
+            files_processed: 10,
+            imports_detected: 25,
+            imports_resolved: 20,
+            resolution_rate: 0.8,
+            language_breakdown: HashMap::new(),
+            import_patterns: HashMap::new(),
+        };
+
+        assert_eq!(stats.files_processed, 10);
+        assert_eq!(stats.imports_detected, 25);
+        assert_eq!(stats.imports_resolved, 20);
+        assert!((stats.resolution_rate - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_z_score_normalization() {
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                normalization_method: NormalizationMethod::ZScore,
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("a.py"),
+            MockScanResult::new("b.py"),
+            MockScanResult::new("c.py"),
+        ];
+
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("a.py".to_string(), 0.8);
+        heuristic_scores.insert("b.py".to_string(), 0.6);
+        heuristic_scores.insert("c.py".to_string(), 0.4);
+
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        // Should have scores for all files
+        assert!(!integrated.is_empty());
+    }
+
+    #[test]
+    fn test_rank_normalization() {
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                normalization_method: NormalizationMethod::Rank,
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("a.py").with_imports(vec!["b".to_string()]),
+            MockScanResult::new("b.py").with_imports(vec!["c".to_string()]),
+            MockScanResult::new("c.py"),
+        ];
+
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("a.py".to_string(), 0.5);
+        heuristic_scores.insert("b.py".to_string(), 0.5);
+        heuristic_scores.insert("c.py".to_string(), 0.5);
+
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        assert!(!integrated.is_empty());
+    }
+
+    #[test]
+    fn test_no_normalization() {
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                normalization_method: NormalizationMethod::None,
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("a.py"),
+            MockScanResult::new("b.py"),
+        ];
+
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("a.py".to_string(), 0.7);
+        heuristic_scores.insert("b.py".to_string(), 0.3);
+
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        assert!(!integrated.is_empty());
+    }
+
+    #[test]
+    fn test_minmax_normalization() {
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                normalization_method: NormalizationMethod::MinMax,
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("a.py").with_imports(vec!["b".to_string()]),
+            MockScanResult::new("b.py"),
+        ];
+
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("a.py".to_string(), 1.0);
+        heuristic_scores.insert("b.py".to_string(), 0.5);
+
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        assert!(!integrated.is_empty());
+    }
+
+    #[test]
+    fn test_compute_min_max() {
+        let values = vec![1.0, 5.0, 3.0, 2.0, 4.0];
+        let (min, max) = CentralityCalculator::compute_min_max(&values);
+        assert!((min - 1.0).abs() < 0.001);
+        assert!((max - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_compute_mean_std() {
+        let values = vec![2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+        let (mean, std) = CentralityCalculator::compute_mean_std(&values);
+        assert!((mean - 5.0).abs() < 0.001);
+        assert!(std > 0.0);
+    }
+
+    #[test]
+    fn test_get_max_heuristic_empty() {
+        let scores: HashMap<String, f64> = HashMap::new();
+        let max = CentralityCalculator::get_max_heuristic(&scores);
+        assert!((max - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_get_max_heuristic_non_empty() {
+        let mut scores = HashMap::new();
+        scores.insert("a.py".to_string(), 0.5);
+        scores.insert("b.py".to_string(), 0.8);
+        scores.insert("c.py".to_string(), 0.3);
+        let max = CentralityCalculator::get_max_heuristic(&scores);
+        assert!((max - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_normalize_uniform_scores() {
+        let mut scores = HashMap::new();
+        scores.insert("a.py".to_string(), 0.5);
+        scores.insert("b.py".to_string(), 0.5);
+        scores.insert("c.py".to_string(), 0.5);
+
+        let normalized = CentralityCalculator::normalize_uniform_scores(&scores, 0.75);
+        assert_eq!(normalized.len(), 3);
+        for (_, &v) in &normalized {
+            assert!((v - 0.75).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_centrality_calculator_default() {
+        let calculator = CentralityCalculator::default();
+        assert!(calculator.config.analyze_graph_structure);
+    }
+
+    #[test]
+    fn test_integration_with_empty_centrality() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        // Empty scan results will produce empty centrality
+        let scan_results: Vec<MockScanResult> = vec![];
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("a.py".to_string(), 0.5);
+
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        // Should still have heuristic scores
+        assert!(integrated.contains_key("a.py"));
+    }
+
+    #[test]
+    fn test_z_score_normalization_with_threshold_filter() {
+        // Test the z-score normalization path where some scores get filtered by threshold
+        let config = CentralityConfig {
+            integration: IntegrationConfig {
+                normalization_method: NormalizationMethod::ZScore,
+                min_centrality_threshold: 0.5, // Set higher threshold to filter more
+                ..IntegrationConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        // Create files with varying import relationships
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec!["utils".to_string(), "config".to_string()]),
+            MockScanResult::new("utils.py").with_imports(vec!["config".to_string()]),
+            MockScanResult::new("config.py"),
+            MockScanResult::new("isolated.py"), // Low centrality, might be filtered
+        ];
+
+        let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
+
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("main.py".to_string(), 0.9);
+        heuristic_scores.insert("utils.py".to_string(), 0.7);
+        heuristic_scores.insert("config.py".to_string(), 0.8);
+        heuristic_scores.insert("isolated.py".to_string(), 0.2);
+
+        let integrated = calculator
+            .integrate_with_heuristics(&centrality_results, &heuristic_scores)
+            .unwrap();
+
+        // Some files might be filtered due to threshold
+        // The exact number depends on the centrality distribution
+        assert!(!integrated.is_empty());
+    }
+
+    #[test]
+    fn test_build_edges_sequential_with_file_path_map() {
+        // Test the sequential edge building path (line 232)
+        let config = CentralityConfig {
+            pagerank_config: PageRankConfig {
+                use_parallel: false,
+                ..PageRankConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.py").with_imports(vec!["utils".to_string(), "config".to_string()]),
+            MockScanResult::new("utils.py").with_imports(vec!["config".to_string()]),
+            MockScanResult::new("config.py"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        assert!(results.integration_metadata.integration_successful);
+        assert!(results.import_stats.files_processed == 3);
+    }
+
+    #[test]
+    fn test_build_edges_parallel() {
+        // Test the parallel edge building path (line 195)
+        let config = CentralityConfig {
+            pagerank_config: PageRankConfig {
+                use_parallel: true,
+                ..PageRankConfig::default()
+            },
+            ..CentralityConfig::default()
+        };
+
+        let calculator = CentralityCalculator::with_config(config).unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("main.rs").with_imports(vec!["lib".to_string()]),
+            MockScanResult::new("lib.rs").with_imports(vec!["utils".to_string()]),
+            MockScanResult::new("utils.rs"),
+        ];
+
+        let results = calculator.calculate_centrality(&scan_results).unwrap();
+        assert!(results.integration_metadata.integration_successful);
+    }
+
+    #[test]
+    fn test_create_minimal_analysis() {
+        let calculator = CentralityCalculator::new().unwrap();
+
+        let scan_results = vec![
+            MockScanResult::new("a.py").with_imports(vec!["b".to_string()]),
+            MockScanResult::new("b.py"),
+        ];
+
+        let graph = calculator.build_graph_only(&scan_results).unwrap();
+        let analysis = calculator.create_minimal_analysis(&graph).unwrap();
+
+        assert!(analysis.basic_stats.total_nodes > 0);
+    }
 }

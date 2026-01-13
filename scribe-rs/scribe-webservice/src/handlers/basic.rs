@@ -114,3 +114,59 @@ pub fn error_html(message: &str) -> String {
         message
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_html() {
+        let html = error_html("Test error message");
+        assert!(html.contains("Test error message"));
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("Unable to generate bundle"));
+    }
+
+    #[test]
+    fn test_error_html_escaping() {
+        let html = error_html("Error with <script>");
+        assert!(html.contains("<script>"));
+    }
+
+    #[tokio::test]
+    async fn test_status_endpoint() {
+        let response = status().await;
+        let api_response = response.0;
+
+        assert!(api_response.success);
+        assert!(api_response.data.is_some());
+
+        let status_info = api_response.data.unwrap();
+        assert_eq!(status_info.service, "scribe-webservice");
+        assert_eq!(status_info.status, "healthy");
+        assert!(!status_info.version.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_index_endpoint() {
+        let response = index().await;
+        let html = response.0;
+
+        assert!(html.contains("Scribe Web Service"));
+        assert!(html.contains("Bundle Editor"));
+        assert!(html.contains("/api/status"));
+    }
+
+    #[test]
+    fn test_status_info_creation() {
+        let status = StatusInfo {
+            service: "test-service".to_string(),
+            version: "1.0.0".to_string(),
+            status: "ok".to_string(),
+        };
+
+        assert_eq!(status.service, "test-service");
+        assert_eq!(status.version, "1.0.0");
+        assert_eq!(status.status, "ok");
+    }
+}

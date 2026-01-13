@@ -273,3 +273,234 @@ async fn test_auto_exclude_disabled() {
     // Should have all 3 files including test files
     assert_eq!(all_files.len(), 3);
 }
+
+#[tokio::test]
+async fn test_empty_files_positioning() {
+    let positioner = ContextPositioner::with_defaults();
+    let files: Vec<FileMetadata> = vec![];
+
+    // Test empty file list - exercises line 47-48
+    let result = positioner.position_files(files, None).await.unwrap();
+
+    assert!(result.positioning.head_files.is_empty());
+    assert!(result.positioning.middle_files.is_empty());
+    assert!(result.positioning.tail_files.is_empty());
+}
+
+#[tokio::test]
+async fn test_positioning_disabled() {
+    let mut config = ContextPositioningConfig::default();
+    config.enable_positioning = false;
+    let positioner = ContextPositioner::new(config);
+
+    let files = vec![
+        create_test_file("src/main.rs", 1000, "Rust"),
+        create_test_file("src/lib.rs", 800, "Rust"),
+    ];
+
+    // When positioning is disabled, files should go to simple positioning - exercises lines 695-717
+    let result = positioner.position_files(files, None).await.unwrap();
+
+    // All files should be in middle (default) with disabled positioning
+    assert!(result.positioning.head_files.is_empty());
+    assert_eq!(result.positioning.middle_files.len(), 2);
+    assert!(result.positioning.tail_files.is_empty());
+    assert!(result
+        .positioning_reasoning
+        .contains("positioning disabled"));
+}
+
+#[tokio::test]
+async fn test_calculate_centrality_empty() {
+    let positioner = ContextPositioner::with_defaults();
+    let files: Vec<FileMetadata> = vec![];
+
+    // Test empty file list for centrality calculation - exercises line 117-118
+    let result = positioner.calculate_centrality_scores(files).await.unwrap();
+    assert!(result.is_empty());
+}
+
+#[tokio::test]
+async fn test_apply_positioning_strategy_empty() {
+    let positioner = ContextPositioner::with_defaults();
+    let files: Vec<FileWithCentrality> = vec![];
+
+    // Test empty file list - exercises lines 496-500
+    let result = positioner.apply_positioning_strategy(files).await.unwrap();
+    assert!(result.head_files.is_empty());
+    assert!(result.middle_files.is_empty());
+    assert!(result.tail_files.is_empty());
+}
+
+#[test]
+fn test_relatedness_group_single_component() {
+    let positioner = ContextPositioner::with_defaults();
+
+    // Test path with only one component - exercises line 481-482
+    let file = create_test_file("main.rs", 1000, "Rust");
+    let group = positioner.determine_relatedness_group(&file);
+
+    assert!(group.contains("main.rs"));
+    assert!(group.contains("Rust"));
+}
+
+#[test]
+fn test_relatedness_group_root() {
+    let positioner = ContextPositioner::with_defaults();
+
+    // Test empty path handling - exercises line 484
+    let file = FileMetadata {
+        path: PathBuf::from(""),
+        size: 100,
+        modified: SystemTime::now(),
+        language: "Unknown".to_string(),
+        file_type: "Other".to_string(),
+    };
+    let group = positioner.determine_relatedness_group(&file);
+    // Should handle empty path gracefully
+    assert!(group.contains("Unknown"));
+}
+
+#[tokio::test]
+async fn test_query_relevance_none() {
+    let positioner = ContextPositioner::with_defaults();
+
+    let files = vec![FileWithCentrality {
+        metadata: create_test_file("src/main.rs", 1000, "Rust"),
+        centrality: CentralityScores::default(),
+        query_relevance: 0.0,
+        relatedness_group: String::new(),
+    }];
+
+    // Test with no query hint - relevance should stay 0
+    let result = positioner
+        .calculate_query_relevance(files, None)
+        .await
+        .unwrap();
+
+    assert_eq!(result[0].query_relevance, 0.0);
+}
+
+#[test]
+fn test_query_relevance_calculation_path_match() {
+    let positioner = ContextPositioner::with_defaults();
+
+    let file = create_test_file("src/utils/helpers.rs", 1000, "Rust");
+    let query_words = vec!["utils"];
+
+    // Test path match - exercises line 439
+    let relevance = positioner.calculate_file_query_relevance(&file, &query_words);
+    assert!(relevance > 0.0);
+}
+
+#[test]
+fn test_query_relevance_calculation_language_match() {
+    let positioner = ContextPositioner::with_defaults();
+
+    let file = create_test_file("src/main.py", 1000, "Python");
+    let query_words = vec!["python"];
+
+    // Test language match - exercises line 443
+    let relevance = positioner.calculate_file_query_relevance(&file, &query_words);
+    assert!(relevance > 0.0);
+}
+
+#[tokio::test]
+async fn test_extract_dependencies_python() {
+    let positioner = ContextPositioner::with_defaults();
+
+    // Test Python dependency extraction
+    let file = create_test_file("src/module.py", 1000, "Python");
+    let deps = positioner.extract_dependencies(&file).await.unwrap();
+
+    assert!(deps.iter().any(|d| d.contains("__init__.py")));
+}
+
+#[tokio::test]
+async fn test_extract_dependencies_javascript() {
+    let positioner = ContextPositioner::with_defaults();
+
+    // Test JavaScript dependency extraction - exercises line 223
+    let mut file = create_test_file("src/component.js", 1000, "JavaScript");
+    file.file_type = "Source".to_string();
+    let deps = positioner.extract_dependencies(&file).await.unwrap();
+
+    assert!(deps.iter().any(|d| d.contains("index.js")));
+}
+
+#[tokio::test]
+async fn test_extract_dependencies_configuration() {
+    let positioner = ContextPositioner::with_defaults();
+
+    // Test configuration file dependency extraction
+    let file = FileMetadata {
+        path: PathBuf::from("config.yml"),
+        size: 500,
+        modified: SystemTime::now(),
+        language: "YAML".to_string(),
+        file_type: "Configuration".to_string(),
+    };
+    let deps = positioner.extract_dependencies(&file).await.unwrap();
+
+    assert!(deps.iter().any(|d| d.contains("package.json")));
+}
+
+#[test]
+fn test_estimate_tokens_various_languages() {
+    let positioner = ContextPositioner::with_defaults();
+
+    // Test various language multipliers
+    let py_file = create_test_file("main.py", 1000, "Python");
+    let c_file = create_test_file("main.c", 1000, "C");
+    let go_file = create_test_file("main.go", 1000, "Go");
+    let unknown_file = create_test_file("main.xyz", 1000, "Unknown");
+
+    let py_tokens = positioner.estimate_tokens(&py_file);
+    let c_tokens = positioner.estimate_tokens(&c_file);
+    let go_tokens = positioner.estimate_tokens(&go_file);
+    let unknown_tokens = positioner.estimate_tokens(&unknown_file);
+
+    // Python should have slightly more tokens due to multiplier
+    assert!(py_tokens > c_tokens);
+    // C and Go should have same multiplier (1.0)
+    assert_eq!(c_tokens, go_tokens);
+    // Unknown defaults to 1.0 multiplier
+    assert_eq!(unknown_tokens, c_tokens);
+}
+
+#[tokio::test]
+async fn test_positioning_with_large_head_tail() {
+    let mut config = ContextPositioningConfig::default();
+    config.head_percentage = 0.5;
+    config.tail_percentage = 0.5;
+    let positioner = ContextPositioner::new(config);
+
+    // With 100% head+tail, middle should be empty
+    let files = vec![
+        create_test_file("src/a.rs", 1000, "Rust"),
+        create_test_file("src/b.rs", 1000, "Rust"),
+    ];
+
+    let result = positioner.position_files(files, None).await.unwrap();
+
+    // Total should still equal original count
+    let total = result.positioning.head_files.len()
+        + result.positioning.middle_files.len()
+        + result.positioning.tail_files.len();
+    assert_eq!(total, 2);
+}
+
+#[tokio::test]
+async fn test_positioning_single_file() {
+    let positioner = ContextPositioner::with_defaults();
+
+    let files = vec![create_test_file("src/only.rs", 1000, "Rust")];
+
+    let result = positioner.position_files(files, None).await.unwrap();
+
+    // Single file should be placed in head
+    let total = result.positioning.head_files.len()
+        + result.positioning.middle_files.len()
+        + result.positioning.tail_files.len();
+    assert_eq!(total, 1);
+}

@@ -1,0 +1,55 @@
+# Claude Code vs Scribe Benchmark Results
+
+**Generated:** 2026-01-10T09:43:40.643081
+**Model:** haiku
+**Targets:** 3
+**Total Runs:** 3
+
+## Executive Summary
+
+| Metric | Value |
+|--------|-------|
+| **Mean Context Ratio** | 26.0x |
+| **Context Ratio Range** | 10.9x - 33.9x |
+| **Average Turns** | 12.0 |
+| **Total Cost** | $0.3845 |
+
+### Key Finding
+
+> **Claude Code processes 26.0x more context** than scribe's covering-set output
+> to accomplish the same code understanding task, across 12.0 turns on average.
+
+## Per-Target Results
+
+| Target | Claude Context | Scribe Output | Ratio | Cost | Turns |
+|--------|----------------|---------------|-------|------|-------|
+| token_counter_count | 212,330 | 6,259 | 33.9x | $0.1882 | 9.0 |
+| ast_parse_chunks | 286,001 | 8,643 | 33.1x | $0.1008 | 11.0 |
+| centrality_calculate | 300,634 | 27,467 | 10.9x | $0.0955 | 16.0 |
+
+
+## Methodology
+
+- **Claude Code**: Run with `--print --output-format json` to capture exact token usage
+- **Scribe**: Single `--covering-set` call returning dependency context
+- **Context comparison**: Claude's full context (including cached reads) vs scribe's output
+
+## What This Measures
+
+Claude Code was given this task for each target:
+> Find all dependencies for function X in file Y. Read the target file, trace dependencies,
+> and provide a summary of all direct and transitive dependencies.
+
+The **context ratio** shows how much more context Claude processes during multi-turn discovery
+compared to scribe's single-call output. Most of Claude's context is redundant re-reading
+of files across turns (cached, but still counted).
+
+## Interpretation
+
+- **Higher ratio** = more redundant context processing
+- **More turns** = more iterative discovery steps
+- Scribe provides the same understanding in **1 call** with **minimal context**
+
+## Raw Data
+
+See `claude_code_benchmark_20260110_094340.json` for complete run data.

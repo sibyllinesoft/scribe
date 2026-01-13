@@ -310,4 +310,228 @@ mod tests {
         assert!(explanation.contains("Score:"));
         assert!(!score.primary_importance_reason().is_empty());
     }
+
+    #[test]
+    fn test_heuristic_scorer_new() {
+        let weights = HeuristicWeights::default();
+        let scorer = HeuristicScorer::new(weights);
+        assert!(scorer.import_graph.is_none());
+        assert!(scorer.norm_stats.is_none());
+    }
+
+    #[test]
+    fn test_heuristic_scorer_default_trait() {
+        let scorer = HeuristicScorer::default();
+        assert!(scorer.norm_stats.is_none());
+    }
+
+    #[test]
+    fn test_set_import_graph() {
+        let mut scorer = HeuristicScorer::default();
+        let graph = ImportGraph::new();
+        scorer.set_import_graph(graph);
+        assert!(scorer.import_graph.is_some());
+    }
+
+    #[test]
+    fn test_get_weights() {
+        let weights = HeuristicWeights::balanced();
+        let scorer = HeuristicScorer::new(weights.clone());
+        assert_eq!(scorer.weights().doc_weight, weights.doc_weight);
+    }
+
+    #[test]
+    fn test_set_weights() {
+        let mut scorer = HeuristicScorer::default();
+        let new_weights = HeuristicWeights::for_documentation();
+        scorer.set_weights(new_weights.clone());
+        assert_eq!(scorer.weights().doc_weight, new_weights.doc_weight);
+    }
+
+    #[test]
+    fn test_set_weights_clears_cache() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![MockFile {
+            path: "test.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            depth: 1,
+            priority_boost: 0.0,
+        }];
+
+        // Score once to build cache
+        let _ = scorer.score_all_files(&files);
+        assert!(scorer.norm_stats.is_some());
+
+        // Set new weights should clear cache
+        scorer.set_weights(HeuristicWeights::for_core_code());
+        assert!(scorer.norm_stats.is_none());
+    }
+
+    #[test]
+    fn test_weight_preset_documentation() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![
+            MockFile {
+                path: "docs/guide.md".to_string(),
+                is_docs: true,
+                is_readme: false,
+                depth: 2,
+                priority_boost: 0.0,
+            },
+            MockFile {
+                path: "src/lib.rs".to_string(),
+                is_docs: false,
+                is_readme: false,
+                depth: 2,
+                priority_boost: 0.0,
+            },
+        ];
+
+        let scores = scorer.score_with_preset(&files, WeightPreset::Documentation).unwrap();
+        assert_eq!(scores.len(), 2);
+    }
+
+    #[test]
+    fn test_weight_preset_core_code() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![MockFile {
+            path: "src/main.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            depth: 2,
+            priority_boost: 0.0,
+        }];
+
+        let scores = scorer.score_with_preset(&files, WeightPreset::CoreCode).unwrap();
+        assert!(!scores.is_empty());
+    }
+
+    #[test]
+    fn test_weight_preset_tests() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![MockFile {
+            path: "tests/test.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            depth: 2,
+            priority_boost: 0.0,
+        }];
+
+        let scores = scorer.score_with_preset(&files, WeightPreset::Tests).unwrap();
+        assert!(!scores.is_empty());
+    }
+
+    #[test]
+    fn test_weight_preset_balanced() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![MockFile {
+            path: "src/utils.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            depth: 2,
+            priority_boost: 0.0,
+        }];
+
+        let scores = scorer.score_with_preset(&files, WeightPreset::Balanced).unwrap();
+        assert!(!scores.is_empty());
+    }
+
+    #[test]
+    fn test_score_file_multiple_files() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![
+            MockFile {
+                path: "README.md".to_string(),
+                is_docs: false,
+                is_readme: true,
+                depth: 1,
+                priority_boost: 0.5,
+            },
+            MockFile {
+                path: "src/main.rs".to_string(),
+                is_docs: false,
+                is_readme: false,
+                depth: 2,
+                priority_boost: 0.3,
+            },
+            MockFile {
+                path: "src/lib.rs".to_string(),
+                is_docs: false,
+                is_readme: false,
+                depth: 2,
+                priority_boost: 0.2,
+            },
+            MockFile {
+                path: "docs/api.md".to_string(),
+                is_docs: true,
+                is_readme: false,
+                depth: 2,
+                priority_boost: 0.0,
+            },
+        ];
+
+        let scores = scorer.score_all_files(&files).unwrap();
+        assert_eq!(scores.len(), 4);
+
+        // Scores should be sorted descending
+        for i in 1..scores.len() {
+            assert!(scores[i-1].1.final_score >= scores[i].1.final_score);
+        }
+    }
+
+    #[test]
+    fn test_score_components_values() {
+        let mut scorer = HeuristicScorer::default();
+        let files = vec![MockFile {
+            path: "test.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            depth: 3,
+            priority_boost: 0.0,
+        }];
+
+        let score = scorer.score_file(&files[0], &files).unwrap();
+
+        // Path score should reflect depth (deeper = lower score)
+        assert!(score.path_score >= 0.0);
+        assert!(score.path_score <= 1.0);
+
+        // Final score should be computed
+        assert!(score.final_score >= 0.0);
+    }
+
+    #[test]
+    fn test_empty_files_list() {
+        let mut scorer = HeuristicScorer::default();
+        let files: Vec<MockFile> = vec![];
+
+        let scores = scorer.score_all_files(&files).unwrap();
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn test_weight_preset_clone() {
+        let preset = WeightPreset::Documentation;
+        let cloned = preset.clone();
+
+        match cloned {
+            WeightPreset::Documentation => (),
+            _ => panic!("Clone failed"),
+        }
+    }
+
+    #[test]
+    fn test_weight_preset_debug() {
+        let preset = WeightPreset::CoreCode;
+        let debug_str = format!("{:?}", preset);
+        assert!(debug_str.contains("CoreCode"));
+    }
+
+    #[test]
+    fn test_heuristic_scorer_debug() {
+        let scorer = HeuristicScorer::default();
+        let debug_str = format!("{:?}", scorer);
+        assert!(debug_str.contains("HeuristicScorer"));
+    }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@sibyllinesoft/scribe-darwin-x64",
-  "version": "0.5.1",
+  "version": "1.0.0",
   "description": "Scribe binary for macOS x64 (Intel)",
   "repository": {
     "type": "git",

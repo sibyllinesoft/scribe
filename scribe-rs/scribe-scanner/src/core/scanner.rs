@@ -707,4 +707,317 @@ mod tests {
         assert!(scanner.is_likely_binary(&binary_path, &Language::Unknown));
         assert!(!scanner.is_likely_binary(&text_path, &Language::Rust));
     }
+
+    #[test]
+    fn test_scanner_default() {
+        let scanner = Scanner::default();
+        assert_eq!(scanner.files_processed(), 0);
+        assert_eq!(scanner.binary_files_skipped(), 0);
+        assert_eq!(scanner.errors_encountered(), 0);
+    }
+
+    #[test]
+    fn test_scan_options_default() {
+        let options = ScanOptions::default();
+        assert!(options.parallel_processing);
+        assert!(options.max_concurrency > 0);
+        assert!(options.metadata_extraction);
+        assert!(!options.git_integration);
+        assert!(!options.follow_symlinks);
+        assert!(!options.include_hidden);
+        assert!(options.max_file_size.is_some());
+        assert!(options.include_extensions.is_none());
+        assert!(options.exclude_extensions.is_none());
+    }
+
+    #[test]
+    fn test_should_include_file_no_filters() {
+        let scanner = Scanner::new();
+        let options = ScanOptions::default();
+
+        assert!(scanner.should_include_file(Path::new("test.rs"), &options));
+        assert!(scanner.should_include_file(Path::new("test.py"), &options));
+        assert!(scanner.should_include_file(Path::new("test.js"), &options));
+        assert!(scanner.should_include_file(Path::new("no_extension"), &options));
+    }
+
+    #[test]
+    fn test_should_include_file_with_include_filter() {
+        let scanner = Scanner::new();
+        let options = ScanOptions::default()
+            .with_include_extensions(vec!["rs".to_string(), "py".to_string()]);
+
+        assert!(scanner.should_include_file(Path::new("test.rs"), &options));
+        assert!(scanner.should_include_file(Path::new("test.py"), &options));
+        assert!(!scanner.should_include_file(Path::new("test.js"), &options));
+        assert!(!scanner.should_include_file(Path::new("test.txt"), &options));
+    }
+
+    #[test]
+    fn test_should_include_file_with_exclude_filter() {
+        let scanner = Scanner::new();
+        let options = ScanOptions::default()
+            .with_exclude_extensions(vec!["txt".to_string(), "log".to_string()]);
+
+        assert!(scanner.should_include_file(Path::new("test.rs"), &options));
+        assert!(scanner.should_include_file(Path::new("test.py"), &options));
+        assert!(!scanner.should_include_file(Path::new("test.txt"), &options));
+        assert!(!scanner.should_include_file(Path::new("test.log"), &options));
+    }
+
+    #[test]
+    fn test_should_include_file_exclude_takes_precedence() {
+        let scanner = Scanner::new();
+        let options = ScanOptions::default()
+            .with_include_extensions(vec!["rs".to_string(), "txt".to_string()])
+            .with_exclude_extensions(vec!["txt".to_string()]);
+
+        assert!(scanner.should_include_file(Path::new("test.rs"), &options));
+        assert!(!scanner.should_include_file(Path::new("test.txt"), &options)); // Excluded takes precedence
+    }
+
+    #[test]
+    fn test_should_include_file_case_insensitive() {
+        let scanner = Scanner::new();
+        let options = ScanOptions::default()
+            .with_include_extensions(vec!["RS".to_string()]);
+
+        assert!(scanner.should_include_file(Path::new("test.rs"), &options));
+        assert!(scanner.should_include_file(Path::new("test.RS"), &options));
+        assert!(scanner.should_include_file(Path::new("test.Rs"), &options));
+    }
+
+    #[test]
+    fn test_scan_progress_clone() {
+        let progress = ScanProgress {
+            files_processed: 100,
+            directories_traversed: 20,
+            binary_files_skipped: 5,
+            errors_encountered: 2,
+            bytes_processed: 1024 * 1024,
+        };
+
+        let cloned = progress.clone();
+        assert_eq!(progress.files_processed, cloned.files_processed);
+        assert_eq!(progress.bytes_processed, cloned.bytes_processed);
+    }
+
+    #[test]
+    fn test_scan_result_clone() {
+        let result = ScanResult {
+            files: vec![],
+            stats: ScanProgress {
+                files_processed: 10,
+                directories_traversed: 2,
+                binary_files_skipped: 1,
+                errors_encountered: 0,
+                bytes_processed: 1024,
+            },
+            duration: std::time::Duration::from_secs(1),
+            errors: vec!["test error".to_string()],
+        };
+
+        let cloned = result.clone();
+        assert_eq!(result.errors.len(), cloned.errors.len());
+        assert_eq!(result.stats.files_processed, cloned.stats.files_processed);
+    }
+
+    #[test]
+    fn test_scan_options_debug() {
+        let options = ScanOptions::default();
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("parallel_processing"));
+    }
+
+    #[test]
+    fn test_scanner_debug() {
+        let scanner = Scanner::new();
+        let debug_str = format!("{:?}", scanner);
+        assert!(debug_str.contains("Scanner"));
+    }
+
+    #[test]
+    fn test_scanner_stats_debug() {
+        let stats = ScannerStats::default();
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("ScannerStats"));
+    }
+
+    #[test]
+    fn test_scan_progress_debug() {
+        let progress = ScanProgress {
+            files_processed: 100,
+            directories_traversed: 20,
+            binary_files_skipped: 5,
+            errors_encountered: 2,
+            bytes_processed: 1024,
+        };
+        let debug_str = format!("{:?}", progress);
+        assert!(debug_str.contains("100"));
+    }
+
+    #[tokio::test]
+    async fn test_scan_nonexistent_path() {
+        let scanner = Scanner::new();
+        let result = scanner.scan("/nonexistent/path/12345", ScanOptions::default()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scan_file_instead_of_directory() {
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        fs::write(&file_path, "fn main() {}").unwrap();
+
+        // Trying to scan a file instead of directory should fail
+        let result = scanner.scan(&file_path, ScanOptions::default()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scan_sequential_processing() {
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(temp_dir.path().join("test1.rs"), "fn main() {}").unwrap();
+        fs::write(temp_dir.path().join("test2.rs"), "fn other() {}").unwrap();
+
+        let options = ScanOptions::default().with_parallel_processing(false);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_scan_with_hidden_files() {
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(temp_dir.path().join("visible.rs"), "fn main() {}").unwrap();
+        fs::write(temp_dir.path().join(".hidden.rs"), "fn hidden() {}").unwrap();
+
+        // Without hidden files
+        let options = ScanOptions::default().with_include_hidden(false);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+        assert_eq!(results.len(), 1);
+
+        // With hidden files
+        let options = ScanOptions::default().with_include_hidden(true);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_scan_with_max_file_size() {
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        // Small file
+        fs::write(temp_dir.path().join("small.rs"), "fn main() {}").unwrap();
+
+        // Large file (1MB)
+        let large_content = "fn main() {}".repeat(100000);
+        fs::write(temp_dir.path().join("large.rs"), &large_content).unwrap();
+
+        // With small max size limit (100 bytes)
+        let options = ScanOptions::default().with_max_file_size(Some(100));
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+
+        // Only small file should be included
+        assert_eq!(results.len(), 1);
+        assert!(results[0].path.to_str().unwrap().contains("small"));
+    }
+
+    #[tokio::test]
+    async fn test_scan_metadata_extraction_disabled() {
+        // Tests line 189: metadata_extraction = false path
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        let options = ScanOptions::default()
+            .with_metadata_extraction(false);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_scan_with_git_integration_disabled() {
+        // Tests line 195: git_integration = false path
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        let options = ScanOptions::default()
+            .with_git_integration(false);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        // Git status should be None when git integration is disabled
+        assert!(results[0].git_status.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_scan_parallel_many_files() {
+        // Tests lines 231-232, 255-257: parallel processing with logging
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create many files to ensure we hit the parallel path with chunking
+        for i in 0..200 {
+            fs::write(temp_dir.path().join(format!("file_{}.rs", i)), format!("fn f{}() {{}}", i)).unwrap();
+        }
+
+        let options = ScanOptions::default()
+            .with_parallel_processing(true)
+            .with_max_concurrency(4);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+
+        assert_eq!(results.len(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_scan_git_integration_enabled_no_repo() {
+        // Tests lines 202-206, 208, 210-212: git integration enabled but fails
+        let scanner = Scanner::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a file but don't initialize git repo
+        fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        let options = ScanOptions::default()
+            .with_git_integration(true);
+        let results = scanner.scan(temp_dir.path(), options).await.unwrap();
+
+        // Should still work and fall back to filesystem discovery
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_scan_options_with_follow_symlinks() {
+        let options = ScanOptions::default().with_follow_symlinks(true);
+        assert!(options.follow_symlinks);
+    }
+
+    #[test]
+    fn test_scan_stats_atomic_operations() {
+        // Tests the atomic counters in ScannerStats
+        let stats = ScannerStats::default();
+
+        stats.files_processed.fetch_add(5, Ordering::Relaxed);
+        assert_eq!(stats.files_processed.load(Ordering::Relaxed), 5);
+
+        stats.directories_traversed.fetch_add(2, Ordering::Relaxed);
+        assert_eq!(stats.directories_traversed.load(Ordering::Relaxed), 2);
+
+        stats.binary_files_skipped.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(stats.binary_files_skipped.load(Ordering::Relaxed), 1);
+
+        stats.errors_encountered.fetch_add(3, Ordering::Relaxed);
+        assert_eq!(stats.errors_encountered.load(Ordering::Relaxed), 3);
+    }
 }

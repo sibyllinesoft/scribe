@@ -302,4 +302,252 @@ mod tests {
 
         assert_eq!(metrics.avg_time_per_file_ms, 5.0);
     }
+
+    #[test]
+    fn test_heuristic_system_default() {
+        let system = HeuristicSystem::default();
+        // Verify it creates successfully
+        let _ = system;
+    }
+
+    #[test]
+    fn test_heuristic_system_with_weights() {
+        let weights = HeuristicWeights::default();
+        let system = HeuristicSystem::with_weights(weights);
+        assert!(system.is_ok());
+    }
+
+    #[test]
+    fn test_document_analysis_default() {
+        let doc = DocumentAnalysis::default();
+        assert_eq!(doc.heading_count, 0);
+        assert_eq!(doc.link_count, 0);
+        assert_eq!(doc.code_block_count, 0);
+        assert_eq!(doc.toc_indicators, 0);
+        assert!(!doc.is_well_structured);
+    }
+
+    #[test]
+    fn test_document_analysis_structure_score_headings() {
+        let mut doc = DocumentAnalysis::new();
+        doc.heading_count = 10;
+
+        let score = doc.structure_score();
+        // Should cap at 0.5 for headings
+        assert!(score <= 0.5);
+        assert!(score > 0.0);
+    }
+
+    #[test]
+    fn test_document_analysis_structure_score_toc() {
+        let mut doc = DocumentAnalysis::new();
+        doc.toc_indicators = 1;
+
+        let score = doc.structure_score();
+        assert!((score - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_document_analysis_structure_score_all_features() {
+        let doc = DocumentAnalysis {
+            heading_count: 10,
+            toc_indicators: 1,
+            link_count: 20,
+            code_block_count: 10,
+            is_well_structured: true,
+        };
+
+        let score = doc.structure_score();
+        // 0.5 (headings max) + 0.3 (TOC) + 0.3 (links max) + 0.2 (code blocks max) = 1.3
+        assert!(score > 1.0);
+        assert!(score <= 1.5);
+    }
+
+    #[test]
+    fn test_document_analysis_clone() {
+        let doc = DocumentAnalysis {
+            heading_count: 5,
+            toc_indicators: 2,
+            link_count: 10,
+            code_block_count: 3,
+            is_well_structured: true,
+        };
+
+        let cloned = doc.clone();
+        assert_eq!(doc.heading_count, cloned.heading_count);
+        assert_eq!(doc.toc_indicators, cloned.toc_indicators);
+        assert_eq!(doc.is_well_structured, cloned.is_well_structured);
+    }
+
+    #[test]
+    fn test_heuristic_metrics_default() {
+        let metrics = HeuristicMetrics::default();
+        assert_eq!(metrics.files_processed, 0);
+        assert_eq!(metrics.processing_time_ms, 0);
+        assert_eq!(metrics.import_graph_time_ms, 0);
+        assert_eq!(metrics.template_detection_time_ms, 0);
+        assert_eq!(metrics.avg_time_per_file_ms, 0.0);
+        assert!(metrics.cache_hit_rates.is_empty());
+    }
+
+    #[test]
+    fn test_heuristic_metrics_finalize_zero_files() {
+        let mut metrics = HeuristicMetrics::new();
+        metrics.finalize();
+
+        // With 0 files, avg should remain 0
+        assert_eq!(metrics.avg_time_per_file_ms, 0.0);
+    }
+
+    #[test]
+    fn test_heuristic_metrics_clone() {
+        let mut metrics = HeuristicMetrics::new();
+        metrics.files_processed = 50;
+        metrics.processing_time_ms = 100;
+
+        let cloned = metrics.clone();
+        assert_eq!(metrics.files_processed, cloned.files_processed);
+        assert_eq!(metrics.processing_time_ms, cloned.processing_time_ms);
+    }
+
+    #[test]
+    fn test_heuristic_metrics_debug() {
+        let metrics = HeuristicMetrics {
+            files_processed: 42,
+            processing_time_ms: 500,
+            import_graph_time_ms: 100,
+            template_detection_time_ms: 50,
+            avg_time_per_file_ms: 11.9,
+            cache_hit_rates: HashMap::new(),
+        };
+
+        let debug_str = format!("{:?}", metrics);
+        assert!(debug_str.contains("42"));
+        assert!(debug_str.contains("500"));
+    }
+
+    #[test]
+    fn test_heuristic_system_import_matches() {
+        let system = HeuristicSystem::new().unwrap();
+
+        // Test import matching
+        let matches = system.import_matches("utils", "src/utils.py");
+        // Result depends on import_analysis implementation
+        let _ = matches;
+    }
+
+    #[test]
+    fn test_heuristic_system_get_template_boost() {
+        let system = HeuristicSystem::new().unwrap();
+
+        // Test template boost for non-template file
+        let boost = system.get_template_boost("src/main.rs");
+        assert!(boost.is_ok());
+    }
+
+    // Mock ScanResult implementation for testing
+    #[derive(Debug)]
+    struct MockScanResult {
+        path: String,
+        is_test: bool,
+        is_readme: bool,
+    }
+
+    impl MockScanResult {
+        fn new(path: &str) -> Self {
+            Self {
+                path: path.to_string(),
+                is_test: path.contains("test"),
+                is_readme: path.to_lowercase().contains("readme"),
+            }
+        }
+    }
+
+    impl ScanResult for MockScanResult {
+        fn path(&self) -> &str {
+            &self.path
+        }
+        fn relative_path(&self) -> &str {
+            &self.path
+        }
+        fn depth(&self) -> usize {
+            self.path.matches('/').count()
+        }
+        fn is_docs(&self) -> bool {
+            self.path.ends_with(".md")
+        }
+        fn is_readme(&self) -> bool {
+            self.is_readme
+        }
+        fn is_test(&self) -> bool {
+            self.is_test
+        }
+        fn is_entrypoint(&self) -> bool {
+            self.path.contains("main") || self.path.contains("lib")
+        }
+        fn has_examples(&self) -> bool {
+            self.path.contains("example")
+        }
+        fn priority_boost(&self) -> f64 {
+            0.0
+        }
+        fn churn_score(&self) -> f64 {
+            0.0
+        }
+        fn centrality_in(&self) -> f64 {
+            0.0
+        }
+        fn imports(&self) -> Option<&[String]> {
+            None
+        }
+        fn doc_analysis(&self) -> Option<&DocumentAnalysis> {
+            None
+        }
+    }
+
+    #[test]
+    fn test_heuristic_system_score_file() {
+        let mut system = HeuristicSystem::new().unwrap();
+        let files = vec![
+            MockScanResult::new("src/main.rs"),
+            MockScanResult::new("src/lib.rs"),
+            MockScanResult::new("tests/test_main.rs"),
+        ];
+
+        let result = system.score_file(&files[0], &files);
+        assert!(result.is_ok());
+        let scores = result.unwrap();
+        assert!(scores.final_score >= 0.0);
+    }
+
+    #[test]
+    fn test_heuristic_system_get_top_files() {
+        let mut system = HeuristicSystem::new().unwrap();
+        let files = vec![
+            MockScanResult::new("src/main.rs"),
+            MockScanResult::new("src/lib.rs"),
+            MockScanResult::new("README.md"),
+            MockScanResult::new("tests/test_main.rs"),
+            MockScanResult::new("examples/demo.rs"),
+        ];
+
+        let top = system.get_top_files(&files, 3);
+        assert!(top.is_ok());
+        let top_files = top.unwrap();
+        assert!(top_files.len() <= 3);
+    }
+
+    #[test]
+    fn test_heuristic_system_score_all_files() {
+        let mut system = HeuristicSystem::new().unwrap();
+        let files = vec![
+            MockScanResult::new("src/main.rs"),
+            MockScanResult::new("README.md"),
+        ];
+
+        let result = system.score_all_files(&files);
+        assert!(result.is_ok());
+        let scores = result.unwrap();
+        assert_eq!(scores.len(), 2);
+    }
 }

@@ -379,4 +379,247 @@ mod tests {
         assert!(msg.contains("limit: 1000"));
         assert!(msg.contains("actual: 2000"));
     }
+
+    #[test]
+    fn test_git_error() {
+        let err = ScribeError::git("Repository not found");
+        match err {
+            ScribeError::Git { message, source } => {
+                assert_eq!(message, "Repository not found");
+                assert!(source.is_none());
+            }
+            _ => panic!("Expected Git error variant"),
+        }
+    }
+
+    #[test]
+    fn test_config_error() {
+        let err = ScribeError::config("Invalid configuration");
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid configuration"));
+    }
+
+    #[test]
+    fn test_config_field_error() {
+        let err = ScribeError::config_field("Value out of range", "max_files");
+        match err {
+            ScribeError::Config { message, field } => {
+                assert_eq!(message, "Value out of range");
+                assert_eq!(field, Some("max_files".to_string()));
+            }
+            _ => panic!("Expected Config error variant"),
+        }
+    }
+
+    #[test]
+    fn test_analysis_error() {
+        let err = ScribeError::analysis("Parse failed", Path::new("test.py"));
+        let msg = err.to_string();
+        assert!(msg.contains("Parse failed"));
+        assert!(msg.contains("test.py"));
+    }
+
+    #[test]
+    fn test_scoring_error() {
+        let err = ScribeError::scoring("Invalid score");
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid score"));
+    }
+
+    #[test]
+    fn test_scoring_with_context() {
+        let err = ScribeError::scoring_with_context("Overflow", "computing centrality");
+        match err {
+            ScribeError::Scoring { message, context } => {
+                assert_eq!(message, "Overflow");
+                assert_eq!(context, Some("computing centrality".to_string()));
+            }
+            _ => panic!("Expected Scoring error variant"),
+        }
+    }
+
+    #[test]
+    fn test_graph_error() {
+        let err = ScribeError::graph("Cycle detected");
+        let msg = err.to_string();
+        assert!(msg.contains("Cycle detected"));
+    }
+
+    #[test]
+    fn test_pattern_error() {
+        let err = ScribeError::pattern("Invalid glob", "**[invalid");
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid glob"));
+        assert!(msg.contains("**[invalid"));
+    }
+
+    #[test]
+    fn test_invalid_operation_error() {
+        let err = ScribeError::invalid_operation("Cannot delete", "remove_node");
+        let msg = err.to_string();
+        assert!(msg.contains("Cannot delete"));
+    }
+
+    #[test]
+    fn test_internal_error() {
+        let err = ScribeError::internal("Unexpected state");
+        let msg = err.to_string();
+        assert!(msg.contains("Unexpected state"));
+    }
+
+    #[test]
+    fn test_internal_with_location() {
+        let err = ScribeError::internal_with_location("Null pointer", "graph::compute");
+        match err {
+            ScribeError::Internal { message, location } => {
+                assert_eq!(message, "Null pointer");
+                assert_eq!(location, Some("graph::compute".to_string()));
+            }
+            _ => panic!("Expected Internal error variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_error() {
+        let err = ScribeError::parse("Syntax error");
+        let msg = err.to_string();
+        assert!(msg.contains("Syntax error"));
+    }
+
+    #[test]
+    fn test_parse_file_error() {
+        let err = ScribeError::parse_file("Unexpected token", Path::new("src/lib.rs"));
+        match err {
+            ScribeError::Parse { message, file, .. } => {
+                assert_eq!(message, "Unexpected token");
+                assert_eq!(file, Some(PathBuf::from("src/lib.rs")));
+            }
+            _ => panic!("Expected Parse error variant"),
+        }
+    }
+
+    #[test]
+    fn test_tokenization_error() {
+        let err = ScribeError::tokenization("Encoding failed");
+        let msg = err.to_string();
+        assert!(msg.contains("Encoding failed"));
+    }
+
+    #[test]
+    fn test_path_with_source() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "Access denied");
+        let err = ScribeError::path_with_source("Cannot read", Path::new("/root/secret"), io_err);
+        match err {
+            ScribeError::Path { message, path, source } => {
+                assert_eq!(message, "Cannot read");
+                assert_eq!(path, PathBuf::from("/root/secret"));
+                assert!(source.is_some());
+            }
+            _ => panic!("Expected Path error variant"),
+        }
+    }
+
+    #[test]
+    fn test_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "Not found");
+        let err = ScribeError::io("File operation failed", io_err);
+        let msg = err.to_string();
+        assert!(msg.contains("File operation failed"));
+    }
+
+    #[test]
+    fn test_serde_json_error_conversion() {
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let scribe_err = ScribeError::from(json_err);
+        match scribe_err {
+            ScribeError::Serialization { message, source } => {
+                assert!(message.contains("JSON"));
+                assert!(source.is_some());
+            }
+            _ => panic!("Expected Serialization error variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_display() {
+        // Test that all error variants have proper Display impl
+        let errors = vec![
+            ScribeError::git("test"),
+            ScribeError::config("test"),
+            ScribeError::analysis("test", "file.rs"),
+            ScribeError::scoring("test"),
+            ScribeError::graph("test"),
+            ScribeError::pattern("test", "pattern"),
+            ScribeError::internal("test"),
+            ScribeError::parse("test"),
+            ScribeError::tokenization("test"),
+        ];
+
+        for err in errors {
+            assert!(!err.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_parse_with_source() {
+        let source_err: Box<dyn std::error::Error + Send + Sync> = "test error".into();
+        let err = ScribeError::parse_with_source("Parse failed", source_err);
+        match err {
+            ScribeError::Parse { message, file, source } => {
+                assert_eq!(message, "Parse failed");
+                assert!(file.is_none());
+                assert!(source.is_some());
+            }
+            _ => panic!("Expected Parse error variant"),
+        }
+    }
+
+    #[test]
+    fn test_tokenization_with_source() {
+        let source_err: Box<dyn std::error::Error + Send + Sync> = "encoding issue".into();
+        let err = ScribeError::tokenization_with_source("Token error", source_err);
+        match err {
+            ScribeError::Tokenization { message, source } => {
+                assert_eq!(message, "Token error");
+                assert!(source.is_some());
+            }
+            _ => panic!("Expected Tokenization error variant"),
+        }
+    }
+
+    #[test]
+    fn test_globset_error_conversion() {
+        // Create an invalid glob pattern to get a globset error
+        let result = globset::GlobBuilder::new("[invalid").build();
+        assert!(result.is_err());
+        let glob_err = result.unwrap_err();
+        let scribe_err = ScribeError::from(glob_err);
+        match scribe_err {
+            ScribeError::Pattern { message, pattern, source } => {
+                assert_eq!(message, "Glob pattern compilation failed");
+                assert_eq!(pattern, "unknown");
+                assert!(source.is_some());
+            }
+            _ => panic!("Expected Pattern error variant"),
+        }
+    }
+
+    #[test]
+    fn test_ignore_error_conversion() {
+        // Create an ignore error by attempting to build an invalid pattern
+        use ignore::gitignore::GitignoreBuilder;
+        let mut builder = GitignoreBuilder::new("/tmp");
+        builder.add_line(None, "[invalid").unwrap_err();
+        // Use a simpler approach - the conversion should work for any ignore::Error
+        let err = ignore::Error::InvalidDefinition;
+        let scribe_err = ScribeError::from(err);
+        match scribe_err {
+            ScribeError::Pattern { message, pattern, source } => {
+                assert_eq!(message, "Ignore pattern error");
+                assert_eq!(pattern, "unknown");
+                assert!(source.is_some());
+            }
+            _ => panic!("Expected Pattern error variant"),
+        }
+    }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@sibyllinesoft/scribe",
-  "version": "0.5.1",
+  "version": "1.0.0",
   "description": "Intelligent code context for AI agents - surgical code retrieval with dependency resolution",
   "keywords": [
     "code-analysis",
@@ -26,11 +26,11 @@
     "index.js"
   ],
   "optionalDependencies": {
-    "@sibyllinesoft/scribe-darwin-arm64": "0.5.1",
-    "@sibyllinesoft/scribe-darwin-x64": "0.5.1",
-    "@sibyllinesoft/scribe-linux-arm64": "0.5.1",
-    "@sibyllinesoft/scribe-linux-x64": "0.5.1",
-    "@sibyllinesoft/scribe-win32-x64": "0.5.1"
+    "@sibyllinesoft/scribe-darwin-arm64": "1.0.0",
+    "@sibyllinesoft/scribe-darwin-x64": "1.0.0",
+    "@sibyllinesoft/scribe-linux-arm64": "1.0.0",
+    "@sibyllinesoft/scribe-linux-x64": "1.0.0",
+    "@sibyllinesoft/scribe-win32-x64": "1.0.0"
   },
   "engines": {
     "node": ">=14"

@@ -708,4 +708,182 @@ build/
         assert!(matcher.is_ignored("test.rs").unwrap());
         assert!(!matcher.is_ignored("test.py").unwrap());
     }
+
+    #[test]
+    fn test_add_patterns_multiple() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_patterns(vec!["*.tmp", "*.log", "build/"]).unwrap();
+
+        let stats = matcher.stats();
+        assert_eq!(stats.exclude_patterns, 3);
+
+        assert!(matcher.is_ignored("file.tmp").unwrap());
+        assert!(matcher.is_ignored("debug.log").unwrap());
+        assert!(matcher.is_ignored("build/output").unwrap());
+    }
+
+    #[test]
+    fn test_add_gitignore_files_multiple() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create multiple gitignore files
+        fs::write(root.join(".gitignore1"), "*.tmp").unwrap();
+        fs::write(root.join(".gitignore2"), "*.log").unwrap();
+
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_gitignore_files(vec![
+            root.join(".gitignore1"),
+            root.join(".gitignore2"),
+        ]).unwrap();
+
+        let stats = matcher.stats();
+        assert_eq!(stats.ignore_files, 2);
+
+        assert!(matcher.is_ignored("file.tmp").unwrap());
+        assert!(matcher.is_ignored("debug.log").unwrap());
+    }
+
+    #[test]
+    fn test_gitignore_stats_totals() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("*.tmp").unwrap();
+        matcher.add_pattern("!keep.tmp").unwrap();
+        matcher.add_pattern("# Comment").unwrap();
+        matcher.add_pattern("").unwrap();
+
+        let stats = matcher.stats();
+        assert_eq!(stats.exclude_patterns, 1);
+        assert_eq!(stats.include_patterns, 1);
+        assert_eq!(stats.comment_lines, 1);
+        assert_eq!(stats.total_patterns, 4);
+    }
+
+    #[test]
+    fn test_gitignore_matcher_clone() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("*.tmp").unwrap();
+
+        // Stats should still be accessible
+        let stats = matcher.stats();
+        assert_eq!(stats.total_patterns, 1);
+    }
+
+    #[test]
+    fn test_gitignore_determine_ignore_type() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Test different ignore file types
+        let gitignore = root.join(".gitignore");
+        let dockerignore = root.join(".dockerignore");
+        let npmignore = root.join(".npmignore");
+        let hgignore = root.join(".hgignore");
+
+        fs::write(&gitignore, "*.tmp").unwrap();
+        fs::write(&dockerignore, "node_modules").unwrap();
+        fs::write(&npmignore, "*.log").unwrap();
+        fs::write(&hgignore, "^build$").unwrap();
+
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_gitignore_file(&gitignore).unwrap();
+        matcher.add_gitignore_file(&dockerignore).unwrap();
+        matcher.add_gitignore_file(&npmignore).unwrap();
+        // Note: .hgignore uses different syntax, but we can still try to parse it
+    }
+
+    #[test]
+    fn test_gitignore_clear() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("*.tmp").unwrap();
+        matcher.add_pattern("*.log").unwrap();
+
+        let stats = matcher.stats();
+        assert_eq!(stats.total_patterns, 2);
+
+        matcher.clear();
+        let stats = matcher.stats();
+        assert_eq!(stats.total_patterns, 0);
+        assert_eq!(stats.ignore_files, 0);
+    }
+
+    #[test]
+    fn test_gitignore_patterns_accessor() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("*.tmp").unwrap();
+        matcher.add_pattern("*.log").unwrap();
+
+        let patterns = matcher.patterns();
+        assert_eq!(patterns.len(), 2);
+    }
+
+    #[test]
+    fn test_gitignore_ignore_files_accessor() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        fs::write(root.join(".gitignore"), "*.tmp").unwrap();
+
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_gitignore_file(root.join(".gitignore")).unwrap();
+
+        let files = matcher.ignore_files();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_gitignore_nonexistent_file() {
+        let mut matcher = GitignoreMatcher::new();
+        let result = matcher.add_gitignore_file("/nonexistent/path/.gitignore");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_gitignore_default_impl() {
+        let matcher = GitignoreMatcher::default();
+        let stats = matcher.stats();
+        assert_eq!(stats.total_patterns, 0);
+    }
+
+    #[test]
+    fn test_gitignore_stats_clone() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("*.tmp").unwrap();
+        let stats = matcher.stats();
+        let cloned = stats.clone();
+        assert_eq!(stats.total_patterns, cloned.total_patterns);
+    }
+
+    #[test]
+    fn test_gitignore_stats_debug() {
+        let stats = GitignoreStats {
+            total_patterns: 5,
+            exclude_patterns: 3,
+            include_patterns: 1,
+            comment_lines: 1,
+            ignore_files: 2,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("GitignoreStats"));
+    }
+
+    #[test]
+    fn test_gitignore_check_match() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("*.tmp").unwrap();
+
+        // is_ignored returns bool
+        assert!(matcher.is_ignored("test.tmp").unwrap());
+        assert!(!matcher.is_ignored("test.rs").unwrap());
+    }
+
+    #[test]
+    fn test_gitignore_directory_matching() {
+        let mut matcher = GitignoreMatcher::new();
+        matcher.add_pattern("build/").unwrap();
+
+        // Directory pattern should match directories
+        assert!(matcher.is_ignored("build/").unwrap());
+        // But may or may not match files without trailing slash
+        let _ = matcher.is_ignored("build");
+    }
 }

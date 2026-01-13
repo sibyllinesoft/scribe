@@ -170,3 +170,89 @@ const RUST_SIGNATURE_QUERY: &str = r#"
     ) @module
     (use_declaration) @use
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chunk_query_python() {
+        let query = chunk_query_for_language(AstLanguage::Python);
+        assert!(!query.is_empty());
+        assert!(query.contains("function_definition"));
+        assert!(query.contains("class_definition"));
+    }
+
+    #[test]
+    fn test_chunk_query_javascript() {
+        let query = chunk_query_for_language(AstLanguage::JavaScript);
+        assert!(!query.is_empty());
+        assert!(query.contains("function_declaration"));
+        assert!(query.contains("class_declaration"));
+    }
+
+    #[test]
+    fn test_chunk_query_typescript() {
+        let query = chunk_query_for_language(AstLanguage::TypeScript);
+        assert!(!query.is_empty());
+        assert!(query.contains("interface_declaration"));
+        assert!(query.contains("enum_declaration"));
+    }
+
+    #[test]
+    fn test_chunk_query_go() {
+        let query = chunk_query_for_language(AstLanguage::Go);
+        assert!(!query.is_empty());
+        assert!(query.contains("function_declaration"));
+        assert!(query.contains("type_declaration"));
+    }
+
+    #[test]
+    fn test_chunk_query_rust() {
+        let query = chunk_query_for_language(AstLanguage::Rust);
+        assert!(!query.is_empty());
+        assert!(query.contains("function_item"));
+        assert!(query.contains("struct_item"));
+    }
+
+    #[test]
+    fn test_signature_query_python() {
+        let query = signature_query_for_language(AstLanguage::Python);
+        assert!(!query.is_empty());
+        assert!(query.contains("func_name"));
+        assert!(query.contains("class_name"));
+    }
+
+    #[test]
+    fn test_signature_query_javascript() {
+        let query = signature_query_for_language(AstLanguage::JavaScript);
+        assert!(!query.is_empty());
+        assert!(query.contains("@function"));
+        assert!(query.contains("@class"));
+    }
+
+    #[test]
+    fn test_signature_query_typescript() {
+        let query = signature_query_for_language(AstLanguage::TypeScript);
+        assert!(!query.is_empty());
+        assert!(query.contains("interface_declaration"));
+        assert!(query.contains("type_alias_declaration"));
+    }
+
+    #[test]
+    fn test_signature_query_go() {
+        let query = signature_query_for_language(AstLanguage::Go);
+        assert!(!query.is_empty());
+        assert!(query.contains("function_declaration"));
+        assert!(query.contains("package_clause"));
+    }
+
+    #[test]
+    fn test_signature_query_rust() {
+        let query = signature_query_for_language(AstLanguage::Rust);
+        assert!(!query.is_empty());
+        assert!(query.contains("function_item"));
+        assert!(query.contains("struct_item"));
+        assert!(query.contains("trait_item"));
+    }
+}

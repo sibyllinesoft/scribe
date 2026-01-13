@@ -226,4 +226,91 @@ mod tests {
         assert!(result.is_some());
         assert_eq!(result.unwrap().language, AstLanguage::Python);
     }
+
+    #[test]
+    fn test_language_analysis_unknown_extension() {
+        let mut support = LanguageSupport::new().unwrap();
+        let result = analyze_file_language("some content", "xyz", &mut support);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none()); // Unknown extension returns None
+    }
+
+    #[test]
+    fn test_get_language_features() {
+        let support = LanguageSupport::new().unwrap();
+        let features = support.get_language_features(AstLanguage::Python);
+
+        // Python should have certain features
+        assert!(features.has_functions);
+        assert!(features.has_documentation);
+    }
+
+    #[test]
+    fn test_language_support_default() {
+        let support = LanguageSupport::default();
+        assert!(support.is_supported(AstLanguage::Python));
+    }
+
+    #[test]
+    fn test_analyze_documentation() {
+        let support = LanguageSupport::new().unwrap();
+        let python_code = r#"
+        def hello():
+            """A documented function."""
+            pass
+        "#;
+
+        let coverage = support.analyze_documentation(python_code, AstLanguage::Python);
+        assert!(coverage.is_ok());
+    }
+
+    #[test]
+    fn test_calculate_language_metrics() {
+        let support = LanguageSupport::new().unwrap();
+        let python_code = "def test(): pass";
+
+        let metrics = support.calculate_language_metrics(python_code, AstLanguage::Python);
+        assert!(metrics.is_ok());
+    }
+
+    #[test]
+    fn test_is_supported() {
+        let support = LanguageSupport::new().unwrap();
+
+        // All supported languages should return true
+        assert!(support.is_supported(AstLanguage::Python));
+        assert!(support.is_supported(AstLanguage::JavaScript));
+        assert!(support.is_supported(AstLanguage::Rust));
+        assert!(support.is_supported(AstLanguage::Go));
+        assert!(support.is_supported(AstLanguage::TypeScript));
+    }
+
+    #[test]
+    fn test_language_analysis_result_clone() {
+        let result = LanguageAnalysisResult {
+            language: AstLanguage::Python,
+            tier: LanguageTier::FullAst,
+            functions: vec![],
+            documentation: DocumentationCoverage::default(),
+            metrics: LanguageMetrics::calculate("", AstLanguage::Python).unwrap(),
+        };
+
+        let cloned = result.clone();
+        assert_eq!(result.language, cloned.language);
+    }
+
+    #[test]
+    fn test_language_analysis_result_debug() {
+        let result = LanguageAnalysisResult {
+            language: AstLanguage::Python,
+            tier: LanguageTier::FullAst,
+            functions: vec![],
+            documentation: DocumentationCoverage::default(),
+            metrics: LanguageMetrics::calculate("", AstLanguage::Python).unwrap(),
+        };
+
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("LanguageAnalysisResult"));
+    }
 }

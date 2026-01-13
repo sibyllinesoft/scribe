@@ -273,3 +273,414 @@ import real from 'real-module';
         assert!(!imports.contains(&"not an import".to_string()));
     }
 }
+
+#[cfg(all(feature = "analysis", feature = "scanner"))]
+mod repository_analysis_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn create_test_repository_analysis() -> RepositoryAnalysis {
+        let mut heuristic_scores = HashMap::new();
+        heuristic_scores.insert("src/main.rs".to_string(), 0.9);
+        heuristic_scores.insert("src/lib.rs".to_string(), 0.8);
+        heuristic_scores.insert("tests/test.rs".to_string(), 0.3);
+        heuristic_scores.insert("README.md".to_string(), 0.5);
+        heuristic_scores.insert("Cargo.toml".to_string(), 0.6);
+
+        RepositoryAnalysis {
+            files: vec![],
+            heuristic_scores: heuristic_scores.clone(),
+            #[cfg(feature = "graph")]
+            centrality_scores: None,
+            final_scores: heuristic_scores,
+            metadata: scribe_core::AnalysisMetadata {
+                timestamp: std::time::SystemTime::now(),
+                scribe_version: "test".to_string(),
+                features_enabled: vec!["test".to_string()],
+                config_hash: None,
+            },
+        }
+    }
+
+    #[test]
+    fn test_top_files() {
+        let analysis = create_test_repository_analysis();
+        let top = analysis.top_files(3);
+
+        assert_eq!(top.len(), 3);
+        assert_eq!(top[0].0, "src/main.rs");
+        assert!((top[0].1 - 0.9).abs() < 0.01);
+        assert_eq!(top[1].0, "src/lib.rs");
+    }
+
+    #[test]
+    fn test_top_files_more_than_available() {
+        let analysis = create_test_repository_analysis();
+        let top = analysis.top_files(100);
+
+        // Should return all files
+        assert_eq!(top.len(), 5);
+    }
+
+    #[test]
+    fn test_files_above_threshold() {
+        let analysis = create_test_repository_analysis();
+        let files = analysis.files_above_threshold(0.7);
+
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|(path, _)| *path == "src/main.rs"));
+        assert!(files.iter().any(|(path, _)| *path == "src/lib.rs"));
+    }
+
+    #[test]
+    fn test_files_above_threshold_high() {
+        let analysis = create_test_repository_analysis();
+        let files = analysis.files_above_threshold(0.95);
+
+        // No files above 0.95
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_file_count() {
+        let analysis = create_test_repository_analysis();
+        assert_eq!(analysis.file_count(), 0); // files vec is empty in test
+    }
+
+    #[test]
+    fn test_summary() {
+        let analysis = create_test_repository_analysis();
+        let summary = analysis.summary();
+
+        assert!(summary.contains("Repository Analysis Summary"));
+        assert!(summary.contains("Files analyzed"));
+        assert!(summary.contains("Average score"));
+        assert!(summary.contains("Top file"));
+        assert!(summary.contains("Scribe version: test"));
+    }
+}
+
+#[test]
+fn test_build_optimized_config() {
+    let config = Config::default();
+    let optimized = build_optimized_config(&config);
+
+    assert_eq!(optimized.performance.batch_size, 20);
+    assert!(optimized.performance.use_mmap);
+    assert_eq!(optimized.performance.io_buffer_size, 512 * 1024);
+    assert!(optimized.analysis.enable_caching);
+}
+
+#[test]
+fn test_debug_log_without_env() {
+    // Debug log should not panic when SCRIBE_DEBUG is not set
+    std::env::remove_var("SCRIBE_DEBUG");
+    debug_log("test message");
+}
+
+#[test]
+fn test_debug_log_with_env() {
+    // Debug log should work when SCRIBE_DEBUG is set
+    std::env::set_var("SCRIBE_DEBUG", "1");
+    debug_log("test message");
+    std::env::remove_var("SCRIBE_DEBUG");
+}
+
+#[cfg(feature = "core")]
+mod should_load_content_tests {
+    use super::*;
+    use scribe_core::file::{FileWeight, RenderDecision};
+    use std::path::PathBuf;
+
+    fn create_test_file_info(size: u64, is_binary: bool) -> FileInfo {
+        FileInfo {
+            path: PathBuf::from("test.rs"),
+            relative_path: "test.rs".to_string(),
+            size,
+            modified: None,
+            decision: RenderDecision::include("test"),
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
+            language: Language::Rust,
+            content: None,
+            token_estimate: None,
+            line_count: None,
+            char_count: None,
+            is_binary,
+            git_status: None,
+            weight: FileWeight::default(),
+            centrality_score: None,
+        }
+    }
+
+    #[test]
+    fn test_should_load_content_small_file() {
+        let file = create_test_file_info(1024, false);
+        let config = Config::default();
+        assert!(should_load_content(&file, &config));
+    }
+
+    #[test]
+    fn test_should_load_content_large_file() {
+        let file = create_test_file_info(100 * 1024 * 1024, false); // 100MB
+        let config = Config::default();
+        // Should not load very large files
+        assert!(!should_load_content(&file, &config));
+    }
+
+    #[test]
+    fn test_should_load_content_binary_file() {
+        let file = create_test_file_info(1024, true);
+        let config = Config::default();
+        // Should not load binary files
+        assert!(!should_load_content(&file, &config));
+    }
+
+    #[test]
+    fn test_should_load_content_analysis_disabled() {
+        let file = create_test_file_info(1024, false);
+        let mut config = Config::default();
+        config.analysis.analyze_content = false;
+        // Should not load if analysis is disabled
+        assert!(!should_load_content(&file, &config));
+    }
+
+    #[test]
+    fn test_should_load_content_at_size_limit() {
+        let mut config = Config::default();
+        // The logic uses max(io_buffer_size, 256KB), so we need to use a high value
+        config.performance.io_buffer_size = 1024 * 1024; // 1MB
+        let file = create_test_file_info(1024 * 1024, false); // Exactly at limit
+        assert!(should_load_content(&file, &config));
+
+        let file_over = create_test_file_info(1024 * 1024 + 1, false); // Just over limit
+        assert!(!should_load_content(&file_over, &config));
+    }
+}
+
+#[cfg(all(feature = "analysis", feature = "scanner"))]
+mod derive_file_context_tests {
+    use super::*;
+    use scribe_core::file::{FileWeight, RenderDecision};
+    use std::path::PathBuf;
+
+    fn create_source_file(path: &str, language: Language) -> FileInfo {
+        FileInfo {
+            path: PathBuf::from(path),
+            relative_path: path.to_string(),
+            size: 100,
+            modified: None,
+            decision: RenderDecision::include("test"),
+            file_type: FileType::Source {
+                language: language.clone(),
+            },
+            language,
+            content: None,
+            token_estimate: None,
+            line_count: None,
+            char_count: None,
+            is_binary: false,
+            git_status: None,
+            weight: FileWeight::default(),
+            centrality_score: None,
+        }
+    }
+
+    #[test]
+    fn test_derive_context_example_file() {
+        let file = create_source_file("examples/demo.rs", Language::Rust);
+        let config = Config::default();
+        let context = derive_file_context(&file, &config);
+        assert!(context.has_examples);
+    }
+
+    #[test]
+    fn test_derive_context_non_example_file() {
+        let file = create_source_file("src/main.rs", Language::Rust);
+        let mut config = Config::default();
+        config.analysis.analyze_content = false; // Disable content loading
+        let context = derive_file_context(&file, &config);
+        // Won't detect examples without content analysis
+        assert!(!context.has_examples);
+    }
+
+    #[test]
+    fn test_derive_context_entrypoint() {
+        let file = create_source_file("src/main.rs", Language::Rust);
+        let mut config = Config::default();
+        config.analysis.analyze_content = false;
+        let context = derive_file_context(&file, &config);
+        // main.rs should be detected as entrypoint from path
+        assert!(context.is_entrypoint);
+    }
+}
+
+mod scoring_tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_boost_match() {
+        let result = apply_boost("test/package.json", &["package.json"], 0.5);
+        assert_eq!(result, 0.5);
+    }
+
+    #[test]
+    fn test_apply_boost_no_match() {
+        let result = apply_boost("test/other.txt", &["package.json"], 0.5);
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_apply_boost_multiple_patterns() {
+        let patterns = &["package.json", "Cargo.toml"];
+        let result = apply_boost("test/Cargo.toml", patterns, 0.3);
+        assert_eq!(result, 0.3);
+    }
+}
+
+mod entrypoint_detection_tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_rust_main() {
+        let content = "fn main( { println!(\"hello\"); }";
+        assert!(detect_entrypoint_from_content(content, &Language::Rust));
+    }
+
+    #[test]
+    fn test_detect_rust_non_main() {
+        let content = "pub fn helper() {}";
+        assert!(!detect_entrypoint_from_content(content, &Language::Rust));
+    }
+
+    #[test]
+    fn test_detect_python_main() {
+        // Python uses __name__ == "__main__" (double quotes)
+        let content = "if __name__ == \"__main__\":\n    main()";
+        assert!(detect_entrypoint_from_content(content, &Language::Python));
+    }
+
+    #[test]
+    fn test_detect_python_non_main() {
+        let content = "def helper():\n    pass";
+        assert!(!detect_entrypoint_from_content(content, &Language::Python));
+    }
+
+    #[test]
+    fn test_detect_javascript_module_exports() {
+        let content = "module.exports = myModule;";
+        assert!(detect_entrypoint_from_content(
+            content,
+            &Language::JavaScript
+        ));
+    }
+
+    #[test]
+    fn test_detect_javascript_export_default() {
+        let content = "export default App;";
+        assert!(detect_entrypoint_from_content(
+            content,
+            &Language::JavaScript
+        ));
+    }
+
+    #[test]
+    fn test_detect_go_main() {
+        let content = "func main( { fmt.Println(\"hello\") }";
+        assert!(detect_entrypoint_from_content(content, &Language::Go));
+    }
+
+    #[test]
+    fn test_detect_go_non_main() {
+        let content = "func helper() {}";
+        assert!(!detect_entrypoint_from_content(content, &Language::Go));
+    }
+
+    #[test]
+    fn test_detect_java_main() {
+        let content = "public static void main(String[] args) {}";
+        assert!(detect_entrypoint_from_content(content, &Language::Java));
+    }
+
+    #[test]
+    fn test_detect_unknown_language() {
+        let content = "fn main() {}";
+        // Unknown language should not detect entrypoints
+        assert!(!detect_entrypoint_from_content(content, &Language::Unknown));
+    }
+}
+
+#[cfg(feature = "core")]
+mod priority_boost_tests {
+    use super::*;
+    use scribe_core::file::{FileWeight, RenderDecision};
+    use std::path::PathBuf;
+
+    fn create_file(path: &str) -> FileInfo {
+        FileInfo {
+            path: PathBuf::from(path),
+            relative_path: path.to_string(),
+            size: 100,
+            modified: None,
+            decision: RenderDecision::include("test"),
+            file_type: FileType::Source {
+                language: Language::Unknown,
+            },
+            language: Language::Unknown,
+            content: None,
+            token_estimate: None,
+            line_count: None,
+            char_count: None,
+            is_binary: false,
+            git_status: None,
+            weight: FileWeight::default(),
+            centrality_score: None,
+        }
+    }
+
+    #[test]
+    fn test_priority_boost_readme() {
+        let file = create_file("README.md");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.0);
+    }
+
+    #[test]
+    fn test_priority_boost_config() {
+        let file = create_file("package.json");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.0);
+    }
+
+    #[test]
+    fn test_priority_boost_main() {
+        let file = create_file("src/main.rs");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.0);
+    }
+
+    #[test]
+    fn test_priority_boost_no_match() {
+        let file = create_file("src/utils/helper.rs");
+        let boost = compute_priority_boost(&file);
+        assert_eq!(boost, 0.0);
+    }
+}
+
+#[test]
+fn test_utils_module_exists() {
+    // Verify the utils module can be accessed
+    #[cfg(feature = "core")]
+    {
+        use crate::utils;
+        // Just verifying the module compiles
+    }
+}
+
+#[test]
+fn test_prelude_module_exists() {
+    // Verify the prelude module can be accessed
+    use crate::prelude::VERSION;
+    assert!(!VERSION.is_empty());
+}

@@ -112,4 +112,216 @@ def world():
         assert!(coverage.documentation_lines > 0);
         assert!(coverage.coverage_percentage > 0.0);
     }
+
+    #[test]
+    fn test_rust_documentation_analysis() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::Rust).unwrap();
+        let rust_code = r#"
+//! Module documentation
+//! More module docs
+
+/// Function documentation
+fn hello() {
+    // Inline comment
+    println!("Hello");
+}
+
+/// Another documented function
+fn world() {}
+"#;
+
+        let coverage = analyzer.analyze_coverage(rust_code).unwrap();
+        assert!(coverage.documentation_lines > 0);
+        assert!(coverage.coverage_percentage > 0.0);
+    }
+
+    #[test]
+    fn test_javascript_documentation_analysis() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::JavaScript).unwrap();
+        let js_code = r#"
+// This is a comment
+/**
+ * JSDoc comment
+ */
+function hello() {
+    /* Block comment */
+    console.log("Hello");
+}
+"#;
+
+        let coverage = analyzer.analyze_coverage(js_code).unwrap();
+        assert!(coverage.documentation_lines > 0);
+    }
+
+    #[test]
+    fn test_typescript_documentation_analysis() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::TypeScript).unwrap();
+        let ts_code = r#"
+// TypeScript comment
+/** JSDoc style */
+function hello(): void {}
+"#;
+
+        let coverage = analyzer.analyze_coverage(ts_code).unwrap();
+        assert!(coverage.documentation_lines > 0);
+    }
+
+    #[test]
+    fn test_go_documentation_analysis() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::Go).unwrap();
+        let go_code = r#"
+// Package comment
+package main
+
+// Function comment
+func main() {
+    // Inline comment
+    fmt.Println("Hello")
+}
+"#;
+
+        let coverage = analyzer.analyze_coverage(go_code).unwrap();
+        assert!(coverage.documentation_lines > 0);
+    }
+
+    #[test]
+    fn test_empty_content() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::Python).unwrap();
+        let coverage = analyzer.analyze_coverage("").unwrap();
+        assert_eq!(coverage.documentation_lines, 0);
+        assert_eq!(coverage.total_lines, 0);
+        assert_eq!(coverage.coverage_percentage, 0.0);
+    }
+
+    #[test]
+    fn test_no_documentation() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::Rust).unwrap();
+        let code = r#"
+fn main() {
+    println!("Hello");
+}
+"#;
+
+        let coverage = analyzer.analyze_coverage(code).unwrap();
+        // No documentation comments (// without /)
+        assert_eq!(coverage.documentation_lines, 0);
+    }
+
+    #[test]
+    fn test_documentation_coverage_default() {
+        let coverage = DocumentationCoverage::default();
+        assert_eq!(coverage.total_functions, 0);
+        assert_eq!(coverage.documented_functions, 0);
+        assert_eq!(coverage.total_classes, 0);
+        assert_eq!(coverage.documented_classes, 0);
+        assert_eq!(coverage.coverage_percentage, 0.0);
+        assert_eq!(coverage.documentation_lines, 0);
+        assert_eq!(coverage.total_lines, 0);
+    }
+
+    #[test]
+    fn test_documentation_coverage_clone() {
+        let coverage = DocumentationCoverage {
+            total_functions: 10,
+            documented_functions: 5,
+            total_classes: 3,
+            documented_classes: 2,
+            coverage_percentage: 50.0,
+            documentation_lines: 20,
+            total_lines: 100,
+        };
+
+        let cloned = coverage.clone();
+        assert_eq!(coverage.total_functions, cloned.total_functions);
+        assert_eq!(coverage.documented_functions, cloned.documented_functions);
+        assert_eq!(coverage.coverage_percentage, cloned.coverage_percentage);
+    }
+
+    #[test]
+    fn test_documentation_coverage_serialize() {
+        let coverage = DocumentationCoverage {
+            total_functions: 5,
+            documented_functions: 3,
+            total_classes: 2,
+            documented_classes: 1,
+            coverage_percentage: 60.0,
+            documentation_lines: 15,
+            total_lines: 50,
+        };
+
+        let json = serde_json::to_string(&coverage).unwrap();
+        let deserialized: DocumentationCoverage = serde_json::from_str(&json).unwrap();
+        assert_eq!(coverage.total_functions, deserialized.total_functions);
+        assert_eq!(
+            coverage.coverage_percentage,
+            deserialized.coverage_percentage
+        );
+    }
+
+    #[test]
+    fn test_documentation_coverage_debug() {
+        let coverage = DocumentationCoverage::default();
+        let debug_str = format!("{:?}", coverage);
+        assert!(debug_str.contains("DocumentationCoverage"));
+    }
+
+    #[test]
+    fn test_documentation_analyzer_debug() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::Rust).unwrap();
+        let debug_str = format!("{:?}", analyzer);
+        assert!(debug_str.contains("DocumentationAnalyzer"));
+    }
+
+    #[test]
+    fn test_doc_prefixes_python() {
+        let prefixes = DocumentationAnalyzer::doc_prefixes(&AstLanguage::Python);
+        assert!(prefixes.contains(&"#"));
+        assert!(prefixes.contains(&"\"\"\""));
+        assert!(prefixes.contains(&"'''"));
+    }
+
+    #[test]
+    fn test_doc_prefixes_javascript() {
+        let prefixes = DocumentationAnalyzer::doc_prefixes(&AstLanguage::JavaScript);
+        assert!(prefixes.contains(&"//"));
+        assert!(prefixes.contains(&"/*"));
+        assert!(prefixes.contains(&"/**"));
+    }
+
+    #[test]
+    fn test_doc_prefixes_rust() {
+        let prefixes = DocumentationAnalyzer::doc_prefixes(&AstLanguage::Rust);
+        assert!(prefixes.contains(&"//"));
+        assert!(prefixes.contains(&"///"));
+        assert!(prefixes.contains(&"//!"));
+    }
+
+    #[test]
+    fn test_doc_prefixes_go() {
+        let prefixes = DocumentationAnalyzer::doc_prefixes(&AstLanguage::Go);
+        assert!(prefixes.contains(&"//"));
+    }
+
+    #[test]
+    fn test_mixed_code_and_docs() {
+        let analyzer = DocumentationAnalyzer::new(AstLanguage::Python).unwrap();
+        let code = r#"
+# Header comment
+import os
+
+# Function docs
+def foo():
+    x = 1
+    # Inline comment
+    return x
+
+class Bar:
+    """Class docstring."""
+    pass
+"#;
+
+        let coverage = analyzer.analyze_coverage(code).unwrap();
+        assert!(coverage.documentation_lines >= 4); // At least 4 comment lines
+        assert!(coverage.total_lines > coverage.documentation_lines);
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "scribe-analysis"
-version = "0.5.1"
+version = "1.0.0"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ tree-sitter = []
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.5.1", path = "../scribe-core" }
+scribe-core = { version = "1.0.0", path = "../scribe-core" }
 
 # Core dependencies
 serde = { workspace = true, features = ["derive"] }

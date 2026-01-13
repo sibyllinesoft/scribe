@@ -283,4 +283,446 @@ mod tests {
         // Path depth 3/5 = 0.6, so inverted score should be 1.0 - 0.6 = 0.4
         assert!((path_score - 0.4).abs() < 0.01);
     }
+
+    #[test]
+    fn test_import_score_calculation() {
+        let stats = NormalizationStats {
+            max_doc_raw: 1.0,
+            max_readme_raw: 1.0,
+            max_import_degree_in: 10,
+            max_import_degree_out: 10,
+            max_path_depth: 5,
+            max_test_links: 1,
+            max_churn_commits: 1,
+            max_centrality_raw: 1.0,
+            max_examples_count: 1,
+        };
+
+        // Test with 5 imports in, 5 out
+        let import_score = calculate_import_score(5, 5, &stats);
+        // 0.7 * 0.5 + 0.3 * 0.5 = 0.35 + 0.15 = 0.5
+        assert!((import_score - 0.5).abs() < 0.01);
+
+        // Test with 10 imports in, 0 out (highly imported file)
+        let import_score_in = calculate_import_score(10, 0, &stats);
+        // 0.7 * 1.0 + 0.3 * 0.0 = 0.7
+        assert!((import_score_in - 0.7).abs() < 0.01);
+
+        // Test with 0 imports in, 10 out (file that imports many others)
+        let import_score_out = calculate_import_score(0, 10, &stats);
+        // 0.7 * 0.0 + 0.3 * 1.0 = 0.3
+        assert!((import_score_out - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalization_stats_empty_files() {
+        let files: Vec<MockFile> = vec![];
+        let stats = build_normalization_stats(&files);
+
+        // Should have minimum values to avoid division by zero
+        assert!(stats.max_doc_raw >= 1.0);
+        assert!(stats.max_readme_raw >= 1.0);
+        assert!(stats.max_path_depth >= 1);
+        assert!(stats.max_import_degree_in >= 1);
+        assert!(stats.max_import_degree_out >= 1);
+    }
+
+    #[test]
+    fn test_normalized_scores_struct_clone() {
+        let scores = NormalizedScores {
+            doc_score: 0.5,
+            readme_score: 0.8,
+            import_score: 0.3,
+            path_score: 0.7,
+            test_link_score: 0.2,
+            churn_score: 0.4,
+            centrality_score: 0.6,
+            entrypoint_score: 1.0,
+            examples_score: 0.5,
+        };
+        let cloned = scores.clone();
+        assert_eq!(scores.doc_score, cloned.doc_score);
+        assert_eq!(scores.readme_score, cloned.readme_score);
+    }
+
+    #[test]
+    fn test_normalized_scores_debug() {
+        let scores = NormalizedScores {
+            doc_score: 0.5,
+            readme_score: 0.8,
+            import_score: 0.3,
+            path_score: 0.7,
+            test_link_score: 0.2,
+            churn_score: 0.4,
+            centrality_score: 0.6,
+            entrypoint_score: 1.0,
+            examples_score: 0.5,
+        };
+        let debug_str = format!("{:?}", scores);
+        assert!(debug_str.contains("NormalizedScores"));
+    }
+
+    #[test]
+    fn test_normalization_stats_clone() {
+        let stats = NormalizationStats {
+            max_doc_raw: 1.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 5,
+            max_path_depth: 4,
+            max_test_links: 2,
+            max_churn_commits: 3,
+            max_centrality_raw: 0.8,
+            max_examples_count: 1,
+        };
+        let cloned = stats.clone();
+        assert_eq!(stats.max_doc_raw, cloned.max_doc_raw);
+        assert_eq!(stats.max_path_depth, cloned.max_path_depth);
+    }
+
+    #[test]
+    fn test_normalization_stats_debug() {
+        let stats = NormalizationStats {
+            max_doc_raw: 1.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 5,
+            max_path_depth: 4,
+            max_test_links: 2,
+            max_churn_commits: 3,
+            max_centrality_raw: 0.8,
+            max_examples_count: 1,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("NormalizationStats"));
+    }
+
+    #[test]
+    fn test_path_score_edge_cases() {
+        let stats = NormalizationStats {
+            max_doc_raw: 1.0,
+            max_readme_raw: 1.0,
+            max_import_degree_in: 1,
+            max_import_degree_out: 1,
+            max_path_depth: 10,
+            max_test_links: 1,
+            max_churn_commits: 1,
+            max_centrality_raw: 1.0,
+            max_examples_count: 1,
+        };
+
+        // Depth 0 should give score 1.0
+        let path_score_0 = calculate_path_score(0, &stats);
+        assert!((path_score_0 - 1.0).abs() < 0.01);
+
+        // Max depth should give score 0.0
+        let path_score_max = calculate_path_score(10, &stats);
+        assert!((path_score_max - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalize_scores_basic() {
+        let stats = NormalizationStats {
+            max_doc_raw: 2.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 10,
+            max_path_depth: 5,
+            max_test_links: 3,
+            max_churn_commits: 10,
+            max_centrality_raw: 1.0,
+            max_examples_count: 2,
+        };
+
+        let features = ScoringFeatures::default();
+
+        let file = MockFile {
+            path: "README.md".to_string(),
+            is_docs: false,
+            is_readme: true,
+            depth: 1,
+            content: None,
+        };
+
+        let scores = normalize_scores(&file, &stats, &features);
+
+        // README should get a readme score
+        assert!(scores.readme_score > 0.0);
+
+        // Path score should be high (depth 1 out of 5)
+        assert!(scores.path_score > 0.5);
+    }
+
+    #[test]
+    fn test_normalize_scores_docs_file() {
+        let stats = NormalizationStats {
+            max_doc_raw: 2.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 10,
+            max_path_depth: 5,
+            max_test_links: 3,
+            max_churn_commits: 10,
+            max_centrality_raw: 1.0,
+            max_examples_count: 2,
+        };
+
+        let features = ScoringFeatures::default();
+
+        let file = MockFile {
+            path: "docs/guide.md".to_string(),
+            is_docs: true,
+            is_readme: false,
+            depth: 2,
+            content: None,
+        };
+
+        let scores = normalize_scores(&file, &stats, &features);
+
+        // Docs file should get a doc score
+        assert!(scores.doc_score > 0.0);
+
+        // Not a README
+        assert_eq!(scores.readme_score, 0.0);
+    }
+
+    // Mock with more features
+    struct MockFileWithFeatures {
+        path: String,
+        is_docs: bool,
+        is_readme: bool,
+        is_test: bool,
+        is_entrypoint: bool,
+        has_examples: bool,
+        depth: usize,
+        churn_score: f64,
+        centrality_in: f64,
+        imports: Vec<String>,
+    }
+
+    impl ScanResult for MockFileWithFeatures {
+        fn path(&self) -> &str {
+            &self.path
+        }
+        fn relative_path(&self) -> &str {
+            &self.path
+        }
+        fn depth(&self) -> usize {
+            self.depth
+        }
+        fn is_docs(&self) -> bool {
+            self.is_docs
+        }
+        fn is_readme(&self) -> bool {
+            self.is_readme
+        }
+        fn is_test(&self) -> bool {
+            self.is_test
+        }
+        fn is_entrypoint(&self) -> bool {
+            self.is_entrypoint
+        }
+        fn has_examples(&self) -> bool {
+            self.has_examples
+        }
+        fn priority_boost(&self) -> f64 {
+            0.0
+        }
+        fn churn_score(&self) -> f64 {
+            self.churn_score
+        }
+        fn centrality_in(&self) -> f64 {
+            self.centrality_in
+        }
+        fn imports(&self) -> Option<&[String]> {
+            if self.imports.is_empty() {
+                None
+            } else {
+                Some(&self.imports)
+            }
+        }
+        fn doc_analysis(&self) -> Option<&crate::heuristics::DocumentAnalysis> {
+            None
+        }
+    }
+
+    #[test]
+    fn test_build_normalization_stats_with_all_features() {
+        let files = vec![
+            MockFileWithFeatures {
+                path: "README.md".to_string(),
+                is_docs: false,
+                is_readme: true,
+                is_test: false,
+                is_entrypoint: false,
+                has_examples: false,
+                depth: 0,
+                churn_score: 5.0,
+                centrality_in: 10.0,
+                imports: vec!["import1".to_string(), "import2".to_string()],
+            },
+            MockFileWithFeatures {
+                path: "tests/test.rs".to_string(),
+                is_docs: false,
+                is_readme: false,
+                is_test: true,
+                is_entrypoint: false,
+                has_examples: false,
+                depth: 1,
+                churn_score: 3.0,
+                centrality_in: 5.0,
+                imports: vec!["import1".to_string()],
+            },
+            MockFileWithFeatures {
+                path: "examples/demo.rs".to_string(),
+                is_docs: false,
+                is_readme: false,
+                is_test: false,
+                is_entrypoint: false,
+                has_examples: true,
+                depth: 1,
+                churn_score: 1.0,
+                centrality_in: 2.0,
+                imports: vec![],
+            },
+        ];
+
+        let stats = build_normalization_stats(&files);
+
+        // Check stats are properly computed
+        assert!(stats.max_churn_commits >= 5);
+        assert!(stats.max_centrality_raw >= 10.0);
+        assert_eq!(stats.max_import_degree_in, 10);
+        assert!(stats.max_import_degree_out >= 2);
+        assert!(stats.max_test_links >= 1);
+        assert!(stats.max_examples_count >= 1);
+    }
+
+    #[test]
+    fn test_normalize_scores_with_all_features_enabled() {
+        let stats = NormalizationStats {
+            max_doc_raw: 2.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 10,
+            max_path_depth: 5,
+            max_test_links: 3,
+            max_churn_commits: 10,
+            max_centrality_raw: 1.0,
+            max_examples_count: 2,
+        };
+
+        let features = ScoringFeatures {
+            enable_doc_analysis: true,
+            enable_test_linking: true,
+            enable_churn_analysis: true,
+            enable_centrality: true,
+            enable_examples_detection: true,
+            enable_template_boost: true,
+        };
+
+        let file = MockFileWithFeatures {
+            path: "src/main.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            is_test: true,
+            is_entrypoint: true,
+            has_examples: true,
+            depth: 1,
+            churn_score: 5.0,
+            centrality_in: 0.5,
+            imports: vec!["import1".to_string()],
+        };
+
+        let scores = normalize_scores(&file, &stats, &features);
+
+        // Test that all scores are computed when features are enabled
+        assert!(scores.test_link_score > 0.0);
+        assert!(scores.churn_score > 0.0);
+        assert!(scores.centrality_score > 0.0);
+        assert!(scores.entrypoint_score > 0.0);
+        assert!(scores.examples_score > 0.0);
+    }
+
+    #[test]
+    fn test_normalize_scores_with_features_disabled() {
+        let stats = NormalizationStats {
+            max_doc_raw: 2.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 10,
+            max_path_depth: 5,
+            max_test_links: 3,
+            max_churn_commits: 10,
+            max_centrality_raw: 1.0,
+            max_examples_count: 2,
+        };
+
+        let features = ScoringFeatures {
+            enable_doc_analysis: false,
+            enable_test_linking: false,
+            enable_churn_analysis: false,
+            enable_centrality: false,
+            enable_examples_detection: false,
+            enable_template_boost: false,
+        };
+
+        let file = MockFileWithFeatures {
+            path: "src/main.rs".to_string(),
+            is_docs: false,
+            is_readme: false,
+            is_test: true,
+            is_entrypoint: true,
+            has_examples: true,
+            depth: 1,
+            churn_score: 5.0,
+            centrality_in: 0.5,
+            imports: vec!["import1".to_string()],
+        };
+
+        let scores = normalize_scores(&file, &stats, &features);
+
+        // When features are disabled, these should be 0
+        assert_eq!(scores.test_link_score, 0.0);
+        assert_eq!(scores.churn_score, 0.0);
+        assert_eq!(scores.centrality_score, 0.0);
+        assert_eq!(scores.examples_score, 0.0);
+    }
+
+    #[test]
+    fn test_normalize_scores_readme_depth_greater_than_one() {
+        let stats = NormalizationStats {
+            max_doc_raw: 2.0,
+            max_readme_raw: 1.5,
+            max_import_degree_in: 10,
+            max_import_degree_out: 10,
+            max_path_depth: 5,
+            max_test_links: 3,
+            max_churn_commits: 10,
+            max_centrality_raw: 1.0,
+            max_examples_count: 2,
+        };
+
+        let features = ScoringFeatures::default();
+
+        let file = MockFileWithFeatures {
+            path: "docs/subdir/README.md".to_string(),
+            is_docs: false,
+            is_readme: true,
+            is_test: false,
+            is_entrypoint: false,
+            has_examples: false,
+            depth: 2,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: vec![],
+        };
+
+        let scores = normalize_scores(&file, &stats, &features);
+
+        // README at depth > 1 gets score of 1.0 (not 1.5)
+        // Normalized: 1.0 / 1.5 = 0.667
+        assert!(scores.readme_score > 0.0);
+        assert!(scores.readme_score < 1.0);
+    }
 }

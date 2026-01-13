@@ -179,3 +179,158 @@ impl ScalingSelectionResult {
 pub struct ScalingSelector {
     pub(crate) config: ScalingSelectionConfig,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_file_category_variants() {
+        let config = FileCategory::Config;
+        let entry = FileCategory::Entry;
+        let examples = FileCategory::Examples;
+        let general = FileCategory::General;
+
+        assert_eq!(config, FileCategory::Config);
+        assert_eq!(entry, FileCategory::Entry);
+        assert_eq!(examples, FileCategory::Examples);
+        assert_eq!(general, FileCategory::General);
+
+        assert_ne!(config, entry);
+        assert_ne!(examples, general);
+    }
+
+    #[test]
+    fn test_file_category_clone() {
+        let category = FileCategory::Entry;
+        let cloned = category.clone();
+        assert_eq!(category, cloned);
+    }
+
+    #[test]
+    fn test_file_category_copy() {
+        let category = FileCategory::Config;
+        let copied = category;
+        assert_eq!(category, copied);
+    }
+
+    #[test]
+    fn test_file_category_serialize() {
+        let category = FileCategory::Examples;
+        let json = serde_json::to_string(&category).unwrap();
+        let deserialized: FileCategory = serde_json::from_str(&json).unwrap();
+        assert_eq!(category, deserialized);
+    }
+
+    #[test]
+    fn test_file_category_debug() {
+        let category = FileCategory::General;
+        let debug = format!("{:?}", category);
+        assert!(debug.contains("General"));
+    }
+
+    #[test]
+    fn test_selection_algorithm_variants() {
+        let v5 = SelectionAlgorithm::V5Integrated;
+        assert_eq!(v5, SelectionAlgorithm::V5Integrated);
+    }
+
+    #[test]
+    fn test_selection_algorithm_clone() {
+        let algo = SelectionAlgorithm::V5Integrated;
+        let cloned = algo.clone();
+        assert_eq!(algo, cloned);
+    }
+
+    #[test]
+    fn test_selection_algorithm_copy() {
+        let algo = SelectionAlgorithm::V5Integrated;
+        let copied = algo;
+        assert_eq!(algo, copied);
+    }
+
+    #[test]
+    fn test_selection_algorithm_serialize() {
+        let algo = SelectionAlgorithm::V5Integrated;
+        let json = serde_json::to_string(&algo).unwrap();
+        let deserialized: SelectionAlgorithm = serde_json::from_str(&json).unwrap();
+        assert_eq!(algo, deserialized);
+    }
+
+    #[test]
+    fn test_selection_algorithm_debug() {
+        let algo = SelectionAlgorithm::V5Integrated;
+        let debug = format!("{:?}", algo);
+        assert!(debug.contains("V5Integrated"));
+    }
+
+    #[test]
+    fn test_scaling_selection_config_default() {
+        let config = ScalingSelectionConfig::default();
+        assert_eq!(config.token_budget, 8000);
+        assert_eq!(config.selection_algorithm, SelectionAlgorithm::V5Integrated);
+        assert!(config.enable_quotas);
+    }
+
+    #[test]
+    fn test_scaling_selection_config_small_budget() {
+        let config = ScalingSelectionConfig::small_budget();
+        assert_eq!(config.token_budget, 1000);
+        assert_eq!(config.selection_algorithm, SelectionAlgorithm::V5Integrated);
+        assert!(config.enable_quotas);
+    }
+
+    #[test]
+    fn test_scaling_selection_config_medium_budget() {
+        let config = ScalingSelectionConfig::medium_budget();
+        assert_eq!(config.token_budget, 10000);
+        assert_eq!(config.selection_algorithm, SelectionAlgorithm::V5Integrated);
+        assert!(config.enable_quotas);
+    }
+
+    #[test]
+    fn test_scaling_selection_config_large_budget() {
+        let config = ScalingSelectionConfig::large_budget();
+        assert_eq!(config.token_budget, 100000);
+        assert_eq!(config.selection_algorithm, SelectionAlgorithm::V5Integrated);
+        assert!(config.enable_quotas);
+    }
+
+    #[test]
+    fn test_scaling_selection_config_with_test_exclusion() {
+        let config = ScalingSelectionConfig::default().with_test_exclusion();
+        assert!(config.positioning_config.auto_exclude_tests);
+    }
+
+    #[test]
+    fn test_scaling_selection_config_clone() {
+        let config = ScalingSelectionConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.token_budget, cloned.token_budget);
+        assert_eq!(config.selection_algorithm, cloned.selection_algorithm);
+    }
+
+    #[test]
+    fn test_scaling_selection_config_serialize() {
+        let config = ScalingSelectionConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("token_budget"));
+        assert!(json.contains("8000"));
+    }
+
+    #[test]
+    fn test_scaling_selection_config_debug() {
+        let config = ScalingSelectionConfig::default();
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("ScalingSelectionConfig"));
+        assert!(debug.contains("token_budget"));
+    }
+
+
+    #[test]
+    fn test_scaling_selector_creation() {
+        let config = ScalingSelectionConfig::default();
+        let selector = ScalingSelector { config: config.clone() };
+        assert_eq!(selector.config.token_budget, config.token_budget);
+    }
+}

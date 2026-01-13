@@ -234,3 +234,275 @@ fn test_graph_statistics() {
     assert!(stats.density > 0.0);
     assert!(stats.density < 1.0);
 }
+
+#[test]
+fn test_import_graph_default() {
+    let graph = ImportGraph::default();
+    assert_eq!(graph.nodes.len(), 0);
+    assert!(graph.dependencies.is_empty());
+    assert!(graph.dependents.is_empty());
+}
+
+#[test]
+fn test_import_graph_add_duplicate_node() {
+    let mut graph = ImportGraph::new();
+
+    let idx1 = graph.add_node("file.rs".to_string());
+    let idx2 = graph.add_node("file.rs".to_string()); // Same file
+
+    assert_eq!(idx1, idx2);
+    assert_eq!(graph.nodes.len(), 1);
+}
+
+#[test]
+fn test_import_graph_add_edge_self_loop() {
+    let mut graph = ImportGraph::new();
+
+    let idx = graph.add_node("file.rs".to_string());
+    graph.add_edge(idx, idx); // Self loop - should be ignored
+
+    assert!(graph.dependencies[idx].is_empty());
+    assert!(graph.dependents[idx].is_empty());
+}
+
+#[test]
+fn test_import_graph_add_duplicate_edge() {
+    let mut graph = ImportGraph::new();
+
+    let idx1 = graph.add_node("file1.rs".to_string());
+    let idx2 = graph.add_node("file2.rs".to_string());
+
+    graph.add_edge(idx1, idx2);
+    graph.add_edge(idx1, idx2); // Duplicate edge
+
+    assert_eq!(graph.dependencies[idx1].len(), 1);
+    assert_eq!(graph.dependents[idx2].len(), 1);
+}
+
+#[test]
+fn test_import_graph_get_node_degrees() {
+    let mut graph = ImportGraph::new();
+
+    let idx1 = graph.add_node("center.rs".to_string());
+    let idx2 = graph.add_node("client1.rs".to_string());
+    let idx3 = graph.add_node("client2.rs".to_string());
+
+    graph.add_edge(idx2, idx1);
+    graph.add_edge(idx3, idx1);
+
+    let degrees = graph.get_node_degrees("center.rs");
+    assert!(degrees.is_some());
+    let (in_degree, out_degree) = degrees.unwrap();
+    assert_eq!(in_degree, 2); // Two files depend on it
+    assert_eq!(out_degree, 0); // Doesn't depend on anything
+
+    // Non-existent file
+    let degrees = graph.get_node_degrees("nonexistent.rs");
+    assert!(degrees.is_none());
+}
+
+#[test]
+fn test_import_graph_get_pagerank_score_single() {
+    let mut graph = ImportGraph::new();
+
+    let idx = graph.add_node("file.rs".to_string());
+    let score = graph.get_pagerank_score("file.rs").unwrap();
+    assert!(score > 0.0);
+
+    // Non-existent file should return 0 or first index score
+    let score = graph.get_pagerank_score("nonexistent.rs").unwrap();
+    assert!(score >= 0.0);
+}
+
+#[test]
+fn test_centrality_calculator_with_params() {
+    let calc = CentralityCalculator::with_params(0.9, 50, 1e-4);
+    assert!((calc.damping_factor - 0.9).abs() < 0.001);
+    assert_eq!(calc.max_iterations, 50);
+    assert!((calc.tolerance - 1e-4).abs() < 1e-5);
+}
+
+#[test]
+fn test_pagerank_empty_graph() {
+    let graph = ImportGraph::new();
+    let calc = CentralityCalculator::default();
+    let scores = calc.calculate_pagerank(&graph).unwrap();
+    assert!(scores.is_empty());
+}
+
+#[test]
+fn test_graph_stats_empty() {
+    let graph = ImportGraph::new();
+    let stats = graph.stats();
+
+    assert_eq!(stats.node_count, 0);
+    assert_eq!(stats.edge_count, 0);
+    assert_eq!(stats.avg_in_degree, 0.0);
+    assert_eq!(stats.avg_out_degree, 0.0);
+    assert_eq!(stats.max_in_degree, 0);
+    assert_eq!(stats.max_out_degree, 0);
+    assert_eq!(stats.density, 0.0);
+}
+
+#[test]
+fn test_graph_stats_single_node() {
+    let mut graph = ImportGraph::new();
+    graph.add_node("single.rs".to_string());
+
+    let stats = graph.stats();
+    assert_eq!(stats.node_count, 1);
+    assert_eq!(stats.edge_count, 0);
+    assert_eq!(stats.density, 0.0); // Can't compute density with 1 node
+}
+
+#[test]
+fn test_graph_stats_clone() {
+    let mut graph = ImportGraph::new();
+    graph.add_node("file.rs".to_string());
+    let stats = graph.stats();
+    let cloned = stats.clone();
+    assert_eq!(stats.node_count, cloned.node_count);
+}
+
+#[test]
+fn test_import_matches_file_index_files() {
+    // Python __init__.py
+    assert!(import_matches_file("mypackage", "mypackage/__init__.py"));
+
+    // Rust mod.rs
+    assert!(import_matches_file("mymodule", "mymodule/mod.rs"));
+
+    // JavaScript index.js
+    assert!(import_matches_file("components", "components/index.js"));
+
+    // Main file
+    assert!(import_matches_file("app", "app/main.py"));
+}
+
+#[test]
+fn test_import_matches_file_std_library() {
+    // Rust std:: imports
+    assert!(import_matches_file(
+        "std::io::Read",
+        "std/io/read.rs"
+    ));
+
+    assert!(import_matches_file(
+        "std::fs::File",
+        "std/fs/file.rs"
+    ));
+}
+
+#[test]
+fn test_is_index_file() {
+    assert!(is_index_file("src/index.js"));
+    assert!(is_index_file("package/__init__.py"));
+    assert!(is_index_file("module/mod.rs"));
+    assert!(is_index_file("app/main.go"));
+
+    assert!(!is_index_file("src/utils.js"));
+    assert!(!is_index_file("lib/helper.py"));
+}
+
+#[test]
+fn test_normalize_for_matching() {
+    let result = normalize_for_matching("./src/utils.rs");
+    assert!(!result.contains("./"));
+    assert!(!result.ends_with(".rs"));
+
+    let result = normalize_for_matching("src/lib.ts");
+    assert!(!result.starts_with("src/"));
+    assert!(!result.ends_with(".ts"));
+
+    let result = normalize_for_matching("path\\with\\backslash.js");
+    assert!(!result.contains('\\'));
+}
+
+#[test]
+fn test_import_graph_builder_language_detection() {
+    let builder = ImportGraphBuilder::new().unwrap();
+
+    // Test various file extensions
+    let imports = builder.extract_imports("import os", "test.py");
+    assert!(!imports.is_empty());
+
+    let imports = builder.extract_imports("use std::io;", "test.rs");
+    assert!(!imports.is_empty());
+
+    // Unknown extension should return empty
+    let imports = builder.extract_imports("some content", "test.unknown");
+    assert!(imports.is_empty());
+}
+
+#[test]
+fn test_import_graph_builder_normalize_various_formats() {
+    let mut builder = ImportGraphBuilder::new().unwrap();
+
+    // Test normalization with basic paths
+    let normalized = builder.normalize_import_path("./utils.js");
+    assert!(normalized.contains("utils"));
+
+    // Test with module path
+    let normalized = builder.normalize_import_path("react");
+    assert!(normalized.contains("react"));
+
+    // @ alias transforms
+    let normalized = builder.normalize_import_path("@/store/index");
+    assert!(normalized.contains("src/store/index"));
+
+    // ~ alias transforms
+    let normalized = builder.normalize_import_path("~/components/Button");
+    assert!(normalized.contains("src/components/Button"));
+}
+
+#[test]
+fn test_import_key_map() {
+    let files = vec![
+        MockScanResult::new("src/main.rs", vec![]),
+        MockScanResult::new("src/lib.rs", vec![]),
+        MockScanResult::new("src/utils/helper.rs", vec![]),
+    ];
+
+    let key_map = ImportKeyMap::new(&files);
+
+    // Should resolve exact paths
+    let result = key_map.resolve_import("src/main.rs");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), 0);
+
+    // Should resolve by suffix
+    let result = key_map.resolve_import("main");
+    assert!(result.is_some());
+}
+
+#[test]
+fn test_import_graph_clone() {
+    let mut graph = ImportGraph::new();
+    graph.add_node("file1.rs".to_string());
+    graph.add_node("file2.rs".to_string());
+    graph.add_edge(0, 1);
+
+    let cloned = graph.clone();
+    assert_eq!(cloned.nodes.len(), 2);
+    assert_eq!(cloned.dependencies[0].len(), 1);
+}
+
+#[test]
+fn test_mock_scan_result_impl() {
+    let mock = MockScanResult::new("src/test.rs", vec!["import1", "import2"]);
+
+    assert_eq!(mock.path(), "src/test.rs");
+    assert_eq!(mock.relative_path(), "src/test.rs");
+    assert_eq!(mock.depth(), 1);
+    assert!(!mock.is_docs());
+    assert!(!mock.is_readme());
+    assert!(!mock.is_test());
+    assert!(!mock.is_entrypoint());
+    assert!(!mock.has_examples());
+    assert_eq!(mock.priority_boost(), 0.0);
+    assert_eq!(mock.churn_score(), 0.0);
+    assert_eq!(mock.centrality_in(), 0.0);
+    assert!(mock.imports().is_some());
+    assert_eq!(mock.imports().unwrap().len(), 2);
+    assert!(mock.doc_analysis().is_none());
+}

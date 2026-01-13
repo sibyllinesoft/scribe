@@ -14,11 +14,11 @@ include = ["src/**/*", "templates/**/*"]
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.5.1", path = "../scribe-core" }
-scribe-scaling = { version = "0.5.1", path = "../scribe-scaling" }
-scribe-selection = { version = "0.5.1", path = "../scribe-selection" }
-scribe-scanner = { version = "0.5.1", path = "../scribe-scanner" }
-scribe-analysis = { version = "0.5.1", path = "../scribe-analysis" }
+scribe-core = { version = "1.0.0", path = "../scribe-core" }
+scribe-scaling = { version = "1.0.0", path = "../scribe-scaling" }
+scribe-selection = { version = "1.0.0", path = "../scribe-selection" }
+scribe-scanner = { version = "1.0.0", path = "../scribe-scanner" }
+scribe-analysis = { version = "1.0.0", path = "../scribe-analysis" }
 
 # Web framework
 axum = { version = "0.7", features = ["macros"] }

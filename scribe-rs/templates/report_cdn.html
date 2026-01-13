@@ -4,180 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Repository Analysis: {{repository_name}}</title>
-
-    <!-- CDN CSS -->
+    <link rel="stylesheet" href="https://scribe.sibylline.dev/scribe-report.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-
-    <style>
-        :root {
-            --bg-primary: #1a1a1a;
-            --bg-secondary: #2a2a2a;
-            --bg-tertiary: #3a3a3a;
-            --text-primary: #e5e5e5;
-            --text-secondary: #b5b5b5;
-            --text-muted: #888;
-            --accent-primary: #4f9cf9;
-            --accent-secondary: #7c3aed;
-            --border-color: #404040;
-            --hover-color: #333333;
-            --code-bg: #252525;
-        }
-
-        * { box-sizing: border-box; }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 20px;
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            font-size: 14px;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            overflow: hidden;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-
-        .header {
-            background: rgba(255, 255, 255, 0.03);
-            padding: 32px;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .header h1 {
-            margin: 0;
-            font-size: 32px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .header .meta {
-            margin-top: 20px;
-            opacity: 0.9;
-            font-size: 13px;
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            padding: 24px;
-            background: var(--bg-tertiary);
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .stat-card {
-            background: var(--bg-secondary);
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-        }
-
-        .stat-label {
-            font-size: 12px;
-            color: var(--text-muted);
-            margin-bottom: 8px;
-        }
-
-        .stat-value {
-            font-size: 24px;
-            font-weight: 600;
-            color: var(--accent-primary);
-        }
-
-        .content {
-            padding: 24px;
-        }
-
-        .file-section {
-            background: var(--bg-tertiary);
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            margin-bottom: 24px;
-            overflow: hidden;
-        }
-
-        .file-header {
-            padding: 16px 20px;
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .file-header:hover {
-            background: var(--hover-color);
-        }
-
-        .file-path {
-            font-family: 'Monaco', 'Consolas', monospace;
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        .file-meta {
-            display: flex;
-            gap: 16px;
-            font-size: 12px;
-            color: var(--text-muted);
-        }
-
-        .file-content {
-            display: none;
-            padding: 0;
-        }
-
-        .file-content.expanded {
-            display: block;
-        }
-
-        .code-block {
-            background: var(--code-bg);
-            padding: 16px;
-            margin: 0;
-            overflow-x: auto;
-        }
-
-        .code-block code {
-            font-family: 'Monaco', 'Consolas', monospace;
-            font-size: 13px;
-            line-height: 1.5;
-        }
-
-        .expand-all {
-            margin-bottom: 16px;
-            padding: 8px 16px;
-            background: var(--accent-primary);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-
-        .expand-all:hover {
-            opacity: 0.9;
-        }
-    </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 {{repository_name}}</h1>
+            <h1>{{repository_name}}</h1>
             <div class="meta">
                 <span>Generated: {{generated_time}}</span>
                 <span>Algorithm: {{algorithm}}</span>
@@ -210,11 +43,10 @@
             {{#each files}}
             <div class="file-section">
                 <div class="file-header" onclick="toggleFile({{@index}})">
-                    <span class="file-path">{{icon}} {{relative_path}}</span>
+                    <span class="file-path">{{relative_path}}</span>
                     <div class="file-meta">
                         <span>{{size}}</span>
                         <span>{{estimated_tokens}} tokens</span>
-                        <span>Score: {{importance_score}}</span>
                     </div>
                 </div>
                 <div class="file-content" id="file-{{@index}}">
@@ -225,36 +57,17 @@
         </div>
     </div>
 
-    <!-- CDN JavaScript -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-
     <script>
-        // Initialize syntax highlighting
-        document.addEventListener('DOMContentLoaded', function() {
-            hljs.highlightAll();
-        });
-
-        // Toggle individual file
-        function toggleFile(index) {
-            const content = document.getElementById('file-' + index);
-            content.classList.toggle('expanded');
-        }
-
-        // Toggle all files
+        document.addEventListener('DOMContentLoaded', function() { hljs.highlightAll(); });
+        function toggleFile(i) { document.getElementById('file-' + i).classList.toggle('expanded'); }
         let allExpanded = false;
         function toggleAllFiles() {
-            const contents = document.querySelectorAll('.file-content');
-            const button = document.querySelector('.expand-all');
-
-            if (allExpanded) {
-                contents.forEach(c => c.classList.remove('expanded'));
-                button.textContent = 'Expand All Files';
-                allExpanded = false;
-            } else {
-                contents.forEach(c => c.classList.add('expanded'));
-                button.textContent = 'Collapse All Files';
-                allExpanded = true;
-            }
+            const c = document.querySelectorAll('.file-content');
+            const b = document.querySelector('.expand-all');
+            if (allExpanded) { c.forEach(x => x.classList.remove('expanded')); b.textContent = 'Expand All Files'; }
+            else { c.forEach(x => x.classList.add('expanded')); b.textContent = 'Collapse All Files'; }
+            allExpanded = !allExpanded;
         }
     </script>
 </body>

@@ -1,6 +1,6 @@
 [package]
 name = "scribe-scanner"
-version = "0.5.1"
+version = "1.0.0"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -13,8 +13,8 @@ description = "High-performance file system scanning and indexing for Scribe"
 
 [dependencies]
 # Local dependencies
-scribe-core = { version = "0.5.1", path = "../scribe-core" }
-scribe-selection = { version = "0.5.1", path = "../scribe-selection" }
+scribe-core = { version = "1.0.0", path = "../scribe-core" }
+scribe-selection = { version = "1.0.0", path = "../scribe-selection" }
 
 # Core dependencies
 serde = { workspace = true, features = ["derive"] }

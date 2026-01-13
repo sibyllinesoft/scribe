@@ -111,3 +111,145 @@ fn build_metadata(context: &CodeContext, options: &BundleOptions) -> HashMap<Str
     metadata.insert("total_tokens".to_string(), context.total_tokens.to_string());
     metadata
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::context::ContextFile;
+
+    fn create_test_context() -> CodeContext {
+        CodeContext {
+            files: vec![
+                ContextFile {
+                    path: "src/main.rs".to_string(),
+                    contents: Some("fn main() {}".to_string()),
+                    token_estimate: Some(10),
+                },
+                ContextFile {
+                    path: "src/lib.rs".to_string(),
+                    contents: Some("pub mod utils;".to_string()),
+                    token_estimate: Some(5),
+                },
+            ],
+            dependencies: vec!["dep1".to_string()],
+            total_tokens: 15,
+        }
+    }
+
+    #[test]
+    fn test_bundle_options_default() {
+        let options = BundleOptions::default();
+        assert_eq!(options.format, "json");
+        assert!(options.include_metadata);
+    }
+
+    #[test]
+    fn test_code_bundler_default() {
+        let bundler = CodeBundler::default();
+        // Just verify it can be created
+        let _ = bundler;
+    }
+
+    #[test]
+    fn test_code_bundler_new() {
+        let bundler = CodeBundler::new();
+        let _ = bundler;
+    }
+
+    #[test]
+    fn test_render_json() {
+        let context = create_test_context();
+        let result = render_json(&context).unwrap();
+
+        assert!(result.contains("\"total_tokens\": 15"));
+        assert!(result.contains("\"path\": \"src/main.rs\""));
+        assert!(result.contains("\"path\": \"src/lib.rs\""));
+        assert!(result.contains("fn main()"));
+        assert!(result.contains("pub mod utils"));
+    }
+
+    #[test]
+    fn test_render_plain() {
+        let context = create_test_context();
+        let result = render_plain(&context);
+
+        assert!(result.contains("===== src/main.rs ====="));
+        assert!(result.contains("fn main() {}"));
+        assert!(result.contains("===== src/lib.rs ====="));
+        assert!(result.contains("pub mod utils;"));
+    }
+
+    #[test]
+    fn test_render_plain_no_content() {
+        let context = CodeContext {
+            files: vec![ContextFile {
+                path: "src/empty.rs".to_string(),
+                contents: None,
+                token_estimate: None,
+            }],
+            dependencies: vec![],
+            total_tokens: 0,
+        };
+
+        let result = render_plain(&context);
+        assert!(result.contains("[content not loaded]"));
+    }
+
+    #[test]
+    fn test_build_metadata() {
+        let context = create_test_context();
+        let options = BundleOptions::default();
+
+        let metadata = build_metadata(&context, &options);
+
+        assert_eq!(metadata.get("format"), Some(&"json".to_string()));
+        assert_eq!(metadata.get("file_count"), Some(&"2".to_string()));
+        assert_eq!(metadata.get("total_tokens"), Some(&"15".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_bundle_json_format() {
+        let bundler = CodeBundler::new();
+        let context = create_test_context();
+        let options = BundleOptions {
+            format: "json".to_string(),
+            include_metadata: true,
+        };
+
+        let bundle = bundler.bundle(&context, &options).await.unwrap();
+
+        assert!(bundle.content.contains("\"total_tokens\""));
+        assert!(bundle.content.contains("src/main.rs"));
+        assert_eq!(bundle.metadata.get("format"), Some(&"json".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_bundle_plain_format() {
+        let bundler = CodeBundler::new();
+        let context = create_test_context();
+        let options = BundleOptions {
+            format: "plain".to_string(),
+            include_metadata: true,
+        };
+
+        let bundle = bundler.bundle(&context, &options).await.unwrap();
+
+        assert!(bundle.content.contains("====="));
+        assert!(bundle.content.contains("fn main()"));
+        assert_eq!(bundle.metadata.get("format"), Some(&"plain".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_bundle_no_metadata() {
+        let bundler = CodeBundler::new();
+        let context = create_test_context();
+        let options = BundleOptions {
+            format: "json".to_string(),
+            include_metadata: false,
+        };
+
+        let bundle = bundler.bundle(&context, &options).await.unwrap();
+
+        assert!(bundle.metadata.is_empty());
+    }
+}

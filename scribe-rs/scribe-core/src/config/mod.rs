@@ -767,4 +767,249 @@ mod tests {
 
         assert_ne!(hash1, hash3);
     }
+
+    #[test]
+    fn test_config_merge() {
+        let config1 = Config::default();
+        let mut config2 = Config::default();
+        config2.general.verbosity = 4;
+        config2.general.show_progress = false;
+        config2.filtering.max_file_size = 999;
+
+        let merged = config1.merge_with(config2);
+        assert_eq!(merged.general.verbosity, 4);
+        assert!(!merged.general.show_progress);
+        assert_eq!(merged.filtering.max_file_size, 999);
+    }
+
+    #[test]
+    fn test_yaml_not_supported() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let yaml_path = temp_file.path().with_extension("yaml");
+        std::fs::write(&yaml_path, "general:\n  verbosity: 1").unwrap();
+
+        let result = Config::load_from_file(&yaml_path);
+        assert!(result.is_err());
+
+        let config = Config::default();
+        let result = config.save_to_file(&yaml_path);
+        assert!(result.is_err());
+
+        // Also test .yml extension
+        let yml_path = temp_file.path().with_extension("yml");
+        std::fs::write(&yml_path, "general:\n  verbosity: 1").unwrap();
+        let result = Config::load_from_file(&yml_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_toml_not_supported() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let toml_path = temp_file.path().with_extension("toml");
+        std::fs::write(&toml_path, "[general]\nverbosity = 1").unwrap();
+
+        let result = Config::load_from_file(&toml_path);
+        assert!(result.is_err());
+
+        let config = Config::default();
+        let result = config.save_to_file(&toml_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unsupported_format() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let xml_path = temp_file.path().with_extension("xml");
+        std::fs::write(&xml_path, "<config></config>").unwrap();
+
+        let result = Config::load_from_file(&xml_path);
+        assert!(result.is_err());
+
+        let config = Config::default();
+        let result = config.save_to_file(&xml_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = Config::load_from_file("/nonexistent/path/config.json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_json_config() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let json_path = temp_file.path().with_extension("json");
+        std::fs::write(&json_path, "{ invalid json }").unwrap();
+
+        let result = Config::load_from_file(&json_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_glob_patterns() {
+        let mut config = FilteringConfig::default();
+        config.include_patterns.push("[invalid".to_string());
+
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_exclude_patterns() {
+        let mut config = FilteringConfig::default();
+        config.exclude_patterns = vec!["[invalid".to_string()];
+
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_analysis_config_validation() {
+        let mut config = AnalysisConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.cache_ttl = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scoring_config_validation() {
+        let mut config = ScoringConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.min_score_threshold = -0.5;
+        assert!(config.validate().is_err());
+
+        config.min_score_threshold = 1.5;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_performance_config_validation() {
+        let config = PerformanceConfig::default();
+        assert!(config.validate().is_ok());
+
+        let mut bad_config = PerformanceConfig::default();
+        bad_config.analysis_timeout = 0;
+        assert!(bad_config.validate().is_err());
+
+        let mut bad_config2 = PerformanceConfig::default();
+        bad_config2.global_timeout = 0;
+        assert!(bad_config2.validate().is_err());
+
+        let mut bad_config3 = PerformanceConfig::default();
+        bad_config3.batch_size = 0;
+        assert!(bad_config3.validate().is_err());
+    }
+
+    #[test]
+    fn test_git_config_validation() {
+        let config = GitConfig::default();
+        assert!(config.validate().is_ok());
+
+        let mut bad_config = GitConfig::default();
+        bad_config.git_timeout = 0;
+        assert!(bad_config.validate().is_err());
+    }
+
+    #[test]
+    fn test_general_config_with_working_dir() {
+        let mut config = GeneralConfig::default();
+        config.working_dir = Some(PathBuf::from("/some/path"));
+
+        // Test hashing works
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        config.hash(&mut hasher);
+    }
+
+    #[test]
+    fn test_filtering_config_with_ignore_files() {
+        let mut config = FilteringConfig::default();
+        config.ignore_files = vec![
+            PathBuf::from(".customignore"),
+            PathBuf::from(".otherignore"),
+        ];
+
+        // Test hashing works
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        config.hash(&mut hasher);
+    }
+
+    #[test]
+    fn test_filtering_config_with_languages() {
+        let mut config = FilteringConfig::default();
+        config.include_languages.insert(Language::Rust);
+        config.include_languages.insert(Language::Python);
+        config.exclude_languages.insert(Language::JavaScript);
+
+        // Test hashing works
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        config.hash(&mut hasher);
+    }
+
+    #[test]
+    fn test_analysis_config_hash() {
+        let mut config = AnalysisConfig::default();
+        config.language_overrides.insert("rs".to_string(), Language::Rust);
+        config.custom_extensions.insert("jsx".to_string(), Language::JavaScript);
+
+        // Test hashing works
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        config.hash(&mut hasher);
+    }
+
+    #[test]
+    fn test_scoring_config_hash() {
+        let config = ScoringConfig::default();
+
+        // Test hashing works
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        config.hash(&mut hasher);
+    }
+
+    #[test]
+    fn test_score_modifier_hash() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let modifiers = vec![
+            ScoreModifier::Add(0.5),
+            ScoreModifier::Multiply(2.0),
+            ScoreModifier::Set(0.75),
+            ScoreModifier::ConditionalBonus {
+                condition: "test".to_string(),
+                bonus: 0.1,
+            },
+        ];
+
+        for modifier in modifiers {
+            let mut hasher = DefaultHasher::new();
+            modifier.hash(&mut hasher);
+        }
+    }
+
+    #[test]
+    fn test_custom_scoring_rule() {
+        let rule = CustomScoringRule {
+            name: "Boost tests".to_string(),
+            pattern: "*_test.rs".to_string(),
+            modifier: ScoreModifier::Add(0.5),
+        };
+
+        assert_eq!(rule.name, "Boost tests");
+        assert_eq!(rule.pattern, "*_test.rs");
+    }
+
+    #[test]
+    fn test_empty_include_patterns_returns_none() {
+        let config = FilteringConfig::default();
+        let result = config.build_include_set().unwrap();
+        assert!(result.is_none());
+    }
 }

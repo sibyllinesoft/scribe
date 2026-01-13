@@ -651,4 +651,210 @@ mod tests {
         assert_eq!(stats.file_count, 1);
         assert_eq!(stats.total_size, 1000);
     }
+
+    #[test]
+    fn test_metadata_extractor_without_cache() {
+        let extractor = MetadataExtractor::without_cache();
+        assert!(!extractor.cache_enabled);
+        assert_eq!(extractor.cache.len(), 0);
+    }
+
+    #[test]
+    fn test_metadata_extractor_default() {
+        let extractor = MetadataExtractor::default();
+        assert!(extractor.cache_enabled);
+    }
+
+    #[test]
+    fn test_size_stats_empty() {
+        let files: Vec<FileMetadata> = vec![];
+        let extractor = MetadataExtractor::new();
+        let stats = extractor.calculate_size_stats(&files);
+
+        assert_eq!(stats.file_count, 0);
+        assert_eq!(stats.total_size, 0);
+    }
+
+    #[test]
+    fn test_size_stats_even_file_count() {
+        // Test median calculation with even number of files
+        let sizes = [1000, 2000, 3000, 4000];
+        let stats = SizeStats::from_sizes(&sizes);
+
+        assert_eq!(stats.file_count, 4);
+        // Median of 4 values should be average of 2nd and 3rd
+        assert_eq!(stats.median_size, 2500);
+    }
+
+    #[test]
+    fn test_is_likely_text_file_regular() {
+        let extractor = MetadataExtractor::new();
+
+        let metadata = FileMetadata {
+            size: 1000,
+            file_type: FileSystemType::RegularFile,
+            ..Default::default()
+        };
+
+        assert!(extractor.is_likely_text_file(&metadata));
+    }
+
+    #[test]
+    fn test_is_likely_text_file_symlink() {
+        let extractor = MetadataExtractor::new();
+
+        let metadata = FileMetadata {
+            size: 1000,
+            file_type: FileSystemType::SymbolicLink,
+            ..Default::default()
+        };
+
+        assert!(extractor.is_likely_text_file(&metadata));
+    }
+
+    #[test]
+    fn test_is_likely_text_file_too_large() {
+        let extractor = MetadataExtractor::new();
+
+        let metadata = FileMetadata {
+            size: 11 * 1024 * 1024, // 11MB
+            file_type: FileSystemType::RegularFile,
+            ..Default::default()
+        };
+
+        assert!(!extractor.is_likely_text_file(&metadata));
+    }
+
+    #[test]
+    fn test_is_likely_text_file_directory() {
+        let extractor = MetadataExtractor::new();
+
+        let metadata = FileMetadata {
+            size: 1000,
+            file_type: FileSystemType::Directory,
+            ..Default::default()
+        };
+
+        assert!(!extractor.is_likely_text_file(&metadata));
+    }
+
+    #[test]
+    fn test_is_recently_modified_none() {
+        let extractor = MetadataExtractor::new();
+
+        let metadata = FileMetadata {
+            modified: None,
+            ..Default::default()
+        };
+
+        assert!(!extractor.is_recently_modified(&metadata, 24));
+    }
+
+    #[test]
+    fn test_file_system_type_variants() {
+        assert_eq!(FileSystemType::RegularFile, FileSystemType::RegularFile);
+        assert_ne!(FileSystemType::Directory, FileSystemType::SymbolicLink);
+
+        // Test all variants exist
+        let _fifo = FileSystemType::FIFO;
+        let _socket = FileSystemType::Socket;
+        let _char = FileSystemType::CharacterDevice;
+        let _block = FileSystemType::BlockDevice;
+        let _unknown = FileSystemType::Unknown;
+    }
+
+    #[test]
+    fn test_size_stats_summary() {
+        let sizes = [1000, 2000, 3000];
+        let stats = SizeStats::from_sizes(&sizes);
+
+        let summary = stats.summary();
+        assert!(summary.contains("Files: 3"));
+        assert!(summary.contains("Total:"));
+    }
+
+    #[test]
+    fn test_size_stats_distribution_summary() {
+        let sizes = [500, 5000, 50000];
+        let stats = SizeStats::from_sizes(&sizes);
+
+        let summary = stats.distribution_summary();
+        assert!(summary.contains("Tiny:"));
+        assert!(summary.contains("Small:"));
+        assert!(summary.contains("Medium:"));
+        assert!(summary.contains("Large:"));
+        assert!(summary.contains("Huge:"));
+    }
+
+    #[test]
+    fn test_file_metadata_default() {
+        let metadata = FileMetadata::default();
+
+        assert_eq!(metadata.path, PathBuf::new());
+        assert_eq!(metadata.size, 0);
+        assert_eq!(metadata.size_human, "0 B");
+        assert!(metadata.created.is_none());
+        assert!(metadata.modified.is_none());
+        assert!(metadata.accessed.is_none());
+        assert!(!metadata.readonly);
+        assert!(!metadata.hidden);
+        assert!(!metadata.executable);
+        assert!(!metadata.symlink);
+        assert!(metadata.symlink_target.is_none());
+        assert_eq!(metadata.permissions, 0);
+        assert_eq!(metadata.file_type, FileSystemType::Unknown);
+        assert!(metadata.inode.is_none());
+        assert!(metadata.links.is_none());
+        assert!(metadata.uid.is_none());
+        assert!(metadata.gid.is_none());
+    }
+
+    #[test]
+    fn test_size_distribution_default() {
+        let dist = SizeDistribution::default();
+        assert_eq!(dist.tiny, 0);
+        assert_eq!(dist.small, 0);
+        assert_eq!(dist.medium, 0);
+        assert_eq!(dist.large, 0);
+        assert_eq!(dist.huge, 0);
+    }
+
+    #[test]
+    fn test_size_stats_default() {
+        let stats = SizeStats::default();
+        assert_eq!(stats.file_count, 0);
+        assert_eq!(stats.total_size, 0);
+        assert!(stats.total_size_human.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_extract_metadata_nonexistent_file() {
+        let extractor = MetadataExtractor::new();
+        let result = extractor.extract_metadata(Path::new("/nonexistent/path/file.txt")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_extract_metadata_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let extractor = MetadataExtractor::new();
+        let metadata = extractor.extract_metadata(temp_dir.path()).await.unwrap();
+
+        assert_eq!(metadata.file_type, FileSystemType::Directory);
+    }
+
+    #[tokio::test]
+    async fn test_without_cache_no_caching() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.txt");
+        fs::write(&test_file, "content").unwrap();
+
+        let extractor = MetadataExtractor::without_cache();
+
+        // Extract metadata
+        let _ = extractor.extract_metadata(&test_file).await.unwrap();
+
+        // Cache should still be empty
+        assert_eq!(extractor.cache.len(), 0);
+    }
 }

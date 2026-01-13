@@ -755,3 +755,570 @@ fn optimize_selection(
 
     selected
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_selection_config_default() {
+        let config = SelectionConfig::default();
+        assert_eq!(config.signature_boost, 1.5);
+        assert_eq!(config.chunk_boost, 1.2);
+    }
+
+    #[test]
+    fn test_selection_config_resolution() {
+        let config = SelectionConfig::resolution();
+        assert_eq!(config.signature_boost, 1.0);
+        assert_eq!(config.chunk_boost, 1.0);
+    }
+
+    #[test]
+    fn test_selection_config_coverage() {
+        let config = SelectionConfig::coverage();
+        assert_eq!(config.signature_boost, 2.0);
+        assert_eq!(config.chunk_boost, 1.5);
+    }
+
+    #[test]
+    fn test_selection_config_max_coverage() {
+        let config = SelectionConfig::max_coverage();
+        assert_eq!(config.signature_boost, 3.0);
+        assert_eq!(config.chunk_boost, 2.0);
+    }
+
+    #[test]
+    fn test_is_critical_doc_architecture() {
+        // Note: is_critical_doc expects lowercase input (path_lower parameter)
+        assert!(is_critical_doc("docs/architecture.md"));
+        assert!(is_critical_doc("architecture.md"));
+        assert!(is_critical_doc("design/architecture-overview.md"));
+    }
+
+    #[test]
+    fn test_is_critical_doc_design() {
+        assert!(is_critical_doc("docs/design.md"));
+        assert!(is_critical_doc("design.md"));
+    }
+
+    #[test]
+    fn test_is_critical_doc_api() {
+        assert!(is_critical_doc("docs/api.md"));
+        assert!(is_critical_doc("api.md"));
+        assert!(is_critical_doc("api-reference.md"));
+    }
+
+    #[test]
+    fn test_is_critical_doc_spec() {
+        assert!(is_critical_doc("docs/spec.md"));
+        assert!(is_critical_doc("specification.md"));
+    }
+
+    #[test]
+    fn test_is_critical_doc_changelog() {
+        // CRITICAL_DOC_FILES matches with ends_with, requires lowercase
+        assert!(is_critical_doc("changelog.md"));
+        assert!(is_critical_doc("docs/changelog.md"));
+    }
+
+    #[test]
+    fn test_is_critical_doc_contributing() {
+        assert!(is_critical_doc("contributing.md"));
+        assert!(is_critical_doc("docs/contributing.md"));
+    }
+
+    #[test]
+    fn test_is_critical_doc_non_critical() {
+        assert!(!is_critical_doc("readme.md"));
+        assert!(!is_critical_doc("notes.md"));
+        assert!(!is_critical_doc("todo.md"));
+    }
+
+    #[test]
+    fn test_critical_doc_keywords() {
+        assert_eq!(CRITICAL_DOC_KEYWORDS.len(), 4);
+        assert!(CRITICAL_DOC_KEYWORDS.contains(&"architecture"));
+        assert!(CRITICAL_DOC_KEYWORDS.contains(&"design"));
+        assert!(CRITICAL_DOC_KEYWORDS.contains(&"api"));
+        assert!(CRITICAL_DOC_KEYWORDS.contains(&"spec"));
+    }
+
+    #[test]
+    fn test_critical_doc_files() {
+        assert_eq!(CRITICAL_DOC_FILES.len(), 2);
+        assert!(CRITICAL_DOC_FILES.contains(&"changelog.md"));
+        assert!(CRITICAL_DOC_FILES.contains(&"contributing.md"));
+    }
+
+    #[test]
+    fn test_fidelity_candidate_density() {
+        // Verify density calculation logic
+        let score = 100.0;
+        let tokens = 50usize;
+        let density = score / tokens as f64;
+        assert_eq!(density, 2.0);
+    }
+
+    #[test]
+    fn test_optimize_selection_empty() {
+        let mut candidates: Vec<FidelityCandidate> = vec![];
+        let selected = optimize_selection(&mut candidates, 1000);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn test_optimize_selection_single_fits() {
+        let mut candidates = vec![FidelityCandidate {
+            file_index: 0,
+            mode: FidelityMode::Full,
+            score: 100.0,
+            tokens: 50,
+            density: 2.0,
+            content: "test content".to_string(),
+        }];
+
+        let selected = optimize_selection(&mut candidates, 1000);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0], 0);
+    }
+
+    #[test]
+    fn test_optimize_selection_budget_constraint() {
+        let mut candidates = vec![
+            FidelityCandidate {
+                file_index: 0,
+                mode: FidelityMode::Full,
+                score: 100.0,
+                tokens: 500,
+                density: 0.2,
+                content: "large content".to_string(),
+            },
+            FidelityCandidate {
+                file_index: 1,
+                mode: FidelityMode::Signature,
+                score: 50.0,
+                tokens: 100,
+                density: 0.5, // Higher density
+                content: "small content".to_string(),
+            },
+        ];
+
+        // With only 200 tokens budget, should select the smaller one
+        let selected = optimize_selection(&mut candidates, 200);
+        assert_eq!(selected.len(), 1);
+        // The algorithm sorts by density, so the higher density one should be selected
+    }
+
+    #[test]
+    fn test_optimize_selection_prefers_higher_density() {
+        let mut candidates = vec![
+            FidelityCandidate {
+                file_index: 0,
+                mode: FidelityMode::Full,
+                score: 100.0,
+                tokens: 100,
+                density: 1.0, // Lower density
+                content: "content1".to_string(),
+            },
+            FidelityCandidate {
+                file_index: 1,
+                mode: FidelityMode::Signature,
+                score: 100.0,
+                tokens: 50,
+                density: 2.0, // Higher density
+                content: "content2".to_string(),
+            },
+        ];
+
+        // Should prefer the higher density candidate first
+        let selected = optimize_selection(&mut candidates, 1000);
+        assert_eq!(selected.len(), 2);
+    }
+
+    #[test]
+    fn test_optimize_selection_same_file_different_modes() {
+        // When same file has multiple modes, only one should be selected
+        let mut candidates = vec![
+            FidelityCandidate {
+                file_index: 0,
+                mode: FidelityMode::Full,
+                score: 100.0,
+                tokens: 200,
+                density: 0.5,
+                content: "full content".to_string(),
+            },
+            FidelityCandidate {
+                file_index: 0, // Same file
+                mode: FidelityMode::Signature,
+                score: 80.0,
+                tokens: 50,
+                density: 1.6, // Higher density
+                content: "signature".to_string(),
+            },
+        ];
+
+        let selected = optimize_selection(&mut candidates, 1000);
+        // Should only select one since they're the same file
+        assert_eq!(selected.len(), 1);
+    }
+
+    #[test]
+    fn test_selection_config_clone() {
+        let config = SelectionConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.signature_boost, cloned.signature_boost);
+        assert_eq!(config.chunk_boost, cloned.chunk_boost);
+    }
+
+    #[test]
+    fn test_selection_config_serialize() {
+        let config = SelectionConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: SelectionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.signature_boost, deserialized.signature_boost);
+        assert_eq!(config.chunk_boost, deserialized.chunk_boost);
+    }
+
+    #[test]
+    fn test_is_in_ignored_dir() {
+        assert!(is_in_ignored_dir("node_modules/package/file.js"));
+        assert!(is_in_ignored_dir("target/debug/build.rs"));
+        assert!(is_in_ignored_dir("vendor/dep/lib.rs"));
+        assert!(is_in_ignored_dir(".git/config"));
+        assert!(is_in_ignored_dir("__pycache__/module.pyc"));
+        assert!(is_in_ignored_dir("build/output.o"));
+        assert!(is_in_ignored_dir("dist/bundle.js"));
+        assert!(is_in_ignored_dir(".cache/data.json"));
+
+        // Non-ignored directories
+        assert!(!is_in_ignored_dir("src/main.rs"));
+        assert!(!is_in_ignored_dir("lib/utils.py"));
+        assert!(!is_in_ignored_dir("docs/readme.md"));
+    }
+
+    #[test]
+    fn test_ignored_dirs_constant() {
+        assert_eq!(IGNORED_DIRS.len(), 8);
+        assert!(IGNORED_DIRS.contains(&"node_modules/"));
+        assert!(IGNORED_DIRS.contains(&"target/"));
+        assert!(IGNORED_DIRS.contains(&"vendor/"));
+        assert!(IGNORED_DIRS.contains(&".git/"));
+        assert!(IGNORED_DIRS.contains(&"__pycache__/"));
+        assert!(IGNORED_DIRS.contains(&"build/"));
+        assert!(IGNORED_DIRS.contains(&"dist/"));
+        assert!(IGNORED_DIRS.contains(&".cache/"));
+    }
+
+    #[test]
+    fn test_root_config_files_constant() {
+        assert_eq!(ROOT_CONFIG_FILES.len(), 12);
+        assert!(ROOT_CONFIG_FILES.contains(&"package.json"));
+        assert!(ROOT_CONFIG_FILES.contains(&"cargo.toml"));
+        assert!(ROOT_CONFIG_FILES.contains(&"pyproject.toml"));
+        assert!(ROOT_CONFIG_FILES.contains(&"requirements.txt"));
+        assert!(ROOT_CONFIG_FILES.contains(&"go.mod"));
+        assert!(ROOT_CONFIG_FILES.contains(&"pom.xml"));
+        assert!(ROOT_CONFIG_FILES.contains(&"build.gradle"));
+        assert!(ROOT_CONFIG_FILES.contains(&"composer.json"));
+        assert!(ROOT_CONFIG_FILES.contains(&"tsconfig.json"));
+        assert!(ROOT_CONFIG_FILES.contains(&".gitignore"));
+        assert!(ROOT_CONFIG_FILES.contains(&"dockerfile"));
+        assert!(ROOT_CONFIG_FILES.contains(&"docker-compose.yml"));
+    }
+
+    #[test]
+    fn test_is_mandatory_readme() {
+        // Root-level readme files are mandatory
+        assert!(is_mandatory_readme("readme.md"));
+        assert!(is_mandatory_readme("readme"));
+        assert!(is_mandatory_readme("readme.txt"));
+        assert!(is_mandatory_readme("readme.markdown"));
+
+        // Single directory depth is ok
+        assert!(is_mandatory_readme("docs/readme.md"));
+
+        // Deep paths with proper extensions
+        assert!(is_mandatory_readme("docs/guide/readme.md"));
+        assert!(is_mandatory_readme("packages/core/readme.markdown"));
+
+        // Non-readme files
+        assert!(!is_mandatory_readme("main.rs"));
+        assert!(!is_mandatory_readme("notes.md"));
+    }
+
+    #[test]
+    fn test_is_root_config_file() {
+        // Root-level config files
+        assert!(is_root_config_file("package.json"));
+        assert!(is_root_config_file("cargo.toml"));
+        assert!(is_root_config_file("pyproject.toml"));
+        assert!(is_root_config_file(".gitignore"));
+
+        // Nested config files are not root config
+        assert!(!is_root_config_file("src/package.json"));
+        assert!(!is_root_config_file("packages/core/cargo.toml"));
+
+        // Non-config files
+        assert!(!is_root_config_file("main.rs"));
+        assert!(!is_root_config_file("unknown.config"));
+    }
+
+    #[test]
+    fn test_is_entrypoint_file() {
+        // Source directory entrypoints
+        assert!(is_entrypoint_file("src/main.rs"));
+        assert!(is_entrypoint_file("src/index.ts"));
+        assert!(is_entrypoint_file("lib/main.py"));
+        assert!(is_entrypoint_file("lib/index.js"));
+
+        // Root-level entrypoints
+        assert!(is_entrypoint_file("main.rs"));
+        assert!(is_entrypoint_file("index.js"));
+
+        // Non-entrypoint files
+        assert!(!is_entrypoint_file("utils/helpers.rs"));
+        assert!(!is_entrypoint_file("components/button.tsx"));
+    }
+
+    #[test]
+    fn test_generate_fidelity_candidates_full_only() {
+        let options = vec![FileFidelityOptions {
+            file: create_test_file_info("test.rs"),
+            priority: 1.0,
+            full_content: "fn main() {}".to_string(),
+            full_tokens: 10,
+            chunk_content: None,
+            chunk_tokens: None,
+            signature_content: "fn main()".to_string(),
+            signature_tokens: 3,
+        }];
+
+        let config = SelectionConfig::default();
+        let candidates = generate_fidelity_candidates(&options, &config);
+
+        // Should have 2 candidates: Full and Signature (no chunk)
+        assert_eq!(candidates.len(), 2);
+
+        let full = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Full)).unwrap();
+        assert_eq!(full.tokens, 10);
+        assert_eq!(full.score, 1.0);
+
+        let sig = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Signature)).unwrap();
+        assert_eq!(sig.tokens, 3);
+        assert_eq!(sig.score, 1.0 * 1.5); // priority * signature_boost
+    }
+
+    #[test]
+    fn test_generate_fidelity_candidates_with_chunk() {
+        let options = vec![FileFidelityOptions {
+            file: create_test_file_info("test.rs"),
+            priority: 2.0,
+            full_content: "fn main() {\n    println!(\"hello\");\n}".to_string(),
+            full_tokens: 20,
+            chunk_content: Some("fn main() { ... }".to_string()),
+            chunk_tokens: Some(10),
+            signature_content: "fn main()".to_string(),
+            signature_tokens: 5,
+        }];
+
+        let config = SelectionConfig::default();
+        let candidates = generate_fidelity_candidates(&options, &config);
+
+        // Should have 3 candidates: Full, Chunk, and Signature
+        assert_eq!(candidates.len(), 3);
+
+        let chunk = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Chunk)).unwrap();
+        assert_eq!(chunk.tokens, 10);
+        assert_eq!(chunk.score, 2.0 * 1.2); // priority * chunk_boost
+    }
+
+    #[test]
+    fn test_compute_file_priority_no_weights() {
+        let priority = compute_file_priority(0.5, "src/main.rs", None);
+        assert_eq!(priority, 0.5);
+    }
+
+    #[test]
+    fn test_compute_file_priority_with_weights() {
+        let mut weights = FileWeights::new();
+        weights.set("src/main.rs".to_string(), 0.8);
+
+        let priority = compute_file_priority(0.5, "src/main.rs", Some(&weights));
+        assert_eq!(priority, (0.5 + 0.8) / 2.0); // Average of centrality and external weight
+    }
+
+    #[test]
+    fn test_compute_file_priority_zero_weight() {
+        let weights = FileWeights::new();
+
+        // File not in weights should return just centrality
+        let priority = compute_file_priority(0.5, "src/main.rs", Some(&weights));
+        assert_eq!(priority, 0.5);
+    }
+
+    #[test]
+    fn test_mock_scan_result() {
+        let file = create_test_file_info("src/main.rs");
+        let mock = MockScanResult::from_file_info(&file);
+
+        assert!(mock.relative_path().contains("main.rs"));
+        assert_eq!(mock.depth(), mock.relative_path.matches('/').count());
+        assert!(!mock.is_docs());
+        assert!(!mock.is_readme());
+        assert!(mock.is_entrypoint()); // contains "main"
+        assert!(!mock.has_examples());
+        assert!(!mock.is_test());
+        assert_eq!(mock.priority_boost(), 0.0);
+        assert_eq!(mock.churn_score(), 0.0);
+        assert_eq!(mock.centrality_in(), 0.0); // No centrality score set
+        assert!(mock.imports().is_none());
+        assert!(mock.doc_analysis().is_none());
+    }
+
+    #[test]
+    fn test_mock_scan_result_readme() {
+        let file = create_test_file_info("README.md");
+        let mock = MockScanResult::from_file_info(&file);
+
+        assert!(mock.is_readme());
+    }
+
+    #[test]
+    fn test_mock_scan_result_test_file() {
+        let file = create_test_file_info("src/test_utils.rs");
+        let mock = MockScanResult::from_file_info(&file);
+
+        assert!(mock.is_test());
+    }
+
+    #[test]
+    fn test_mock_scan_result_example() {
+        let file = create_test_file_info("examples/basic.rs");
+        let mock = MockScanResult::from_file_info(&file);
+
+        assert!(mock.has_examples());
+    }
+
+    #[test]
+    fn test_mock_scan_result_with_centrality() {
+        let mut file = create_test_file_info("src/lib.rs");
+        file.centrality_score = Some(0.75);
+
+        let mock = MockScanResult::from_file_info(&file);
+        assert_eq!(mock.centrality_in(), 0.75);
+    }
+
+    #[test]
+    fn test_optimize_selection_exact_budget() {
+        let mut candidates = vec![
+            FidelityCandidate {
+                file_index: 0,
+                mode: FidelityMode::Full,
+                score: 100.0,
+                tokens: 100,
+                density: 1.0,
+                content: "content".to_string(),
+            },
+        ];
+
+        // Exact budget fit
+        let selected = optimize_selection(&mut candidates, 100);
+        assert_eq!(selected.len(), 1);
+    }
+
+    #[test]
+    fn test_optimize_selection_just_over_budget() {
+        let mut candidates = vec![
+            FidelityCandidate {
+                file_index: 0,
+                mode: FidelityMode::Full,
+                score: 100.0,
+                tokens: 101,
+                density: 0.99,
+                content: "content".to_string(),
+            },
+        ];
+
+        // Just over budget
+        let selected = optimize_selection(&mut candidates, 100);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn test_fidelity_candidate_mode_coverage() {
+        // Test all fidelity modes
+        let modes = vec![FidelityMode::Full, FidelityMode::Chunk, FidelityMode::Signature];
+        for mode in modes {
+            let candidate = FidelityCandidate {
+                file_index: 0,
+                mode: mode.clone(),
+                score: 1.0,
+                tokens: 10,
+                density: 0.1,
+                content: "test".to_string(),
+            };
+            match candidate.mode {
+                FidelityMode::Full => assert!(true),
+                FidelityMode::Chunk => assert!(true),
+                FidelityMode::Signature => assert!(true),
+            }
+        }
+    }
+
+    #[test]
+    fn test_file_fidelity_options_debug() {
+        let options = FileFidelityOptions {
+            file: create_test_file_info("test.rs"),
+            priority: 1.0,
+            full_content: "content".to_string(),
+            full_tokens: 10,
+            chunk_content: Some("chunk".to_string()),
+            chunk_tokens: Some(5),
+            signature_content: "sig".to_string(),
+            signature_tokens: 2,
+        };
+
+        // Test debug output works
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_fidelity_candidate_debug() {
+        let candidate = FidelityCandidate {
+            file_index: 0,
+            mode: FidelityMode::Full,
+            score: 100.0,
+            tokens: 50,
+            density: 2.0,
+            content: "test".to_string(),
+        };
+
+        let debug_str = format!("{:?}", candidate);
+        assert!(debug_str.contains("100"));
+    }
+
+    // Helper function to create a test FileInfo
+    fn create_test_file_info(path: &str) -> FileInfo {
+        use scribe_core::file::{FileWeight, RenderDecision};
+        use std::path::PathBuf;
+        FileInfo {
+            path: PathBuf::from(path),
+            relative_path: path.to_string(),
+            size: 100,
+            modified: None,
+            decision: RenderDecision::include("test"),
+            file_type: FileType::Source { language: scribe_core::file::Language::Rust },
+            language: scribe_core::file::Language::Rust,
+            content: None,
+            token_estimate: None,
+            line_count: None,
+            char_count: None,
+            is_binary: false,
+            git_status: None,
+            weight: FileWeight::default(),
+            centrality_score: None,
+        }
+    }
+}

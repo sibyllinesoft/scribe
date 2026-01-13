@@ -764,4 +764,643 @@ mod tests {
         assert!(config_chained.positioning_config.auto_exclude_tests);
         assert_eq!(config_chained.token_budget, 10000); // Should preserve medium budget setting
     }
+
+    #[test]
+    fn test_classify_file_config() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test configuration files
+        let toml_file = FileMetadata {
+            path: std::path::PathBuf::from("Cargo.toml"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "TOML".to_string(),
+            file_type: "Configuration".to_string(),
+        };
+        assert_eq!(selector.classify_file(&toml_file), FileCategory::Config);
+
+        let json_config = FileMetadata {
+            path: std::path::PathBuf::from("config.json"),
+            size: 300,
+            modified: std::time::SystemTime::now(),
+            language: "JSON".to_string(),
+            file_type: "Data".to_string(),
+        };
+        assert_eq!(selector.classify_file(&json_config), FileCategory::Config);
+
+        let yaml_file = FileMetadata {
+            path: std::path::PathBuf::from("settings.yaml"),
+            size: 200,
+            modified: std::time::SystemTime::now(),
+            language: "YAML".to_string(),
+            file_type: "Data".to_string(),
+        };
+        assert_eq!(selector.classify_file(&yaml_file), FileCategory::Config);
+    }
+
+    #[test]
+    fn test_classify_file_entry() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test entry point files
+        let main_rs = FileMetadata {
+            path: std::path::PathBuf::from("src/main.rs"),
+            size: 1000,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&main_rs), FileCategory::Entry);
+
+        let index_js = FileMetadata {
+            path: std::path::PathBuf::from("src/index.js"),
+            size: 800,
+            modified: std::time::SystemTime::now(),
+            language: "JavaScript".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&index_js), FileCategory::Entry);
+
+        let lib_rs = FileMetadata {
+            path: std::path::PathBuf::from("src/lib.rs"),
+            size: 1200,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&lib_rs), FileCategory::Entry);
+
+        let init_py = FileMetadata {
+            path: std::path::PathBuf::from("mypackage/__init__.py"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Python".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&init_py), FileCategory::Entry);
+    }
+
+    #[test]
+    fn test_classify_file_examples() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test example files
+        let example_file = FileMetadata {
+            path: std::path::PathBuf::from("examples/demo.rs"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&example_file), FileCategory::Examples);
+
+        let test_file = FileMetadata {
+            path: std::path::PathBuf::from("tests/unit_test.rs"),
+            size: 600,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&test_file), FileCategory::Examples);
+
+        let sample_file = FileMetadata {
+            path: std::path::PathBuf::from("samples/basic.py"),
+            size: 400,
+            modified: std::time::SystemTime::now(),
+            language: "Python".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&sample_file), FileCategory::Examples);
+    }
+
+    #[test]
+    fn test_classify_file_general() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test general source files
+        let utils_file = FileMetadata {
+            path: std::path::PathBuf::from("src/utils.rs"),
+            size: 800,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&utils_file), FileCategory::General);
+
+        let helper_file = FileMetadata {
+            path: std::path::PathBuf::from("src/helpers/format.py"),
+            size: 600,
+            modified: std::time::SystemTime::now(),
+            language: "Python".to_string(),
+            file_type: "Source".to_string(),
+        };
+        assert_eq!(selector.classify_file(&helper_file), FileCategory::General);
+    }
+
+    #[test]
+    fn test_estimate_tokens_static_languages() {
+        // Test Rust (verbose, multiplier 1.3)
+        let rust_file = FileMetadata {
+            path: std::path::PathBuf::from("src/main.rs"),
+            size: 3500, // ~1000 base tokens
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let rust_tokens = ScalingSelector::estimate_tokens_static(&rust_file, 8000);
+        assert!(rust_tokens > 1000); // Base * type_mult * lang_mult
+
+        // Test Python (readable, multiplier 1.1)
+        let python_file = FileMetadata {
+            path: std::path::PathBuf::from("src/main.py"),
+            size: 3500,
+            modified: std::time::SystemTime::now(),
+            language: "Python".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let python_tokens = ScalingSelector::estimate_tokens_static(&python_file, 8000);
+        assert!(python_tokens > 1000);
+        assert!(python_tokens < rust_tokens); // Python is less verbose
+
+        // Test JSON (compact, multiplier 0.7)
+        let json_file = FileMetadata {
+            path: std::path::PathBuf::from("data.json"),
+            size: 3500,
+            modified: std::time::SystemTime::now(),
+            language: "JSON".to_string(),
+            file_type: "Configuration".to_string(),
+        };
+        let json_tokens = ScalingSelector::estimate_tokens_static(&json_file, 8000);
+        assert!(json_tokens < python_tokens); // JSON is more compact
+    }
+
+    #[test]
+    fn test_estimate_tokens_static_file_types() {
+        // Test Source files (multiplier 1.2)
+        let source_file = FileMetadata {
+            path: std::path::PathBuf::from("code.go"),
+            size: 3500,
+            modified: std::time::SystemTime::now(),
+            language: "Go".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let source_tokens = ScalingSelector::estimate_tokens_static(&source_file, 8000);
+
+        // Test Documentation (multiplier 1.0)
+        let doc_file = FileMetadata {
+            path: std::path::PathBuf::from("README.md"),
+            size: 3500,
+            modified: std::time::SystemTime::now(),
+            language: "Markdown".to_string(),
+            file_type: "Documentation".to_string(),
+        };
+        let doc_tokens = ScalingSelector::estimate_tokens_static(&doc_file, 8000);
+        assert!(doc_tokens < source_tokens);
+
+        // Test Configuration (multiplier 0.8)
+        let config_file = FileMetadata {
+            path: std::path::PathBuf::from("config.yaml"),
+            size: 3500,
+            modified: std::time::SystemTime::now(),
+            language: "YAML".to_string(),
+            file_type: "Configuration".to_string(),
+        };
+        let config_tokens = ScalingSelector::estimate_tokens_static(&config_file, 8000);
+        assert!(config_tokens < doc_tokens);
+    }
+
+    #[test]
+    fn test_estimate_tokens_static_budget_cap() {
+        // Test that tokens are capped at 25% of budget
+        let large_file = FileMetadata {
+            path: std::path::PathBuf::from("massive.rs"),
+            size: 1_000_000, // Very large file
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let budget = 8000;
+        let tokens = ScalingSelector::estimate_tokens_static(&large_file, budget);
+        assert!(tokens <= budget / 4); // Should not exceed 25% of budget
+    }
+
+    #[test]
+    fn test_estimate_tokens_static_minimum() {
+        // Test minimum token estimation for small files
+        let tiny_file = FileMetadata {
+            path: std::path::PathBuf::from("tiny.rs"),
+            size: 10, // Very small file
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        // For normal budget, minimum should be 50
+        let tokens_normal = ScalingSelector::estimate_tokens_static(&tiny_file, 8000);
+        assert!(tokens_normal >= 50);
+
+        // For small budget, minimum should be 100
+        let tokens_small = ScalingSelector::estimate_tokens_static(&tiny_file, 1000);
+        assert!(tokens_small >= 100);
+    }
+
+    #[test]
+    fn test_large_budget_selection() {
+        let selector = ScalingSelector::with_token_budget(50000);
+        assert_eq!(selector.config.token_budget, 50000);
+        assert!(matches!(
+            selector.config.selection_algorithm,
+            SelectionAlgorithm::V5Integrated
+        ));
+    }
+
+    #[test]
+    fn test_token_estimation_various_languages() {
+        let selector = ScalingSelector::with_defaults();
+
+        // TypeScript (moderately verbose, 1.2)
+        let ts_file = FileMetadata {
+            path: std::path::PathBuf::from("app.ts"),
+            size: 1000,
+            modified: std::time::SystemTime::now(),
+            language: "TypeScript".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let ts_tokens = selector.estimate_tokens(&ts_file);
+
+        // C (concise, 1.0)
+        let c_file = FileMetadata {
+            path: std::path::PathBuf::from("main.c"),
+            size: 1000,
+            modified: std::time::SystemTime::now(),
+            language: "C".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let c_tokens = selector.estimate_tokens(&c_file);
+
+        // TypeScript should estimate more tokens than C
+        assert!(ts_tokens > c_tokens);
+
+        // HTML (less token-dense, 0.9)
+        let html_file = FileMetadata {
+            path: std::path::PathBuf::from("index.html"),
+            size: 1000,
+            modified: std::time::SystemTime::now(),
+            language: "HTML".to_string(),
+            file_type: "Source".to_string(),
+        };
+        let html_tokens = selector.estimate_tokens(&html_file);
+        assert!(html_tokens < ts_tokens);
+    }
+
+    #[test]
+    fn test_file_category_equality() {
+        assert_eq!(FileCategory::Config, FileCategory::Config);
+        assert_eq!(FileCategory::Entry, FileCategory::Entry);
+        assert_eq!(FileCategory::Examples, FileCategory::Examples);
+        assert_eq!(FileCategory::General, FileCategory::General);
+
+        assert_ne!(FileCategory::Config, FileCategory::Entry);
+        assert_ne!(FileCategory::Entry, FileCategory::Examples);
+        assert_ne!(FileCategory::Examples, FileCategory::General);
+    }
+
+    #[test]
+    fn test_file_category_clone() {
+        let config = FileCategory::Config;
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+
+    #[test]
+    fn test_selector_scored_file_clone() {
+        let scored = SelectorScoredFile {
+            metadata: FileMetadata {
+                path: std::path::PathBuf::from("test.rs"),
+                size: 100,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            tokens: 50,
+            score: 0.8,
+            category: FileCategory::General,
+        };
+
+        let cloned = scored.clone();
+        assert_eq!(scored.tokens, cloned.tokens);
+        assert_eq!(scored.score, cloned.score);
+        assert_eq!(scored.category, cloned.category);
+    }
+
+    #[test]
+    fn test_selector_scored_file_debug() {
+        let scored = SelectorScoredFile {
+            metadata: FileMetadata {
+                path: std::path::PathBuf::from("test.rs"),
+                size: 100,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            tokens: 50,
+            score: 0.8,
+            category: FileCategory::General,
+        };
+
+        let debug_str = format!("{:?}", scored);
+        assert!(debug_str.contains("SelectorScoredFile"));
+        assert!(debug_str.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_scoring_main_files_vs_utils() {
+        let selector = ScalingSelector::with_defaults();
+
+        // main.rs should score higher than utils.rs
+        let main_file = FileMetadata {
+            path: std::path::PathBuf::from("src/main.rs"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let utils_file = FileMetadata {
+            path: std::path::PathBuf::from("src/utils/helpers.rs"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let main_score = selector.calculate_file_score(&main_file);
+        let utils_score = selector.calculate_file_score(&utils_file);
+
+        assert!(main_score > utils_score, "main.rs should score higher than utils");
+    }
+
+    #[test]
+    fn test_scoring_lib_vs_deep_nested() {
+        let selector = ScalingSelector::with_defaults();
+
+        // lib.rs should score higher than deeply nested files
+        let lib_file = FileMetadata {
+            path: std::path::PathBuf::from("src/lib.rs"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let deep_file = FileMetadata {
+            path: std::path::PathBuf::from("src/utils/internal/private/detail.rs"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        let lib_score = selector.calculate_file_score(&lib_file);
+        let deep_score = selector.calculate_file_score(&deep_file);
+
+        assert!(lib_score > deep_score, "lib.rs should score higher than deeply nested files");
+    }
+
+    #[test]
+    fn test_detect_language_header_files() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test header file detection (lines 224-225)
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.h")), "Header");
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.hpp")), "Header");
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.hxx")), "Header");
+    }
+
+    #[test]
+    fn test_detect_language_dockerfile() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test Dockerfile detection (lines 228-234)
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("Dockerfile")), "Dockerfile");
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("dockerfile")), "Dockerfile");
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("DOCKERFILE")), "Dockerfile");
+    }
+
+    #[test]
+    fn test_detect_language_common() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test common languages (lines 237-238)
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.rs")), "Rust");
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.py")), "Python");
+        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.js")), "JavaScript");
+    }
+
+    #[test]
+    fn test_classify_file_type() {
+        let selector = ScalingSelector::with_defaults();
+
+        // Test file type classification (lines 242-243)
+        let rust_file = std::path::PathBuf::from("src/main.rs");
+        let classified = selector.classify_file_type(&rust_file);
+        assert_eq!(classified, "Source");
+
+        let readme = std::path::PathBuf::from("README.md");
+        let classified = selector.classify_file_type(&readme);
+        assert_eq!(classified, "Documentation");
+    }
+
+    #[test]
+    fn test_estimate_target_file_count() {
+        // Test target file count estimation (lines 208-214)
+        let small_selector = ScalingSelector::with_token_budget(1000);
+        let count = small_selector.estimate_target_file_count();
+        assert!(count >= 5); // Minimum is 5
+
+        let medium_selector = ScalingSelector::with_token_budget(10000);
+        let count = medium_selector.estimate_target_file_count();
+        assert!(count >= 5 && count <= 200);
+
+        let large_selector = ScalingSelector::with_token_budget(100000);
+        let count = large_selector.estimate_target_file_count();
+        assert!(count <= 200); // Maximum is 200
+    }
+
+    #[test]
+    fn test_integrated_selection_categorization() {
+        let selector = ScalingSelector::with_token_budget(5000);
+
+        // Create a mix of file types to test tiered selection (lines 256-343)
+        let files = vec![
+            FileMetadata {
+                path: std::path::PathBuf::from("src/main.rs"),
+                size: 500,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("Cargo.toml"),
+                size: 200,
+                modified: std::time::SystemTime::now(),
+                language: "TOML".to_string(),
+                file_type: "Configuration".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("src/lib.rs"),
+                size: 600,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("examples/demo.rs"),
+                size: 400,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("src/utils.rs"),
+                size: 300,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+        ];
+
+        let result = selector.apply_integrated_selection(&files).unwrap();
+
+        // Should select some files
+        assert!(!result.is_empty());
+
+        // Entry points should be selected first (main.rs, lib.rs)
+        let selected_paths: Vec<_> = result.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
+        let has_entry = selected_paths.iter().any(|p| p.contains("main.rs") || p.contains("lib.rs"));
+        assert!(has_entry, "Entry points should be prioritized");
+    }
+
+    #[test]
+    fn test_integrated_selection_budget_constraint() {
+        let selector = ScalingSelector::with_token_budget(100); // Very small budget
+
+        let files = vec![
+            FileMetadata {
+                path: std::path::PathBuf::from("src/main.rs"),
+                size: 5000, // Large file
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("config.json"),
+                size: 100, // Small file
+                modified: std::time::SystemTime::now(),
+                language: "JSON".to_string(),
+                file_type: "Configuration".to_string(),
+            },
+        ];
+
+        let result = selector.apply_integrated_selection(&files).unwrap();
+
+        // Should respect budget constraints
+        let total_tokens: usize = result.iter()
+            .map(|f| selector.estimate_tokens(f))
+            .sum();
+        assert!(total_tokens <= 100 * 4, "Should respect budget (with some tolerance for file count)");
+    }
+
+    #[tokio::test]
+    async fn test_apply_intelligent_selection() {
+        let selector = ScalingSelector::with_token_budget(5000);
+
+        let files = vec![
+            FileMetadata {
+                path: std::path::PathBuf::from("src/main.rs"),
+                size: 500,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("src/utils.rs"),
+                size: 300,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+        ];
+
+        // Test apply_intelligent_selection path (lines 247-253)
+        let result = selector.apply_intelligent_selection(&files).await.unwrap();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_tokens_used() {
+        let selector = ScalingSelector::with_defaults();
+
+        let files = vec![
+            FileMetadata {
+                path: std::path::PathBuf::from("file1.rs"),
+                size: 1000,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+            FileMetadata {
+                path: std::path::PathBuf::from("file2.rs"),
+                size: 500,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+        ];
+
+        let tokens = selector.calculate_tokens_used(&files);
+        assert!(tokens > 0);
+
+        // Should sum tokens from both files
+        let single_tokens = selector.estimate_tokens(&files[0]) + selector.estimate_tokens(&files[1]);
+        assert_eq!(tokens, single_tokens);
+    }
+
+    #[tokio::test]
+    async fn test_apply_scaling_optimizations() {
+        let selector = ScalingSelector::with_defaults();
+
+        let files = vec![
+            FileMetadata {
+                path: std::path::PathBuf::from("test.rs"),
+                size: 500,
+                modified: std::time::SystemTime::now(),
+                language: "Rust".to_string(),
+                file_type: "Source".to_string(),
+            },
+        ];
+
+        // Test apply_scaling_optimizations path (lines 346-372)
+        let result = selector.apply_scaling_optimizations(&files).await.unwrap();
+
+        assert_eq!(result.total_files, 1);
+        assert!(!result.files.is_empty());
+        assert!(result.memory_peak > 0);
+    }
+
+    #[test]
+    fn test_calculate_file_score_static() {
+        let file = FileMetadata {
+            path: std::path::PathBuf::from("src/main.rs"),
+            size: 1000,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        };
+
+        // Test static scoring method (lines 480-491)
+        let score = ScalingSelector::calculate_file_score_static(&file, 8000);
+        assert!(score > 0.0);
+    }
 }

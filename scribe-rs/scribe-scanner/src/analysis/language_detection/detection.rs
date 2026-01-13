@@ -356,3 +356,397 @@ pub fn apply_framework_bias(
     result.confidence = result.confidence.min(1.0);
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn create_extension_map() -> HashMap<String, Vec<(Language, f32)>> {
+        let mut map = HashMap::new();
+        map.insert("rs".to_string(), vec![(Language::Rust, 1.0)]);
+        map.insert("py".to_string(), vec![(Language::Python, 1.0)]);
+        map.insert("js".to_string(), vec![(Language::JavaScript, 1.0)]);
+        map.insert("ts".to_string(), vec![(Language::TypeScript, 1.0)]);
+        map.insert("go".to_string(), vec![(Language::Go, 1.0)]);
+        map.insert("java".to_string(), vec![(Language::Java, 1.0)]);
+        map.insert("c".to_string(), vec![(Language::C, 1.0)]);
+        map.insert("cpp".to_string(), vec![(Language::Cpp, 1.0)]);
+        map
+    }
+
+    fn create_filename_patterns() -> HashMap<String, Language> {
+        let mut map = HashMap::new();
+        map.insert("Makefile".to_string(), Language::Unknown);
+        map.insert("Dockerfile".to_string(), Language::Unknown);
+        map
+    }
+
+    fn create_shebang_patterns() -> HashMap<String, Language> {
+        let mut map = HashMap::new();
+        map.insert("python".to_string(), Language::Python);
+        map.insert("python3".to_string(), Language::Python);
+        map.insert("bash".to_string(), Language::Bash);
+        map.insert("node".to_string(), Language::JavaScript);
+        map
+    }
+
+    #[test]
+    fn test_detect_by_extension() {
+        let map = create_extension_map();
+
+        assert_eq!(detect_by_extension(Path::new("test.rs"), &map), Language::Rust);
+        assert_eq!(detect_by_extension(Path::new("test.py"), &map), Language::Python);
+        assert_eq!(detect_by_extension(Path::new("test.js"), &map), Language::JavaScript);
+        assert_eq!(detect_by_extension(Path::new("test.unknown"), &map), Language::Unknown);
+        assert_eq!(detect_by_extension(Path::new("no_extension"), &map), Language::Unknown);
+    }
+
+    #[test]
+    fn test_detect_by_extension_case_insensitive() {
+        let map = create_extension_map();
+
+        // Extensions should be converted to lowercase
+        assert_eq!(detect_by_extension(Path::new("test.RS"), &map), Language::Rust);
+        assert_eq!(detect_by_extension(Path::new("test.PY"), &map), Language::Python);
+    }
+
+    #[test]
+    fn test_detect_by_extension_and_filename() {
+        let ext_map = create_extension_map();
+        let filename_patterns = create_filename_patterns();
+
+        // Filename patterns take precedence
+        assert_eq!(
+            detect_by_extension_and_filename(Path::new("Makefile"), &ext_map, &filename_patterns),
+            Language::Unknown
+        );
+
+        // Falls back to extension
+        assert_eq!(
+            detect_by_extension_and_filename(Path::new("test.rs"), &ext_map, &filename_patterns),
+            Language::Rust
+        );
+    }
+
+    #[test]
+    fn test_detect_by_shebang() {
+        let patterns = create_shebang_patterns();
+
+        // Python shebang
+        let python_script = "#!/usr/bin/env python3\nprint('hello')";
+        assert_eq!(detect_by_shebang(python_script, &patterns), Some(Language::Python));
+
+        // Bash shebang
+        let bash_script = "#!/bin/bash\necho hello";
+        assert_eq!(detect_by_shebang(bash_script, &patterns), Some(Language::Bash));
+
+        // Node shebang
+        let node_script = "#!/usr/bin/env node\nconsole.log('hi')";
+        assert_eq!(detect_by_shebang(node_script, &patterns), Some(Language::JavaScript));
+
+        // No shebang
+        let no_shebang = "print('hello')";
+        assert_eq!(detect_by_shebang(no_shebang, &patterns), None);
+
+        // Empty content
+        assert_eq!(detect_by_shebang("", &patterns), None);
+
+        // Unknown shebang
+        let unknown = "#!/usr/bin/unknown\ncode";
+        assert_eq!(detect_by_shebang(unknown, &patterns), None);
+    }
+
+    #[test]
+    fn test_quick_content_validation() {
+        // Rust markers
+        assert!(quick_content_validation(&Language::Rust, "fn main() {}"));
+        assert!(quick_content_validation(&Language::Rust, "use std::io;"));
+        assert!(quick_content_validation(&Language::Rust, "struct Foo {}"));
+        assert!(!quick_content_validation(&Language::Rust, "no rust markers here"));
+
+        // Python markers
+        assert!(quick_content_validation(&Language::Python, "def foo():"));
+        assert!(quick_content_validation(&Language::Python, "import os"));
+        assert!(quick_content_validation(&Language::Python, "class MyClass:"));
+        assert!(!quick_content_validation(&Language::Python, "no python markers"));
+
+        // JavaScript markers
+        assert!(quick_content_validation(&Language::JavaScript, "function foo() {}"));
+        assert!(quick_content_validation(&Language::JavaScript, "const x = 1;"));
+        assert!(quick_content_validation(&Language::JavaScript, "var y = 2;"));
+
+        // Unknown language has no markers, always returns true
+        assert!(quick_content_validation(&Language::Unknown, "anything"));
+    }
+
+    #[test]
+    fn test_get_language_markers() {
+        assert!(!get_language_markers(&Language::Rust).is_empty());
+        assert!(!get_language_markers(&Language::Python).is_empty());
+        assert!(!get_language_markers(&Language::JavaScript).is_empty());
+        assert!(!get_language_markers(&Language::TypeScript).is_empty());
+        assert!(!get_language_markers(&Language::Go).is_empty());
+        assert!(!get_language_markers(&Language::Java).is_empty());
+        assert!(!get_language_markers(&Language::C).is_empty());
+        assert!(!get_language_markers(&Language::Cpp).is_empty());
+
+        // Unknown returns empty
+        assert!(get_language_markers(&Language::Unknown).is_empty());
+    }
+
+    #[test]
+    fn test_get_likely_languages_from_content() {
+        // Python-like content
+        let python_content = "def hello():\n    import os";
+        let languages = get_likely_languages_from_content(python_content);
+        assert!(languages.contains(&Language::Python));
+
+        // Rust-like content
+        let rust_content = "fn main() {\n    use std::io;\n}";
+        let languages = get_likely_languages_from_content(rust_content);
+        assert!(languages.contains(&Language::Rust));
+
+        // JavaScript-like content
+        let js_content = "function foo() {\n    const x = 1;\n}";
+        let languages = get_likely_languages_from_content(js_content);
+        assert!(languages.contains(&Language::JavaScript));
+
+        // TypeScript-like content
+        let ts_content = "interface Foo {\n    type Bar = string;\n}";
+        let languages = get_likely_languages_from_content(ts_content);
+        assert!(languages.contains(&Language::TypeScript));
+
+        // Go-like content
+        let go_content = "func main() {\n    package main\n}";
+        let languages = get_likely_languages_from_content(go_content);
+        assert!(languages.contains(&Language::Go));
+
+        // Unknown content returns default set
+        let unknown_content = "hello world";
+        let languages = get_likely_languages_from_content(unknown_content);
+        assert!(!languages.is_empty());
+    }
+
+    #[test]
+    fn test_aggregate_detection_results_empty() {
+        let candidates: Vec<(Language, f32)> = vec![];
+        let evidence = vec![];
+
+        let result = aggregate_detection_results(candidates, evidence);
+        assert_eq!(result.language, Language::Unknown);
+        assert_eq!(result.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_aggregate_detection_results_single() {
+        let candidates = vec![(Language::Rust, 0.9)];
+        let evidence = vec![DetectionEvidence {
+            evidence_type: EvidenceType::Extension,
+            weight: 0.9,
+            description: "Extension match".to_string(),
+        }];
+
+        let result = aggregate_detection_results(candidates, evidence);
+        assert_eq!(result.language, Language::Rust);
+        assert_eq!(result.confidence, 0.9);
+        assert_eq!(result.detection_method, DetectionMethod::FileExtension);
+    }
+
+    #[test]
+    fn test_aggregate_detection_results_multiple() {
+        let candidates = vec![
+            (Language::Python, 0.6),
+            (Language::Python, 0.3),
+            (Language::JavaScript, 0.4),
+        ];
+        let evidence = vec![];
+
+        let result = aggregate_detection_results(candidates, evidence);
+        assert_eq!(result.language, Language::Python); // 0.6 + 0.3 = 0.9 > 0.4
+        assert_eq!(result.alternatives.len(), 1);
+    }
+
+    #[test]
+    fn test_aggregate_detection_results_shebang_method() {
+        let candidates = vec![(Language::Python, 0.95)];
+        let evidence = vec![DetectionEvidence {
+            evidence_type: EvidenceType::Shebang,
+            weight: 0.95,
+            description: "Shebang match".to_string(),
+        }];
+
+        let result = aggregate_detection_results(candidates, evidence);
+        assert_eq!(result.detection_method, DetectionMethod::Shebang);
+    }
+
+    #[test]
+    fn test_aggregate_detection_results_syntax_method() {
+        let candidates = vec![(Language::Rust, 0.8)];
+        let evidence = vec![DetectionEvidence {
+            evidence_type: EvidenceType::Syntax,
+            weight: 0.8,
+            description: "Syntax match".to_string(),
+        }];
+
+        let result = aggregate_detection_results(candidates, evidence);
+        assert_eq!(result.detection_method, DetectionMethod::ContentSignature);
+    }
+
+    #[test]
+    fn test_apply_project_type_bias_web_frontend() {
+        let result = DetectionResult {
+            language: Language::JavaScript,
+            confidence: 0.5,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_project_type_bias(result, &ProjectType::WebFrontend);
+        assert_eq!(biased.confidence, 0.75); // 0.5 + 0.25
+    }
+
+    #[test]
+    fn test_apply_project_type_bias_web_backend() {
+        let result = DetectionResult {
+            language: Language::Python,
+            confidence: 0.6,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_project_type_bias(result, &ProjectType::WebBackend);
+        assert_eq!(biased.confidence, 0.85); // 0.6 + 0.25
+    }
+
+    #[test]
+    fn test_apply_project_type_bias_systems_program() {
+        let result = DetectionResult {
+            language: Language::Rust,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_project_type_bias(result, &ProjectType::SystemsProgram);
+        assert_eq!(biased.confidence, 0.95); // 0.7 + 0.25
+    }
+
+    #[test]
+    fn test_apply_project_type_bias_data_science() {
+        let result = DetectionResult {
+            language: Language::Python,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_project_type_bias(result, &ProjectType::DataScience);
+        assert_eq!(biased.confidence, 0.95); // 0.7 + 0.25
+    }
+
+    #[test]
+    fn test_apply_project_type_bias_caps_at_one() {
+        let result = DetectionResult {
+            language: Language::Rust,
+            confidence: 0.9,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_project_type_bias(result, &ProjectType::SystemsProgram);
+        assert_eq!(biased.confidence, 1.0); // Capped at 1.0
+    }
+
+    #[test]
+    fn test_apply_dominant_language_bias() {
+        let result = DetectionResult {
+            language: Language::Python,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_dominant_language_bias(result, &[Language::Python, Language::Rust]);
+        assert_eq!(biased.confidence, 0.85); // 0.7 + 0.15
+    }
+
+    #[test]
+    fn test_apply_dominant_language_bias_no_match() {
+        let result = DetectionResult {
+            language: Language::Python,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_dominant_language_bias(result, &[Language::Rust, Language::Go]);
+        assert_eq!(biased.confidence, 0.7); // No change
+    }
+
+    #[test]
+    fn test_apply_framework_bias_package_json() {
+        let result = DetectionResult {
+            language: Language::JavaScript,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_framework_bias(result, &["package.json".to_string()]);
+        assert_eq!(biased.confidence, 0.8); // 0.7 + 0.1
+    }
+
+    #[test]
+    fn test_apply_framework_bias_cargo_toml() {
+        let result = DetectionResult {
+            language: Language::Rust,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_framework_bias(result, &["Cargo.toml".to_string()]);
+        assert_eq!(biased.confidence, 0.8); // 0.7 + 0.1
+    }
+
+    #[test]
+    fn test_apply_framework_bias_python() {
+        let result = DetectionResult {
+            language: Language::Python,
+            confidence: 0.7,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_framework_bias(result, &["requirements.txt".to_string()]);
+        assert_eq!(biased.confidence, 0.8); // 0.7 + 0.1
+    }
+
+    #[test]
+    fn test_apply_framework_bias_multiple() {
+        let result = DetectionResult {
+            language: Language::JavaScript,
+            confidence: 0.6,
+            detection_method: DetectionMethod::FileExtension,
+            alternatives: vec![],
+            evidence: vec![],
+        };
+
+        let biased = apply_framework_bias(
+            result,
+            &["package.json".to_string(), "node_modules".to_string()],
+        );
+        assert!((biased.confidence - 0.8).abs() < 0.001); // 0.6 + 0.1 + 0.1 (with floating point tolerance)
+    }
+}

@@ -202,3 +202,268 @@ impl EntityLocation {
         format!("{}::{}", self.file_path, self.entity_name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_entity_type_variants() {
+        let types = vec![
+            EntityType::Function,
+            EntityType::Class,
+            EntityType::Module,
+            EntityType::Interface,
+            EntityType::Constant,
+            EntityType::Any,
+        ];
+
+        // Test clone and eq
+        for t in &types {
+            let cloned = t.clone();
+            assert_eq!(t, &cloned);
+        }
+    }
+
+    #[test]
+    fn test_entity_type_serialize() {
+        let func = EntityType::Function;
+        let json = serde_json::to_string(&func).unwrap();
+        let deserialized: EntityType = serde_json::from_str(&json).unwrap();
+        assert_eq!(func, deserialized);
+    }
+
+    #[test]
+    fn test_entity_query_parse_file_only() {
+        let query = EntityQuery::parse("src/auth.rs");
+        assert_eq!(query.file_pattern, Some("src/auth.rs".to_string()));
+        assert!(query.name_pattern.is_none());
+    }
+
+    #[test]
+    fn test_entity_query_parse_file_entity() {
+        let query = EntityQuery::parse("src/auth.rs:login");
+        assert_eq!(query.file_pattern, Some("src/auth.rs".to_string()));
+        assert_eq!(query.name_pattern, Some("login".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_parse_windows_drive_only() {
+        // Windows path without entity
+        let query = EntityQuery::parse(r"C:\path\file.rs");
+        assert_eq!(query.file_pattern, Some(r"C:\path\file.rs".to_string()));
+        assert!(query.name_pattern.is_none());
+    }
+
+    #[test]
+    fn test_entity_query_parse_windows_drive_with_entity() {
+        // Windows path with entity (two colons)
+        let query = EntityQuery::parse(r"C:\path\file.rs:login");
+        assert_eq!(query.file_pattern, Some(r"C:\path\file.rs".to_string()));
+        assert_eq!(query.name_pattern, Some("login".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_parse_multiple_colons() {
+        // Multiple colons - rightmost is the separator
+        let query = EntityQuery::parse("src:module:entity");
+        assert_eq!(query.file_pattern, Some("src:module".to_string()));
+        assert_eq!(query.name_pattern, Some("entity".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_for_file() {
+        let query = EntityQuery::for_file("src/lib.rs");
+        assert_eq!(query.file_pattern, Some("src/lib.rs".to_string()));
+        assert!(query.name_pattern.is_none());
+        assert!(query.entity_type.is_none());
+        assert!(!query.exact_match);
+        assert!(query.public_only.is_none());
+    }
+
+    #[test]
+    fn test_entity_query_for_file_entity() {
+        let query = EntityQuery::for_file_entity("src/lib.rs", "main");
+        assert_eq!(query.file_pattern, Some("src/lib.rs".to_string()));
+        assert_eq!(query.name_pattern, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_by_name() {
+        let query = EntityQuery::by_name("login_user");
+        assert_eq!(query.name_pattern, Some("login_user".to_string()));
+        assert!(query.file_pattern.is_none());
+    }
+
+    #[test]
+    fn test_entity_query_by_type() {
+        let query = EntityQuery::by_type(EntityType::Function);
+        assert_eq!(query.entity_type, Some(EntityType::Function));
+        assert!(query.name_pattern.is_none());
+        assert!(query.file_pattern.is_none());
+    }
+
+    #[test]
+    fn test_entity_query_function() {
+        let query = EntityQuery::function("main");
+        assert_eq!(query.entity_type, Some(EntityType::Function));
+        assert_eq!(query.name_pattern, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_class() {
+        let query = EntityQuery::class("UserService");
+        assert_eq!(query.entity_type, Some(EntityType::Class));
+        assert_eq!(query.name_pattern, Some("UserService".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_module() {
+        let query = EntityQuery::module("auth::login");
+        assert_eq!(query.entity_type, Some(EntityType::Module));
+        assert_eq!(query.name_pattern, Some("auth::login".to_string()));
+    }
+
+    #[test]
+    fn test_entity_query_builder_in_file() {
+        let query = EntityQuery::function("main").in_file("src/lib.rs");
+        assert_eq!(query.file_pattern, Some("src/lib.rs".to_string()));
+        assert_eq!(query.name_pattern, Some("main".to_string()));
+        assert_eq!(query.entity_type, Some(EntityType::Function));
+    }
+
+    #[test]
+    fn test_entity_query_builder_exact() {
+        let query = EntityQuery::function("main").exact();
+        assert!(query.exact_match);
+    }
+
+    #[test]
+    fn test_entity_query_builder_public() {
+        let query = EntityQuery::function("main").public();
+        assert_eq!(query.public_only, Some(true));
+    }
+
+    #[test]
+    fn test_entity_query_builder_chain() {
+        let query = EntityQuery::function("main")
+            .in_file("src/lib.rs")
+            .exact()
+            .public();
+
+        assert_eq!(query.entity_type, Some(EntityType::Function));
+        assert_eq!(query.name_pattern, Some("main".to_string()));
+        assert_eq!(query.file_pattern, Some("src/lib.rs".to_string()));
+        assert!(query.exact_match);
+        assert_eq!(query.public_only, Some(true));
+    }
+
+    #[test]
+    fn test_entity_query_matches_file_no_pattern() {
+        let query = EntityQuery::by_name("test");
+        assert!(query.matches_file("any/path/file.rs"));
+        assert!(query.matches_file("another.py"));
+    }
+
+    #[test]
+    fn test_entity_query_matches_file_with_pattern() {
+        let query = EntityQuery::for_file("auth");
+        assert!(query.matches_file("src/auth/login.rs"));
+        assert!(query.matches_file("auth.rs"));
+        assert!(!query.matches_file("src/user/profile.rs"));
+    }
+
+    #[test]
+    fn test_entity_query_matches_file_case_insensitive() {
+        let query = EntityQuery::for_file("AUTH");
+        assert!(query.matches_file("src/auth/login.rs"));
+        assert!(query.matches_file("src/Auth/Login.rs"));
+    }
+
+    #[test]
+    fn test_entity_query_serialize() {
+        let query = EntityQuery::function("main").in_file("src/lib.rs");
+        let json = serde_json::to_string(&query).unwrap();
+        let deserialized: EntityQuery = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(query.file_pattern, deserialized.file_pattern);
+        assert_eq!(query.name_pattern, deserialized.name_pattern);
+        assert_eq!(query.entity_type, deserialized.entity_type);
+    }
+
+    #[test]
+    fn test_entity_query_debug() {
+        let query = EntityQuery::function("main");
+        let debug_str = format!("{:?}", query);
+        assert!(debug_str.contains("main"));
+    }
+
+    #[test]
+    fn test_entity_location_identifier() {
+        let location = EntityLocation {
+            file_path: "src/auth.rs".to_string(),
+            entity_type: "function".to_string(),
+            entity_name: "login".to_string(),
+            start_line: 10,
+            end_line: 25,
+            is_public: true,
+            content: "pub fn login() {}".to_string(),
+        };
+
+        assert_eq!(location.identifier(), "src/auth.rs::login");
+    }
+
+    #[test]
+    fn test_entity_location_clone() {
+        let location = EntityLocation {
+            file_path: "src/main.rs".to_string(),
+            entity_type: "function".to_string(),
+            entity_name: "main".to_string(),
+            start_line: 1,
+            end_line: 5,
+            is_public: false,
+            content: "fn main() {}".to_string(),
+        };
+
+        let cloned = location.clone();
+        assert_eq!(location.file_path, cloned.file_path);
+        assert_eq!(location.entity_name, cloned.entity_name);
+    }
+
+    #[test]
+    fn test_entity_location_serialize() {
+        let location = EntityLocation {
+            file_path: "src/lib.rs".to_string(),
+            entity_type: "class".to_string(),
+            entity_name: "MyClass".to_string(),
+            start_line: 10,
+            end_line: 50,
+            is_public: true,
+            content: "struct MyClass {}".to_string(),
+        };
+
+        let json = serde_json::to_string(&location).unwrap();
+        let deserialized: EntityLocation = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(location.file_path, deserialized.file_path);
+        assert_eq!(location.entity_name, deserialized.entity_name);
+        assert_eq!(location.start_line, deserialized.start_line);
+    }
+
+    #[test]
+    fn test_entity_location_debug() {
+        let location = EntityLocation {
+            file_path: "test.rs".to_string(),
+            entity_type: "function".to_string(),
+            entity_name: "test_func".to_string(),
+            start_line: 1,
+            end_line: 1,
+            is_public: false,
+            content: "fn test_func() {}".to_string(),
+        };
+
+        let debug_str = format!("{:?}", location);
+        assert!(debug_str.contains("test_func"));
+        assert!(debug_str.contains("test.rs"));
+    }
+}

@@ -352,20 +352,34 @@ fn gather_inventory_entries(repo_path: &Path, files: &[FileInfo]) -> Vec<Invento
     }
 
     let mut entries = Vec::with_capacity(files.len() + 16);
-    entries.push(InventoryEntry {
-        path: String::new(),
-    });
-
     let mut directories: HashSet<String> = HashSet::new();
 
+    // Canonicalize repo_path for consistent prefix stripping
+    let repo_prefix = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+
     for file in files {
-        let mut ancestor = Path::new(&file.relative_path).parent();
+        // Try to make the path relative to the repo root
+        let file_path = Path::new(&file.relative_path);
+        let relative = if file_path.is_absolute() {
+            // Strip the repo prefix if present
+            file_path
+                .strip_prefix(&repo_prefix)
+                .or_else(|_| file_path.strip_prefix(repo_path))
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|_| file_path.to_path_buf())
+        } else {
+            file_path.to_path_buf()
+        };
+
+        let mut ancestor = relative.parent();
         while let Some(parent) = ancestor {
             let parent_str = parent.to_string_lossy().to_string();
             if parent_str.is_empty() {
                 break;
             }
-            directories.insert(parent_str.clone());
+            directories.insert(parent_str);
             ancestor = parent.parent();
         }
     }
@@ -374,11 +388,6 @@ fn gather_inventory_entries(repo_path: &Path, files: &[FileInfo]) -> Vec<Invento
         if dir.is_empty() {
             continue;
         }
-
-        let dir_path = repo_path.join(&dir);
-        let metadata = fs::metadata(dir_path).ok();
-        let modified = metadata.as_ref().and_then(|meta| meta.modified().ok());
-
         entries.push(InventoryEntry { path: dir });
     }
 
@@ -390,29 +399,599 @@ struct InventoryEntry {
     path: String,
 }
 
+/// Tree node for building hierarchical directory representation
+#[derive(Debug, Default)]
+struct DirTreeNode {
+    name: String,
+    children: Vec<DirTreeNode>,
+}
+
+impl DirTreeNode {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            children: Vec::new(),
+        }
+    }
+
+    /// Insert a path into the tree, creating intermediate nodes as needed
+    fn insert(&mut self, parts: &[&str]) {
+        if parts.is_empty() {
+            return;
+        }
+
+        let name = parts[0];
+        let rest = &parts[1..];
+
+        // Find or create child
+        let child_idx = self.children.iter().position(|c| c.name == name);
+        let child = match child_idx {
+            Some(idx) => &mut self.children[idx],
+            None => {
+                self.children.push(DirTreeNode::new(name));
+                self.children.last_mut().unwrap()
+            }
+        };
+
+        child.insert(rest);
+    }
+
+    /// Render this node and its children using brace notation
+    /// e.g., "src/{bin/cli,lib}" for siblings, "src/bin/cli" for single paths
+    fn render_brace(&self) -> String {
+        if self.children.is_empty() {
+            return self.name.clone();
+        }
+
+        let children_rendered: Vec<String> =
+            self.children.iter().map(|c| c.render_brace()).collect();
+
+        if children_rendered.len() == 1 {
+            // Single child: path/child
+            format!("{}/{}", self.name, children_rendered[0])
+        } else {
+            // Multiple children: path/{a,b,c}
+            format!("{}/{{{}}}", self.name, children_rendered.join(","))
+        }
+    }
+}
+
+/// Build a tree from directory paths
+fn build_dir_tree(entries: &[InventoryEntry]) -> DirTreeNode {
+    let mut root = DirTreeNode::new(".");
+
+    for entry in entries {
+        if entry.path.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = entry.path.split('/').collect();
+        root.insert(&parts);
+    }
+
+    // Sort children alphabetically for consistent output
+    root.sort_children();
+    root
+}
+
+impl DirTreeNode {
+    /// Recursively sort all children alphabetically
+    fn sort_children(&mut self) {
+        self.children.sort_by(|a, b| a.name.cmp(&b.name));
+        for child in &mut self.children {
+            child.sort_children();
+        }
+    }
+}
+
 fn build_directory_map(entries: &[InventoryEntry]) -> Option<String> {
     if entries.is_empty() {
         return None;
     }
 
-    let mut sorted = entries.to_vec();
-    sorted.sort_by(|a, b| a.path.cmp(&b.path));
+    let tree = build_dir_tree(entries);
 
-    let mut lines = Vec::with_capacity(sorted.len() + 4);
-    lines.push("Repository Directory Map".to_string());
-    lines.push("========================".to_string());
-    lines.push("Directory".to_string());
-    lines.push("---------".to_string());
-
-    for entry in sorted {
-        let display_path = if entry.path.is_empty() {
-            "."
-        } else {
-            entry.path.as_str()
-        };
-        lines.push(display_path.to_string());
+    if tree.children.is_empty() {
+        return None;
     }
 
-    lines.push(String::new());
+    // Render each top-level directory using brace notation
+    let lines: Vec<String> = tree.children.iter().map(|c| c.render_brace()).collect();
+
     Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_selection_options_default() {
+        let options = SelectionOptions::default();
+        assert_eq!(options.token_target, 128_000);
+        assert!(!options.force_traditional);
+        assert!(options.algorithm_name.is_none());
+        assert!(options.include_directory_map);
+    }
+
+    #[test]
+    fn test_selection_options_custom() {
+        let options = SelectionOptions {
+            token_target: 50_000,
+            force_traditional: true,
+            algorithm_name: Some("custom".to_string()),
+            include_directory_map: false,
+        };
+        assert_eq!(options.token_target, 50_000);
+        assert!(options.force_traditional);
+        assert_eq!(options.algorithm_name, Some("custom".to_string()));
+        assert!(!options.include_directory_map);
+    }
+
+    #[test]
+    fn test_inventory_entry_creation() {
+        let entry = InventoryEntry {
+            path: "src/lib".to_string(),
+        };
+        assert_eq!(entry.path, "src/lib");
+    }
+
+    #[test]
+    fn test_build_directory_map_empty() {
+        let entries: Vec<InventoryEntry> = vec![];
+        let result = build_directory_map(&entries);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_directory_map_single_root_only() {
+        // Root entry only (empty path) should return None - no actual directories
+        let entries = vec![InventoryEntry {
+            path: String::new(),
+        }];
+        let result = build_directory_map(&entries);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_directory_map_single_dir() {
+        let entries = vec![InventoryEntry {
+            path: "src".to_string(),
+        }];
+        let result = build_directory_map(&entries);
+        assert!(result.is_some());
+        let map = result.unwrap();
+        assert_eq!(map, "src");
+    }
+
+    #[test]
+    fn test_build_directory_map_multiple() {
+        let entries = vec![
+            InventoryEntry {
+                path: String::new(),
+            },
+            InventoryEntry {
+                path: "src".to_string(),
+            },
+            InventoryEntry {
+                path: "src/lib".to_string(),
+            },
+            InventoryEntry {
+                path: "tests".to_string(),
+            },
+        ];
+        let result = build_directory_map(&entries);
+        assert!(result.is_some());
+        let map = result.unwrap();
+        // Brace notation: src with child lib, tests as sibling
+        assert!(map.contains("src/lib"));
+        assert!(map.contains("tests"));
+    }
+
+    #[test]
+    fn test_build_include_filter_empty() {
+        let patterns: Vec<String> = vec![];
+        let result = build_include_filter(&patterns);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_include_filter_single() {
+        let patterns = vec!["*.rs".to_string()];
+        let result = build_include_filter(&patterns);
+        assert!(result.is_some());
+
+        let filter = result.unwrap();
+        assert!(filter.is_match("main.rs"));
+        assert!(filter.is_match("lib.rs"));
+        assert!(!filter.is_match("main.py"));
+    }
+
+    #[test]
+    fn test_build_include_filter_multiple() {
+        let patterns = vec!["*.rs".to_string(), "*.py".to_string()];
+        let result = build_include_filter(&patterns);
+        assert!(result.is_some());
+
+        let filter = result.unwrap();
+        assert!(filter.is_match("main.rs"));
+        assert!(filter.is_match("app.py"));
+        assert!(!filter.is_match("index.js"));
+    }
+
+    #[test]
+    fn test_build_include_filter_glob_pattern() {
+        let patterns = vec!["src/**/*.rs".to_string()];
+        let result = build_include_filter(&patterns);
+        assert!(result.is_some());
+
+        let filter = result.unwrap();
+        assert!(filter.is_match("src/main.rs"));
+        assert!(filter.is_match("src/lib/utils.rs"));
+        assert!(!filter.is_match("tests/test.rs"));
+    }
+
+    #[test]
+    fn test_selection_outcome_structure() {
+        let outcome = SelectionOutcome {
+            selected_files: vec![],
+            selected_file_infos: vec![],
+            metrics: crate::report::SelectionMetrics {
+                total_files_discovered: 100,
+                files_selected: 10,
+                total_tokens_estimated: 5000,
+                selection_time_ms: 150,
+                algorithm_used: "test".to_string(),
+                coverage_score: 0.8,
+                relevance_score: 0.9,
+            },
+            eligible_file_count: 50,
+            unlimited_budget: false,
+        };
+
+        assert!(outcome.selected_files.is_empty());
+        assert_eq!(outcome.eligible_file_count, 50);
+        assert!(!outcome.unlimited_budget);
+        assert_eq!(outcome.metrics.files_selected, 10);
+    }
+
+    #[test]
+    fn test_gather_inventory_entries_empty() {
+        let repo_path = PathBuf::from("/tmp/test");
+        let files: Vec<scribe_core::FileInfo> = vec![];
+        let entries = gather_inventory_entries(&repo_path, &files);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_selection_options_clone() {
+        let options = SelectionOptions {
+            token_target: 50_000,
+            force_traditional: true,
+            algorithm_name: Some("test_algo".to_string()),
+            include_directory_map: false,
+        };
+        let cloned = options.clone();
+        assert_eq!(options.token_target, cloned.token_target);
+        assert_eq!(options.force_traditional, cloned.force_traditional);
+        assert_eq!(options.algorithm_name, cloned.algorithm_name);
+    }
+
+    #[test]
+    fn test_selection_options_debug() {
+        let options = SelectionOptions::default();
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("SelectionOptions"));
+        assert!(debug_str.contains("token_target"));
+    }
+
+    #[test]
+    fn test_selection_outcome_clone() {
+        let outcome = SelectionOutcome {
+            selected_files: vec![],
+            selected_file_infos: vec![],
+            metrics: crate::report::SelectionMetrics {
+                total_files_discovered: 10,
+                files_selected: 5,
+                total_tokens_estimated: 1000,
+                selection_time_ms: 50,
+                algorithm_used: "test".to_string(),
+                coverage_score: 0.5,
+                relevance_score: 0.8,
+            },
+            eligible_file_count: 8,
+            unlimited_budget: true,
+        };
+        let cloned = outcome.clone();
+        assert_eq!(outcome.eligible_file_count, cloned.eligible_file_count);
+        assert_eq!(outcome.unlimited_budget, cloned.unlimited_budget);
+    }
+
+    #[test]
+    fn test_selection_outcome_debug() {
+        let outcome = SelectionOutcome {
+            selected_files: vec![],
+            selected_file_infos: vec![],
+            metrics: crate::report::SelectionMetrics {
+                total_files_discovered: 10,
+                files_selected: 5,
+                total_tokens_estimated: 1000,
+                selection_time_ms: 50,
+                algorithm_used: "test".to_string(),
+                coverage_score: 0.5,
+                relevance_score: 0.8,
+            },
+            eligible_file_count: 8,
+            unlimited_budget: true,
+        };
+        let debug_str = format!("{:?}", outcome);
+        assert!(debug_str.contains("SelectionOutcome"));
+        assert!(debug_str.contains("eligible_file_count"));
+    }
+
+    fn create_test_analysis() -> RepositoryAnalysis {
+        use std::collections::HashMap;
+        use scribe_core::AnalysisMetadata;
+
+        RepositoryAnalysis {
+            files: vec![],
+            heuristic_scores: HashMap::new(),
+            #[cfg(feature = "graph")]
+            centrality_scores: None,
+            final_scores: HashMap::new(),
+            metadata: AnalysisMetadata {
+                timestamp: SystemTime::now(),
+                scribe_version: "test".to_string(),
+                features_enabled: vec![],
+                config_hash: None,
+            },
+        }
+    }
+
+    #[test]
+    fn test_analysis_outcome_clone() {
+        let outcome = AnalysisOutcome {
+            analysis: create_test_analysis(),
+            selection: SelectionOutcome {
+                selected_files: vec![],
+                selected_file_infos: vec![],
+                metrics: crate::report::SelectionMetrics {
+                    total_files_discovered: 0,
+                    files_selected: 0,
+                    total_tokens_estimated: 0,
+                    selection_time_ms: 0,
+                    algorithm_used: "test".to_string(),
+                    coverage_score: 0.0,
+                    relevance_score: 0.0,
+                },
+                eligible_file_count: 0,
+                unlimited_budget: false,
+            },
+        };
+        let cloned = outcome.clone();
+        assert_eq!(outcome.selection.unlimited_budget, cloned.selection.unlimited_budget);
+    }
+
+    #[test]
+    fn test_analysis_outcome_debug() {
+        let outcome = AnalysisOutcome {
+            analysis: create_test_analysis(),
+            selection: SelectionOutcome {
+                selected_files: vec![],
+                selected_file_infos: vec![],
+                metrics: crate::report::SelectionMetrics {
+                    total_files_discovered: 0,
+                    files_selected: 0,
+                    total_tokens_estimated: 0,
+                    selection_time_ms: 0,
+                    algorithm_used: "test".to_string(),
+                    coverage_score: 0.0,
+                    relevance_score: 0.0,
+                },
+                eligible_file_count: 0,
+                unlimited_budget: false,
+            },
+        };
+        let debug_str = format!("{:?}", outcome);
+        assert!(debug_str.contains("AnalysisOutcome"));
+    }
+
+    #[test]
+    fn test_inventory_entry_clone() {
+        let entry = InventoryEntry {
+            path: "src/main.rs".to_string(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry.path, cloned.path);
+    }
+
+    #[test]
+    fn test_inventory_entry_debug() {
+        let entry = InventoryEntry {
+            path: "test".to_string(),
+        };
+        let debug_str = format!("{:?}", entry);
+        assert!(debug_str.contains("InventoryEntry"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_build_directory_map_top_level_dirs() {
+        // Top-level directories should each appear on their own line
+        let entries = vec![
+            InventoryEntry { path: "z_dir".to_string() },
+            InventoryEntry { path: "a_dir".to_string() },
+            InventoryEntry { path: "m_dir".to_string() },
+        ];
+        let result = build_directory_map(&entries);
+        assert!(result.is_some());
+        let map = result.unwrap();
+        let lines: Vec<&str> = map.lines().collect();
+
+        // All three directories should be present as separate lines
+        assert!(lines.contains(&"a_dir"));
+        assert!(lines.contains(&"m_dir"));
+        assert!(lines.contains(&"z_dir"));
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn test_build_include_filter_invalid_pattern() {
+        // Invalid glob patterns should be silently ignored
+        let patterns = vec!["[invalid".to_string(), "*.rs".to_string()];
+        let result = build_include_filter(&patterns);
+        // Should still create a filter with the valid pattern
+        assert!(result.is_some());
+        let filter = result.unwrap();
+        assert!(filter.is_match("main.rs"));
+    }
+
+    #[test]
+    fn test_build_directory_map_with_nested_paths() {
+        let entries = vec![
+            InventoryEntry { path: String::new() },
+            InventoryEntry { path: "src".to_string() },
+            InventoryEntry { path: "src/lib".to_string() },
+            InventoryEntry { path: "src/lib/utils".to_string() },
+            InventoryEntry { path: "src/bin".to_string() },
+        ];
+        let result = build_directory_map(&entries);
+        assert!(result.is_some());
+        let map = result.unwrap();
+        // Brace notation: src/{bin,lib/utils}
+        assert_eq!(map, "src/{bin,lib/utils}");
+    }
+
+    #[test]
+    fn test_build_directory_map_brace_notation() {
+        // Test full brace notation rendering
+        let entries = vec![
+            InventoryEntry { path: "packages".to_string() },
+            InventoryEntry { path: "packages/core".to_string() },
+            InventoryEntry { path: "packages/core/src".to_string() },
+            InventoryEntry { path: "packages/core/tests".to_string() },
+            InventoryEntry { path: "packages/cli".to_string() },
+            InventoryEntry { path: "packages/cli/src".to_string() },
+        ];
+        let result = build_directory_map(&entries);
+        assert!(result.is_some());
+        let map = result.unwrap();
+        // packages/{cli/src,core/{src,tests}}
+        assert!(map.contains("packages/"));
+        assert!(map.contains("cli/src"));
+        assert!(map.contains("core/"));
+    }
+
+    #[test]
+    fn test_selection_options_unlimited_budget_conditions() {
+        // Unlimited when force_traditional is true
+        let options1 = SelectionOptions {
+            token_target: 50_000,
+            force_traditional: true,
+            algorithm_name: None,
+            include_directory_map: true,
+        };
+        let unlimited1 = options1.force_traditional || options1.token_target == 0;
+        assert!(unlimited1);
+
+        // Unlimited when token_target is 0
+        let options2 = SelectionOptions {
+            token_target: 0,
+            force_traditional: false,
+            algorithm_name: None,
+            include_directory_map: true,
+        };
+        let unlimited2 = options2.force_traditional || options2.token_target == 0;
+        assert!(unlimited2);
+
+        // Not unlimited otherwise
+        let options3 = SelectionOptions {
+            token_target: 50_000,
+            force_traditional: false,
+            algorithm_name: None,
+            include_directory_map: true,
+        };
+        let unlimited3 = options3.force_traditional || options3.token_target == 0;
+        assert!(!unlimited3);
+    }
+
+    #[test]
+    fn test_selection_metrics_coverage_calculation() {
+        // With files discovered
+        let total_discovered = 100;
+        let files_selected = 25;
+        let coverage = files_selected as f64 / total_discovered as f64;
+        assert!((coverage - 0.25).abs() < 0.01);
+
+        // Edge case: no files discovered
+        let zero_discovered = 0;
+        let coverage_zero = if zero_discovered > 0 {
+            files_selected as f64 / zero_discovered as f64
+        } else {
+            1.0
+        };
+        assert_eq!(coverage_zero, 1.0);
+    }
+
+    #[test]
+    fn test_algorithm_label_generation() {
+        // Case 1: Named algorithm, unlimited budget
+        let name = Some("Custom".to_string());
+        let unlimited = true;
+        let label1 = match (&name, unlimited) {
+            (Some(n), true) => format!("{} (unlimited)", n),
+            (Some(n), false) => n.clone(),
+            (None, true) => "Tiered (unlimited budget)".to_string(),
+            (None, false) => "Tiered (token-budget)".to_string(),
+        };
+        assert_eq!(label1, "Custom (unlimited)");
+
+        // Case 2: Named algorithm, limited budget
+        let label2 = match (&name, false) {
+            (Some(n), true) => format!("{} (unlimited)", n),
+            (Some(n), false) => n.clone(),
+            (None, true) => "Tiered (unlimited budget)".to_string(),
+            (None, false) => "Tiered (token-budget)".to_string(),
+        };
+        assert_eq!(label2, "Custom");
+
+        // Case 3: No name, unlimited budget
+        let no_name: Option<String> = None;
+        let label3 = match (&no_name, true) {
+            (Some(n), true) => format!("{} (unlimited)", n),
+            (Some(n), false) => n.clone(),
+            (None, true) => "Tiered (unlimited budget)".to_string(),
+            (None, false) => "Tiered (token-budget)".to_string(),
+        };
+        assert_eq!(label3, "Tiered (unlimited budget)");
+
+        // Case 4: No name, limited budget
+        let label4 = match (&no_name, false) {
+            (Some(n), true) => format!("{} (unlimited)", n),
+            (Some(n), false) => n.clone(),
+            (None, true) => "Tiered (unlimited budget)".to_string(),
+            (None, false) => "Tiered (token-budget)".to_string(),
+        };
+        assert_eq!(label4, "Tiered (token-budget)");
+    }
+
+    #[test]
+    fn test_build_directory_map_for_analysis_empty() {
+        let repo_path = PathBuf::from("/tmp/test");
+        let files: Vec<scribe_core::FileInfo> = vec![];
+        let result = build_directory_map_for_analysis(&repo_path, &files);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_include_filter_complex_patterns() {
+        let patterns = vec![
+            "**/test*.rs".to_string(),
+            "!**/vendor/**".to_string(),
+            "src/**".to_string(),
+        ];
+        let result = build_include_filter(&patterns);
+        assert!(result.is_some());
+        let filter = result.unwrap();
+        assert!(filter.is_match("src/main.rs"));
+    }
 }

@@ -571,4 +571,285 @@ from collections import defaultdict, Counter
             assert!(result.alternatives[0].1 >= result.alternatives[1].1);
         }
     }
+
+    #[test]
+    fn test_extension_only_strategy_known_extension() {
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::ExtensionOnly);
+
+        let python_code = "print('Hello')";
+        let result = detector.detect_language_with_content(Path::new("test.py"), python_code);
+
+        assert_eq!(result.language, Language::Python);
+        assert_eq!(result.confidence, 0.9);
+        assert_eq!(result.detection_method, DetectionMethod::FileExtension);
+        assert!(result.alternatives.is_empty());
+    }
+
+    #[test]
+    fn test_extension_only_strategy_unknown_extension() {
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::ExtensionOnly);
+
+        let code = "some code";
+        let result = detector.detect_language_with_content(Path::new("test.xyz"), code);
+
+        assert_eq!(result.language, Language::Unknown);
+        assert_eq!(result.confidence, 0.1);
+        assert_eq!(result.detection_method, DetectionMethod::FileExtension);
+    }
+
+    #[test]
+    fn test_extension_only_detect_language() {
+        let detector = LanguageDetector::with_strategy(DetectionStrategy::ExtensionOnly);
+
+        assert_eq!(
+            detector.detect_language(Path::new("test.rs")),
+            Language::Rust
+        );
+        assert_eq!(
+            detector.detect_language(Path::new("test.py")),
+            Language::Python
+        );
+    }
+
+    #[test]
+    fn test_full_analysis_strategy() {
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::FullAnalysis);
+
+        let python_code = r#"
+#!/usr/bin/env python3
+import os
+import sys
+
+def main():
+    print("Hello, world!")
+
+class MyClass:
+    def __init__(self):
+        pass
+
+if __name__ == "__main__":
+    main()
+        "#;
+
+        let result = detector.detect_language_with_content(Path::new("unknown"), python_code);
+        assert_eq!(result.language, Language::Python);
+        assert!(result.confidence > 0.5);
+    }
+
+    #[test]
+    fn test_custom_rules_filename_pattern() {
+        let mut custom_rules = CustomDetectionRules {
+            extension_overrides: HashMap::new(),
+            filename_patterns: HashMap::new(),
+            content_signatures: vec![],
+            priority_languages: vec![],
+        };
+
+        custom_rules
+            .filename_patterns
+            .insert("MyCustomFile".to_string(), Language::Go);
+
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::Custom(custom_rules));
+
+        let result = detector.detect_language_with_content(Path::new("MyCustomFile"), "package main");
+        assert_eq!(result.language, Language::Go);
+        assert_eq!(result.confidence, 1.0);
+    }
+
+    #[test]
+    fn test_custom_rules_content_signature() {
+        let custom_rules = CustomDetectionRules {
+            extension_overrides: HashMap::new(),
+            filename_patterns: HashMap::new(),
+            content_signatures: vec![ContentSignatureConfig {
+                language: Language::Rust,
+                patterns: vec!["fn main".to_string(), "let mut".to_string()],
+                required_matches: 1,
+                weight: 0.95,
+            }],
+            priority_languages: vec![],
+        };
+
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::Custom(custom_rules));
+
+        let rust_code = "fn main() { let mut x = 5; }";
+        let result = detector.detect_language_with_content(Path::new("unknown"), rust_code);
+        assert_eq!(result.language, Language::Rust);
+        assert!(result.confidence > 0.9);
+    }
+
+    #[test]
+    fn test_custom_rules_content_signature_with_regex() {
+        let custom_rules = CustomDetectionRules {
+            extension_overrides: HashMap::new(),
+            filename_patterns: HashMap::new(),
+            content_signatures: vec![ContentSignatureConfig {
+                language: Language::Python,
+                patterns: vec!["def\\s+\\w+".to_string()], // Regex pattern
+                required_matches: 1,
+                weight: 0.9,
+            }],
+            priority_languages: vec![],
+        };
+
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::Custom(custom_rules));
+
+        let python_code = "def hello(): pass";
+        let result = detector.detect_language_with_content(Path::new("unknown"), python_code);
+        assert_eq!(result.language, Language::Python);
+    }
+
+    #[test]
+    fn test_custom_rules_fallback_to_content_analysis() {
+        let custom_rules = CustomDetectionRules {
+            extension_overrides: HashMap::new(),
+            filename_patterns: HashMap::new(),
+            content_signatures: vec![],
+            priority_languages: vec![],
+        };
+
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::Custom(custom_rules));
+
+        // With no custom rules matching, it should fall back to content analysis
+        let python_code = "#!/usr/bin/env python3\ndef main(): pass";
+        let result = detector.detect_language_with_content(Path::new("unknown"), python_code);
+        assert_eq!(result.language, Language::Python);
+    }
+
+    #[test]
+    fn test_hints_with_project_type_only() {
+        let mut detector = LanguageDetector::new();
+
+        let hints = LanguageHints {
+            project_type: Some(ProjectType::WebBackend),
+            dominant_languages: vec![],
+            framework_indicators: vec![],
+            ..Default::default()
+        };
+
+        let code = "const server = require('express')";
+        let result = detector.detect_with_hints(Path::new("unknown"), code, &hints);
+        assert!(result.confidence > 0.0);
+    }
+
+    #[test]
+    fn test_hints_with_dominant_languages_only() {
+        let mut detector = LanguageDetector::new();
+
+        let hints = LanguageHints {
+            project_type: None,
+            dominant_languages: vec![Language::TypeScript],
+            framework_indicators: vec![],
+            ..Default::default()
+        };
+
+        let code = "const hello = 'world'";
+        let result = detector.detect_with_hints(Path::new("unknown"), code, &hints);
+        // The result should exist even if confidence is low
+        assert!(result.confidence >= 0.0);
+    }
+
+    #[test]
+    fn test_hints_with_framework_indicators_only() {
+        let mut detector = LanguageDetector::new();
+
+        let hints = LanguageHints {
+            project_type: None,
+            dominant_languages: vec![],
+            framework_indicators: vec!["react".to_string(), "next.js".to_string()],
+            ..Default::default()
+        };
+
+        let code = "import React from 'react'";
+        let result = detector.detect_with_hints(Path::new("unknown"), code, &hints);
+        assert!(result.confidence > 0.0);
+    }
+
+    #[test]
+    fn test_content_analysis_with_ambiguous_extension() {
+        let mut detector = LanguageDetector::new();
+
+        // .h files are ambiguous (could be C or C++)
+        let c_code = "#include <stdio.h>\nint main() { return 0; }";
+        let result = detector.detect_language_with_content(Path::new("test.h"), c_code);
+        // Should detect C or Cpp
+        assert!(result.language == Language::C || result.language == Language::Cpp);
+    }
+
+    #[test]
+    fn test_content_analysis_triggers_import_analysis() {
+        let mut detector = LanguageDetector::new();
+
+        // Code with low confidence from extension but clear import patterns
+        let code = r#"
+import something
+from module import thing
+        "#;
+
+        let result = detector.detect_language_with_content(Path::new("file"), code);
+        // Should recognize Python imports
+        assert!(result.evidence.len() > 0);
+    }
+
+    #[test]
+    fn test_detector_default_impl() {
+        let detector = LanguageDetector::default();
+        assert_eq!(
+            detector.detect_language(Path::new("test.py")),
+            Language::Python
+        );
+    }
+
+    #[test]
+    fn test_detection_result_evidence_types() {
+        let mut detector = LanguageDetector::new();
+
+        // Test that different evidence types are captured
+        let python_code = "#!/usr/bin/env python3\nimport os\ndef main(): pass";
+        let result = detector.detect_language_with_content(Path::new("test.py"), python_code);
+
+        // Should have extension evidence
+        assert!(result
+            .evidence
+            .iter()
+            .any(|e| e.evidence_type == EvidenceType::Extension));
+
+        // Should have evidence with weight > 0
+        assert!(result.evidence.iter().any(|e| e.weight > 0.0));
+    }
+
+    #[test]
+    fn test_extension_with_content_strategy_quick_validation() {
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::ExtensionWithContent);
+
+        // Rust file with clearly valid Rust content
+        let rust_code = "fn main() { println!(\"Hello\"); }";
+        let result = detector.detect_language_with_content(Path::new("test.rs"), rust_code);
+
+        assert_eq!(result.language, Language::Rust);
+        assert_eq!(result.confidence, 0.95); // Quick validation confidence
+        assert_eq!(result.detection_method, DetectionMethod::FileExtension);
+    }
+
+    #[test]
+    fn test_all_confident_extensions() {
+        let mut detector = LanguageDetector::with_strategy(DetectionStrategy::ExtensionWithContent);
+
+        let test_cases = vec![
+            ("test.rs", "fn main() {}", Language::Rust),
+            ("test.py", "def main(): pass", Language::Python),
+            ("test.js", "function main() {}", Language::JavaScript),
+            ("test.ts", "function main(): void {}", Language::TypeScript),
+            ("test.go", "func main() {}", Language::Go),
+        ];
+
+        for (path, code, expected_lang) in test_cases {
+            let result = detector.detect_language_with_content(Path::new(path), code);
+            assert_eq!(
+                result.language, expected_lang,
+                "Failed for path: {}",
+                path
+            );
+        }
+    }
 }

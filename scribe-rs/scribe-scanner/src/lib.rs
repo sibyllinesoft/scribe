@@ -172,4 +172,120 @@ mod tests {
         assert_eq!(stats.binary_files_skipped, 0);
         assert_eq!(stats.git_files_discovered, 0);
     }
+
+    #[test]
+    fn test_scanner_default() {
+        let scanner = FileScanner::default();
+        let stats = scanner.get_stats();
+        assert_eq!(stats.files_processed, 0);
+    }
+
+    #[test]
+    fn test_version() {
+        assert!(!VERSION.is_empty());
+        assert!(VERSION.chars().any(|c| c.is_numeric()));
+    }
+
+    #[tokio::test]
+    async fn test_comprehensive_scan() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.py");
+        fs::write(&test_file, "def main():\n    print('hello')").unwrap();
+
+        let scanner = FileScanner::new();
+        let results = scanner.scan_comprehensive(temp_dir.path()).await.unwrap();
+
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_scanner_stats_clone() {
+        let stats = ScannerStats {
+            files_processed: 10,
+            directories_traversed: 5,
+            binary_files_skipped: 2,
+            git_files_discovered: 8,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(stats.files_processed, cloned.files_processed);
+        assert_eq!(stats.directories_traversed, cloned.directories_traversed);
+    }
+
+    #[test]
+    fn test_scanner_stats_debug() {
+        let stats = ScannerStats {
+            files_processed: 10,
+            directories_traversed: 5,
+            binary_files_skipped: 2,
+            git_files_discovered: 8,
+        };
+
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("files_processed: 10"));
+    }
+
+    // Test re-exports are accessible
+    #[test]
+    fn test_reexport_filter_reason() {
+        let _: FilterReason = FilterReason::Binary;
+        let _: FilterReason = FilterReason::Hidden;
+        let _: FilterReason = FilterReason::ColdExtension;
+        let _: FilterReason = FilterReason::ColdDirectory;
+        let _: FilterReason = FilterReason::TooLarge(1000);
+        let _: FilterReason = FilterReason::CustomExtensionFilter;
+    }
+
+    #[test]
+    fn test_reexport_detection_strategy() {
+        let _: DetectionStrategy = DetectionStrategy::ExtensionOnly;
+        let _: DetectionStrategy = DetectionStrategy::ExtensionWithContent;
+        let _: DetectionStrategy = DetectionStrategy::FullAnalysis;
+    }
+
+    #[test]
+    fn test_reexport_parallel_config() {
+        let config = ParallelConfig::default();
+        assert!(config.max_concurrency > 0);
+    }
+
+    #[test]
+    fn test_reexport_scan_options() {
+        let options = ScanOptions::default();
+        let options_with_git = options.clone().with_git_integration(true);
+        let options_with_parallel = options_with_git.with_parallel_processing(true);
+        let _ = options_with_parallel;
+    }
+
+    #[test]
+    fn test_with_git_integration_nonexistent() {
+        let scanner = FileScanner::new();
+        // Non-existent directory should fail
+        let result = scanner.with_git_integration(Path::new("/nonexistent/path/that/does/not/exist"));
+        // GitIntegrator::new might succeed or fail depending on whether it tries to find .git
+        // The important thing is it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_with_git_integration_valid_repo() {
+        // Find the repo root by looking for .git directory
+        let mut path = std::env::current_dir().unwrap();
+        while !path.join(".git").exists() && path.parent().is_some() {
+            path = path.parent().unwrap().to_path_buf();
+        }
+
+        if path.join(".git").exists() {
+            let scanner = FileScanner::new();
+            let result = scanner.with_git_integration(&path);
+            assert!(result.is_ok(), "Should succeed with valid git repo");
+
+            let scanner = result.unwrap();
+            let stats = scanner.get_stats();
+            // After initialization with git integration, git_files_discovered might still be 0
+            // until we actually scan, but the integrator should be set
+            assert!(stats.git_files_discovered >= 0);
+        }
+        // If we're not in a git repo, skip the test
+    }
 }

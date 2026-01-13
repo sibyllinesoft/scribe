@@ -238,4 +238,118 @@ import (
         assert!(imports.contains(&"os".to_string()));
         assert!(imports.contains(&"init/package".to_string()));
     }
+
+    #[test]
+    fn test_extract_imports_unknown_language() {
+        let content = "some content";
+        let imports = extract_imports(content, &Language::Unknown);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_extract_imports_typescript() {
+        let content = r#"import { Component } from "@angular/core";"#;
+        let imports = extract_imports(content, &Language::TypeScript);
+        assert!(imports.contains(&"@angular/core".to_string()));
+    }
+
+    #[test]
+    fn test_rust_imports_with_braces() {
+        let content = r#"use std::{collections::HashMap, io::Read};"#;
+        let imports = extract_imports(content, &Language::Rust);
+        assert!(imports.contains(&"std".to_string()));
+    }
+
+    #[test]
+    fn test_python_multiple_imports() {
+        let content = "import os, sys, json";
+        let imports = extract_imports(content, &Language::Python);
+        assert!(imports.contains(&"os".to_string()));
+        assert!(imports.contains(&"sys".to_string()));
+        assert!(imports.contains(&"json".to_string()));
+    }
+
+    #[test]
+    fn test_js_double_quote_import() {
+        let content = r#"import something from "module-name";"#;
+        let imports = extract_imports(content, &Language::JavaScript);
+        assert!(imports.contains(&"module-name".to_string()));
+    }
+
+    #[test]
+    fn test_go_import_with_backticks() {
+        let path = extract_go_import_path(r#"`path/to/package`"#);
+        assert_eq!(path, Some("path/to/package".to_string()));
+    }
+
+    #[test]
+    fn test_go_import_path_none() {
+        let path = extract_go_import_path("not an import");
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn test_extract_quoted_import_single_quotes() {
+        let mut imports = HashSet::new();
+        extract_quoted_import("import mod from 'my-module';", &mut imports);
+        assert!(imports.contains("my-module"));
+    }
+
+    #[test]
+    fn test_extract_require_import() {
+        let mut imports = HashSet::new();
+        extract_require_import("const x = require('express');", &mut imports);
+        assert!(imports.contains("express"));
+    }
+
+    #[test]
+    fn test_extract_require_import_double_quotes() {
+        let mut imports = HashSet::new();
+        extract_require_import(r#"const x = require("lodash");"#, &mut imports);
+        assert!(imports.contains("lodash"));
+    }
+
+    #[test]
+    fn test_empty_content() {
+        let imports = extract_imports("", &Language::Rust);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_rust_empty_mod() {
+        let mut imports = HashSet::new();
+        extract_rust_imports("mod ;", &mut imports);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_python_empty_import() {
+        let mut imports = HashSet::new();
+        extract_python_imports("import ", &mut imports);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_python_from_empty() {
+        let mut imports = HashSet::new();
+        extract_python_imports("from  import something", &mut imports);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_js_no_quotes() {
+        let mut imports = HashSet::new();
+        extract_js_imports("import something", &mut imports);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_go_empty_import_block() {
+        let content = r#"
+import (
+)
+        "#;
+        let imports = extract_imports(content, &Language::Go);
+        assert!(imports.is_empty());
+    }
 }

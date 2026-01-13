@@ -289,4 +289,190 @@ mod tests {
         let hash2 = config.compute_hash();
         assert_eq!(hash1, hash2);
     }
+
+    #[test]
+    fn test_meta_constants() {
+        assert!(!meta::NAME.is_empty());
+        assert!(!meta::VERSION.is_empty());
+        assert!(!meta::DESCRIPTION.is_empty());
+        // Authors and repository might be empty depending on Cargo.toml
+        let _ = meta::AUTHORS;
+        let _ = meta::REPOSITORY;
+        let _ = meta::LICENSE;
+    }
+
+    #[test]
+    fn test_meta_optional_constants() {
+        // These are optional and may be None
+        let _ = meta::TARGET;
+        let _ = meta::BUILD_TIMESTAMP;
+        let _ = meta::GIT_HASH;
+    }
+
+    #[test]
+    fn test_file_type_re_exports() {
+        // Test that FileType is re-exported correctly
+        let _: FileType = FileType::Source { language: Language::Rust };
+        let _: FileType = FileType::Test { language: Language::Python };
+        let _: FileType = FileType::Documentation { format: DocumentationFormat::Markdown };
+        let _: FileType = FileType::Configuration { format: ConfigurationFormat::Json };
+        let _: FileType = FileType::Binary;
+        let _: FileType = FileType::Generated;
+        let _: FileType = FileType::Unknown;
+    }
+
+    #[test]
+    fn test_language_re_exports() {
+        let _: Language = Language::Rust;
+        let _: Language = Language::Python;
+        let _: Language = Language::JavaScript;
+        let _: Language = Language::TypeScript;
+        let _: Language = Language::Go;
+        let _: Language = Language::Java;
+        let _: Language = Language::Unknown;
+    }
+
+    #[test]
+    fn test_render_decision_re_exports() {
+        let include = RenderDecision::include("reason");
+        assert!(include.should_include());
+
+        let exclude = RenderDecision::exclude("reason");
+        assert!(!exclude.should_include());
+    }
+
+    #[test]
+    fn test_git_status_re_exports() {
+        let _: GitFileStatus = GitFileStatus::Modified;
+        let _: GitFileStatus = GitFileStatus::Added;
+        let _: GitFileStatus = GitFileStatus::Deleted;
+        let _: GitFileStatus = GitFileStatus::Untracked;
+    }
+
+    #[test]
+    fn test_binary_extensions_constant() {
+        assert!(!BINARY_EXTENSIONS.is_empty());
+        assert!(BINARY_EXTENSIONS.contains(&".exe"));
+        assert!(BINARY_EXTENSIONS.contains(&".dll"));
+    }
+
+    #[test]
+    fn test_markdown_extensions_constant() {
+        assert!(!MARKDOWN_EXTENSIONS.is_empty());
+        assert!(MARKDOWN_EXTENSIONS.contains(&".md"));
+        assert!(MARKDOWN_EXTENSIONS.contains(&".markdown"));
+    }
+
+    #[test]
+    fn test_bytes_to_human_fn() {
+        assert_eq!(bytes_to_human(0), "0 B");
+        assert_eq!(bytes_to_human(1024), "1.0 KiB");
+        assert_eq!(bytes_to_human(1024 * 1024), "1.0 MiB");
+    }
+
+    #[test]
+    fn test_math_utils_re_exports() {
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+
+        let m = mean(&values);
+        assert!((m - 3.0).abs() < 0.01);
+
+        let mut values_for_median = values.clone();
+        let med = median(&mut values_for_median);
+        assert!((med - 3.0).abs() < 0.01);
+
+        let clamped = clamp(10.0, 0.0, 5.0);
+        assert_eq!(clamped, 5.0);
+
+        let mut values_to_normalize = vec![0.0, 5.0, 10.0];
+        normalize(&mut values_to_normalize);
+        assert!((values_to_normalize[1] - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_path_utils_re_exports() {
+        assert!(is_hidden(".hidden"));
+        assert!(!is_hidden("visible"));
+
+        // is_under_directory and relative_path require paths that exist on disk,
+        // so we test with the current directory which always exists
+        let current_dir = std::env::current_dir().unwrap();
+        let cargo_toml = current_dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            let rel = relative_path(&current_dir, &cargo_toml);
+            assert!(rel.is_ok());
+            assert!(is_under_directory(&cargo_toml, &current_dir));
+        }
+    }
+
+    #[test]
+    fn test_string_utils_re_exports() {
+        assert_eq!(count_lines("a\nb\nc"), 3);
+
+        let binary_check = is_likely_binary("\0\0\0\0");
+        assert!(binary_check);
+
+        let text_check = is_likely_binary("Hello, world!");
+        assert!(!text_check);
+
+        let ident = extract_identifier("my_function");
+        assert_eq!(ident, "my_function");
+    }
+
+    #[test]
+    fn test_hash_utils_re_exports() {
+        let hash = generate_hash(&"test content".to_string());
+        assert!(!hash.is_empty());
+
+        let file_hash = hash_file_content("fn main() {}");
+        assert!(!file_hash.is_empty());
+    }
+
+    #[test]
+    fn test_time_utils_re_exports() {
+        let ts = current_timestamp();
+        assert!(ts > 0);
+
+        let human = duration_to_human(std::time::Duration::from_secs(3661));
+        assert!(human.contains("1") || human.contains("h") || human.contains("hour"));
+    }
+
+    #[test]
+    fn test_validation_utils_re_exports() {
+        // These functions validate paths, success depends on actual filesystem
+        let _ = validate_directory(".");
+        let _ = validate_file("Cargo.toml");
+        let _ = validate_readable_path("Cargo.toml");
+    }
+
+    #[test]
+    fn test_tokenization_re_exports() {
+        let counter = TokenCounter::global();
+        let result = counter.count_tokens("hello world");
+        assert!(result.is_ok());
+
+        let config = TokenizerConfig::default();
+        assert!(!config.encoding_model.is_empty());
+
+        let budget = TokenBudget::new(1000);
+        assert_eq!(budget.available(), 1000);
+    }
+
+    #[test]
+    fn test_content_type_re_exports() {
+        let _: ContentType = ContentType::Code;
+        let _: ContentType = ContentType::Documentation;
+        let _: ContentType = ContentType::Mixed;
+    }
+
+    #[test]
+    fn test_position_range_re_exports() {
+        let pos = Position::new(10, 5);
+        assert_eq!(pos.line, 10);
+        assert_eq!(pos.column, 5);
+
+        let range = Range::new(Position::new(0, 0), Position::new(10, 0));
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.end.line, 10);
+    }
 }

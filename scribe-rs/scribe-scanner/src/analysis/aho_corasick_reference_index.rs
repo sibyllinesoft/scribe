@@ -449,4 +449,329 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_index_config_default() {
+        let config = IndexConfig::default();
+        assert!(config.include_stems);
+        assert!(!config.include_dirs); // Default is false
+        assert!(config.min_token_length > 0);
+        assert!(config.max_token_length >= config.min_token_length);
+        assert!(config.max_patterns > 0);
+        assert!(config.chunk_size > 0);
+    }
+
+    #[test]
+    fn test_index_config_clone() {
+        let config = IndexConfig {
+            include_stems: false,
+            include_dirs: false,
+            min_token_length: 5,
+            max_token_length: 50,
+            max_patterns: 5000,
+            chunk_size: 8192,
+        };
+        let cloned = config.clone();
+        assert_eq!(config.include_stems, cloned.include_stems);
+        assert_eq!(config.min_token_length, cloned.min_token_length);
+        assert_eq!(config.max_patterns, cloned.max_patterns);
+    }
+
+    #[test]
+    fn test_index_metrics_default() {
+        let metrics = IndexMetrics::default();
+        assert_eq!(metrics.total_files, 0);
+        assert_eq!(metrics.total_tokens, 0);
+        assert_eq!(metrics.unique_tokens, 0);
+        assert_eq!(metrics.matches_found, 0);
+        assert_eq!(metrics.boundary_checks, 0);
+        assert_eq!(metrics.valid_matches, 0);
+        assert_eq!(metrics.bytes_scanned, 0);
+        assert_eq!(metrics.automaton_build_ms, 0);
+    }
+
+    #[test]
+    fn test_index_metrics_clone() {
+        let metrics = IndexMetrics {
+            total_files: 10,
+            total_tokens: 200,
+            unique_tokens: 500,
+            automaton_build_ms: 50,
+            matches_found: 100,
+            boundary_checks: 80,
+            valid_matches: 75,
+            bytes_scanned: 10000,
+        };
+        let cloned = metrics.clone();
+        assert_eq!(metrics.total_files, cloned.total_files);
+        assert_eq!(metrics.unique_tokens, cloned.unique_tokens);
+        assert_eq!(metrics.valid_matches, cloned.valid_matches);
+    }
+
+    #[test]
+    fn test_file_token_creation() {
+        let token = FileToken {
+            text: "example".to_string(),
+            token_type: TokenType::Basename,
+        };
+        assert_eq!(token.text, "example");
+        assert_eq!(token.token_type, TokenType::Basename);
+    }
+
+    #[test]
+    fn test_file_token_clone() {
+        let token = FileToken {
+            text: "test".to_string(),
+            token_type: TokenType::Stem,
+        };
+        let cloned = token.clone();
+        assert_eq!(token.text, cloned.text);
+        assert_eq!(token.token_type, cloned.token_type);
+    }
+
+    #[test]
+    fn test_token_type_variants() {
+        let basename = TokenType::Basename;
+        let stem = TokenType::Stem;
+        let directory = TokenType::Directory;
+
+        assert_eq!(basename, TokenType::Basename);
+        assert_eq!(stem, TokenType::Stem);
+        assert_eq!(directory, TokenType::Directory);
+        assert_ne!(basename, stem);
+        assert_ne!(stem, directory);
+    }
+
+    #[test]
+    fn test_token_type_clone() {
+        let token_type = TokenType::Directory;
+        let cloned = token_type.clone();
+        assert_eq!(token_type, cloned);
+    }
+
+    #[test]
+    fn test_is_valid_token_length() {
+        let config = IndexConfig {
+            min_token_length: 3,
+            max_token_length: 10,
+            ..Default::default()
+        };
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        // Too short
+        assert!(!index.is_valid_token("ab"));
+        // Valid length
+        assert!(index.is_valid_token("user"));
+        // Too long
+        assert!(!index.is_valid_token("verylongtoken"));
+    }
+
+    #[test]
+    fn test_is_valid_token_all_numeric() {
+        let config = IndexConfig::default();
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        // All numeric - should be rejected
+        assert!(!index.is_valid_token("12345"));
+        // Contains alphanumeric - should be valid
+        assert!(index.is_valid_token("user1"));
+    }
+
+    #[test]
+    fn test_is_valid_token_no_alphanumeric() {
+        let config = IndexConfig {
+            min_token_length: 1,
+            ..Default::default()
+        };
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        // No alphanumeric characters
+        assert!(!index.is_valid_token("---"));
+        assert!(!index.is_valid_token("___"));
+    }
+
+    #[test]
+    fn test_extract_tokens_without_stem() {
+        let config = IndexConfig {
+            include_stems: false,
+            include_dirs: false,
+            ..Default::default()
+        };
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        let path = Path::new("src/module/helper.rs");
+        let tokens = index.extract_tokens(path);
+
+        // Should have basename but not stem (stems disabled)
+        assert!(tokens.iter().any(|t| t.text == "helper.rs"));
+        assert!(!tokens.iter().any(|t| t.token_type == TokenType::Stem));
+        // No directories either (disabled)
+        assert!(!tokens.iter().any(|t| t.token_type == TokenType::Directory));
+    }
+
+    #[test]
+    fn test_extract_tokens_with_dirs() {
+        let config = IndexConfig {
+            include_stems: false,
+            include_dirs: true,
+            ..Default::default()
+        };
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        let path = Path::new("src/auth/handlers/login.rs");
+        let tokens = index.extract_tokens(path);
+
+        // Should have directory components
+        assert!(tokens.iter().any(|t| t.text == "auth" && t.token_type == TokenType::Directory));
+        assert!(tokens.iter().any(|t| t.text == "handlers" && t.token_type == TokenType::Directory));
+    }
+
+    #[test]
+    fn test_get_reference_count() {
+        let config = IndexConfig::default();
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        // Should always return 0 (placeholder)
+        assert_eq!(index.get_reference_count(0), 0);
+        assert_eq!(index.get_reference_count(100), 0);
+    }
+
+    #[test]
+    fn test_metrics_accessor() {
+        let metrics = IndexMetrics {
+            total_files: 5,
+            total_tokens: 50,
+            unique_tokens: 100,
+            automaton_build_ms: 25,
+            matches_found: 50,
+            boundary_checks: 40,
+            valid_matches: 35,
+            bytes_scanned: 5000,
+        };
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config: IndexConfig::default(),
+            metrics: metrics.clone(),
+        };
+
+        let retrieved_metrics = index.metrics();
+        assert_eq!(retrieved_metrics.total_files, 5);
+        assert_eq!(retrieved_metrics.unique_tokens, 100);
+        assert_eq!(retrieved_metrics.valid_matches, 35);
+    }
+
+    #[test]
+    fn test_scan_file_no_automaton() -> Result<()> {
+        let mut index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None, // No automaton built
+            patterns: Vec::new(),
+            config: IndexConfig::default(),
+            metrics: IndexMetrics::default(),
+        };
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        fs::write(&file_path, "fn main() {}")?;
+
+        // Should return empty vec when no automaton
+        let references = index.scan_file_for_references(&file_path)?;
+        assert!(references.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_debug() {
+        let config = IndexConfig::default();
+        let index = AhoCorasickReferenceIndex {
+            token_to_files: HashMap::new(),
+            file_tokens: Vec::new(),
+            automaton: None,
+            patterns: Vec::new(),
+            config,
+            metrics: IndexMetrics::default(),
+        };
+
+        let debug_str = format!("{:?}", index);
+        assert!(debug_str.contains("AhoCorasickReferenceIndex"));
+    }
+
+    #[test]
+    fn test_config_debug() {
+        let config = IndexConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("IndexConfig"));
+    }
+
+    #[test]
+    fn test_metrics_debug() {
+        let metrics = IndexMetrics::default();
+        let debug_str = format!("{:?}", metrics);
+        assert!(debug_str.contains("IndexMetrics"));
+    }
+
+    #[test]
+    fn test_token_debug() {
+        let token = FileToken {
+            text: "test".to_string(),
+            token_type: TokenType::Basename,
+        };
+        let debug_str = format!("{:?}", token);
+        assert!(debug_str.contains("FileToken"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_token_type_debug() {
+        let token_type = TokenType::Directory;
+        let debug_str = format!("{:?}", token_type);
+        assert!(debug_str.contains("Directory"));
+    }
 }

@@ -627,4 +627,303 @@ mod tests {
         assert_eq!(stats.dirs_skipped, 1);
         assert_eq!(stats.passed_filter, 0); // pre_filter_path doesn't update passed_filter
     }
+
+    #[test]
+    fn test_with_deny_extensions() {
+        let mut filter = FileFilter::new().with_deny_extensions(vec!["txt".to_string()]);
+
+        assert_eq!(
+            filter.pre_filter_path(Path::new("readme.txt")),
+            FilterResult::Exclude(FilterReason::CustomExtensionFilter)
+        );
+
+        assert_eq!(
+            filter.pre_filter_path(Path::new("code.rs")),
+            FilterResult::Include
+        );
+    }
+
+    #[test]
+    fn test_with_binary_detection_disabled() {
+        let filter = FileFilter::new().with_binary_detection(false);
+        assert!(!filter.binary_detection);
+    }
+
+    #[test]
+    fn test_filter_stats_default() {
+        let stats = FilterStats::default();
+        assert_eq!(stats.files_walked, 0);
+        assert_eq!(stats.dirs_skipped, 0);
+        assert_eq!(stats.extension_filtered, 0);
+        assert_eq!(stats.size_filtered, 0);
+        assert_eq!(stats.binary_filtered, 0);
+        assert_eq!(stats.passed_filter, 0);
+        assert_eq!(stats.bytes_read_for_detection, 0);
+    }
+
+    #[test]
+    fn test_filter_stats_clone() {
+        let stats = FilterStats {
+            files_walked: 10,
+            dirs_skipped: 5,
+            extension_filtered: 3,
+            size_filtered: 2,
+            binary_filtered: 1,
+            passed_filter: 8,
+            bytes_read_for_detection: 1024,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(stats.files_walked, cloned.files_walked);
+        assert_eq!(stats.bytes_read_for_detection, cloned.bytes_read_for_detection);
+    }
+
+    #[test]
+    fn test_filter_result_equality() {
+        assert_eq!(FilterResult::Include, FilterResult::Include);
+        assert_eq!(
+            FilterResult::Exclude(FilterReason::ColdExtension),
+            FilterResult::Exclude(FilterReason::ColdExtension)
+        );
+        assert_ne!(FilterResult::Include, FilterResult::Exclude(FilterReason::Hidden));
+    }
+
+    #[test]
+    fn test_filter_reason_clone() {
+        let reason = FilterReason::TooLarge(1024);
+        let cloned = reason.clone();
+        assert_eq!(reason, cloned);
+    }
+
+    #[test]
+    fn test_hot_extensions() {
+        let mut filter = FileFilter::new();
+
+        // Test that hot extensions are included
+        assert_eq!(filter.pre_filter_path(Path::new("test.rs")), FilterResult::Include);
+        assert_eq!(filter.pre_filter_path(Path::new("test.py")), FilterResult::Include);
+        assert_eq!(filter.pre_filter_path(Path::new("test.js")), FilterResult::Include);
+        assert_eq!(filter.pre_filter_path(Path::new("test.ts")), FilterResult::Include);
+        assert_eq!(filter.pre_filter_path(Path::new("test.go")), FilterResult::Include);
+        assert_eq!(filter.pre_filter_path(Path::new("test.json")), FilterResult::Include);
+    }
+
+    #[test]
+    fn test_cold_directories() {
+        let mut filter = FileFilter::new();
+
+        // Test various cold directories
+        assert_eq!(
+            filter.pre_filter_path(Path::new("__pycache__/module.pyc")),
+            FilterResult::Exclude(FilterReason::ColdDirectory)
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("target/release/binary")),
+            FilterResult::Exclude(FilterReason::ColdDirectory)
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("build/output.js")),
+            FilterResult::Exclude(FilterReason::ColdDirectory)
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("dist/bundle.js")),
+            FilterResult::Exclude(FilterReason::ColdDirectory)
+        );
+    }
+
+    #[test]
+    fn test_file_filter_default() {
+        let filter = FileFilter::default();
+        assert!(filter.allow_extensions.is_none());
+        assert!(filter.deny_extensions.is_empty());
+        assert_eq!(filter.max_file_size, MAX_CONTENT_SIZE);
+        assert!(!filter.include_hidden);
+        assert!(filter.binary_detection);
+    }
+
+    #[test]
+    fn test_directory_filter_add_custom() {
+        let mut dir_filter = DirectoryFilter::new()
+            .with_additional_cold_dirs(vec!["custom_dir".to_string(), "another_dir".to_string()]);
+
+        assert!(dir_filter.should_skip_directory(Path::new("custom_dir")));
+        assert!(dir_filter.should_skip_directory(Path::new("another_dir")));
+        assert!(!dir_filter.should_skip_directory(Path::new("src")));
+    }
+
+    #[test]
+    fn test_binary_detection_magic_bytes() {
+        let filter = FileFilter::new();
+
+        // Test various magic byte patterns
+        // Gzip
+        assert!(filter.detect_binary_content(&[0x1f, 0x8b, 0x08, 0x00]));
+
+        // PNG
+        assert!(filter.detect_binary_content(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+
+        // JPEG
+        assert!(filter.detect_binary_content(&[0xff, 0xd8, 0xff, 0xe0]));
+    }
+
+    #[test]
+    fn test_binary_detection_high_control_chars() {
+        let filter = FileFilter::new();
+
+        // Content with too many control characters
+        let mut content = Vec::new();
+        for _ in 0..50 {
+            content.push(0x01); // Control character
+        }
+        content.extend_from_slice(b"text");
+
+        // The detection may or may not trigger depending on threshold
+        // Just ensure it doesn't panic
+        let _ = filter.detect_binary_content(&content);
+    }
+
+    #[test]
+    fn test_extension_sets() {
+        // Test HOT_EXTENSIONS set
+        assert!(HOT_EXTENSIONS.contains("rs"));
+        assert!(HOT_EXTENSIONS.contains("py"));
+        assert!(HOT_EXTENSIONS.contains("js"));
+        assert!(!HOT_EXTENSIONS.contains("png"));
+
+        // Test COLD_EXTENSIONS set
+        assert!(COLD_EXTENSIONS.contains("png"));
+        assert!(COLD_EXTENSIONS.contains("zip"));
+        assert!(COLD_EXTENSIONS.contains("pdf"));
+        assert!(!COLD_EXTENSIONS.contains("rs"));
+    }
+
+    #[test]
+    fn test_reset_stats() {
+        // Tests lines 399-400: reset_stats function
+        let mut filter = FileFilter::new();
+
+        // Generate some stats
+        filter.pre_filter_path(Path::new("test.rs"));
+        filter.pre_filter_path(Path::new("test.png"));
+
+        let stats = filter.stats();
+        assert!(stats.files_walked > 0);
+
+        // Reset and verify
+        filter.reset_stats();
+        let stats = filter.stats();
+        assert_eq!(stats.files_walked, 0);
+        assert_eq!(stats.extension_filtered, 0);
+    }
+
+    #[test]
+    fn test_should_check_binary_hot_extension() {
+        // Tests lines 330-331: skip binary detection for hot extensions
+        let filter = FileFilter::new();
+
+        // Hot extensions should not check binary
+        assert!(!filter.should_check_binary(Path::new("test.rs")));
+        assert!(!filter.should_check_binary(Path::new("test.py")));
+        assert!(!filter.should_check_binary(Path::new("test.js")));
+    }
+
+    #[test]
+    fn test_should_check_binary_no_extension() {
+        // Tests lines 335-336: files with no extension skip binary check
+        let filter = FileFilter::new();
+
+        // No extension should not check binary
+        assert!(!filter.should_check_binary(Path::new("Makefile")));
+        assert!(!filter.should_check_binary(Path::new("README")));
+        assert!(!filter.should_check_binary(Path::new("LICENSE")));
+    }
+
+    #[test]
+    fn test_should_check_binary_unknown_extension() {
+        // Tests lines 339: files with unknown extensions should check binary
+        let filter = FileFilter::new();
+
+        // Unknown extension should check binary
+        assert!(filter.should_check_binary(Path::new("file.xyz")));
+        assert!(filter.should_check_binary(Path::new("data.bin")));
+        assert!(filter.should_check_binary(Path::new("file.unknown")));
+    }
+
+    #[tokio::test]
+    async fn test_filter_file_exclude_early() {
+        // Tests line 297: early return when pre_filter excludes
+        let mut filter = FileFilter::new();
+
+        // Cold extension should return exclude without checking file
+        let result = filter.filter_file(Path::new("image.png")).await;
+        assert!(matches!(result, FilterResult::Exclude(FilterReason::ColdExtension)));
+    }
+
+    #[tokio::test]
+    async fn test_filter_file_passed_filter_stat() {
+        // Tests lines 317-318: passed_filter incremented
+        // Use current directory to avoid cold directory issues
+        let test_file = Path::new("test_filter_passed.rs");
+        fs::write(&test_file, "fn main() {}").await.unwrap();
+
+        let mut filter = FileFilter::new();
+        let result = filter.filter_file(&test_file).await;
+
+        // Clean up
+        let _ = fs::remove_file(&test_file).await;
+
+        assert_eq!(result, FilterResult::Include);
+        assert_eq!(filter.stats().passed_filter, 1);
+    }
+
+    #[tokio::test]
+    async fn test_filter_file_binary_detection_path() {
+        // Tests lines 309-312: binary detection within filter_file
+        // Use current directory to avoid cold directory issues
+        let binary_file = Path::new("test_binary_file.dat");
+        fs::write(&binary_file, &[0u8, 1u8, 0u8, 2u8, 0u8]).await.unwrap();
+
+        let mut filter = FileFilter::new();
+        let result = filter.filter_file(&binary_file).await;
+
+        // Clean up
+        let _ = fs::remove_file(&binary_file).await;
+
+        // Should be excluded as binary
+        assert!(matches!(result, FilterResult::Exclude(FilterReason::Binary)));
+    }
+
+    #[tokio::test]
+    async fn test_is_binary_file_nonexistent() {
+        // Tests line 365: error when file can't be opened
+        let mut filter = FileFilter::new();
+
+        // Non-existent file should return false (assume text)
+        let result = filter.is_binary_file(Path::new("/nonexistent/file.dat")).await;
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_directory_filter_default() {
+        // Tests lines 458-459: DirectoryFilter::default()
+        let dir_filter = DirectoryFilter::default();
+
+        // Should have default cold dirs
+        let mut filter = dir_filter;
+        assert!(filter.should_skip_directory(Path::new("node_modules")));
+    }
+
+    #[test]
+    fn test_directory_filter_stats() {
+        let mut dir_filter = DirectoryFilter::new();
+
+        // Walk some directories
+        dir_filter.should_skip_directory(Path::new("src"));
+        dir_filter.should_skip_directory(Path::new("tests"));
+        dir_filter.should_skip_directory(Path::new("node_modules"));
+
+        let stats = dir_filter.stats();
+        assert_eq!(stats.dirs_walked, 3);
+        assert_eq!(stats.dirs_skipped, 1); // Only node_modules was skipped
+    }
 }

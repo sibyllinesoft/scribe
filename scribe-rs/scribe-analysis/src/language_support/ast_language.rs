@@ -363,4 +363,349 @@ mod tests {
         assert!(stats.by_tier.contains_key(&LanguageTier::SyntaxAware));
         assert!(stats.by_tier.contains_key(&LanguageTier::Future));
     }
+
+    #[test]
+    fn test_python_extension_variants() {
+        assert_eq!(AstLanguage::from_extension("py"), Some(AstLanguage::Python));
+        assert_eq!(AstLanguage::from_extension("pyi"), Some(AstLanguage::Python));
+        assert_eq!(AstLanguage::from_extension("pyw"), Some(AstLanguage::Python));
+        assert_eq!(AstLanguage::from_extension("PY"), Some(AstLanguage::Python)); // case insensitive
+    }
+
+    #[test]
+    fn test_javascript_extension_variants() {
+        assert_eq!(AstLanguage::from_extension("js"), Some(AstLanguage::JavaScript));
+        assert_eq!(AstLanguage::from_extension("mjs"), Some(AstLanguage::JavaScript));
+        assert_eq!(AstLanguage::from_extension("cjs"), Some(AstLanguage::JavaScript));
+    }
+
+    #[test]
+    fn test_typescript_extension_variants() {
+        assert_eq!(AstLanguage::from_extension("ts"), Some(AstLanguage::TypeScript));
+        assert_eq!(AstLanguage::from_extension("tsx"), Some(AstLanguage::TypeScript));
+        assert_eq!(AstLanguage::from_extension("mts"), Some(AstLanguage::TypeScript));
+        assert_eq!(AstLanguage::from_extension("cts"), Some(AstLanguage::TypeScript));
+    }
+
+    #[test]
+    fn test_html_extension_variants() {
+        assert_eq!(AstLanguage::from_extension("html"), Some(AstLanguage::Html));
+        assert_eq!(AstLanguage::from_extension("htm"), Some(AstLanguage::Html));
+    }
+
+    #[test]
+    fn test_cpp_extension_variants() {
+        assert_eq!(AstLanguage::from_extension("cpp"), Some(AstLanguage::Cpp));
+        assert_eq!(AstLanguage::from_extension("cc"), Some(AstLanguage::Cpp));
+        assert_eq!(AstLanguage::from_extension("cxx"), Some(AstLanguage::Cpp));
+        assert_eq!(AstLanguage::from_extension("c++"), Some(AstLanguage::Cpp));
+        assert_eq!(AstLanguage::from_extension("hpp"), Some(AstLanguage::Cpp));
+        assert_eq!(AstLanguage::from_extension("h"), Some(AstLanguage::Cpp));
+    }
+
+    #[test]
+    fn test_ruby_extension_variants() {
+        assert_eq!(AstLanguage::from_extension("rb"), Some(AstLanguage::Ruby));
+        assert_eq!(AstLanguage::from_extension("ruby"), Some(AstLanguage::Ruby));
+    }
+
+    #[test]
+    fn test_c_extension() {
+        assert_eq!(AstLanguage::from_extension("c"), Some(AstLanguage::C));
+    }
+
+    #[test]
+    fn test_java_extension() {
+        assert_eq!(AstLanguage::from_extension("java"), Some(AstLanguage::Java));
+    }
+
+    #[test]
+    fn test_csharp_extension() {
+        assert_eq!(AstLanguage::from_extension("cs"), Some(AstLanguage::CSharp));
+    }
+
+    #[test]
+    fn test_javascript_features() {
+        let features = AstLanguage::JavaScript.features();
+        assert!(features.has_functions);
+        assert!(features.has_classes);
+        assert!(features.has_documentation);
+        assert!(features.has_imports);
+        assert_eq!(features.tier, LanguageTier::FullAst);
+        assert!(features.complexity_factors.contains(&"closures".to_string()));
+        assert!(features.complexity_factors.contains(&"promises".to_string()));
+        assert!(features.extensions.contains(&"js".to_string()));
+    }
+
+    #[test]
+    fn test_typescript_features() {
+        let features = AstLanguage::TypeScript.features();
+        assert!(features.has_functions);
+        assert!(features.has_classes);
+        assert!(features.has_documentation);
+        assert!(features.has_imports);
+        assert_eq!(features.tier, LanguageTier::FullAst);
+        assert!(features.complexity_factors.contains(&"generic_types".to_string()));
+        assert!(features.complexity_factors.contains(&"type_guards".to_string()));
+    }
+
+    #[test]
+    fn test_rust_features() {
+        let features = AstLanguage::Rust.features();
+        assert!(features.has_functions);
+        assert!(!features.has_classes); // Rust has structs, not classes
+        assert!(features.has_documentation);
+        assert!(features.has_imports);
+        assert_eq!(features.tier, LanguageTier::FullAst);
+        assert!(features.complexity_factors.contains(&"lifetimes".to_string()));
+        assert!(features.complexity_factors.contains(&"borrowing".to_string()));
+    }
+
+    #[test]
+    fn test_go_features() {
+        let features = AstLanguage::Go.features();
+        assert!(features.has_functions);
+        assert!(!features.has_classes); // Go has structs/interfaces, not classes
+        assert!(features.has_documentation);
+        assert!(features.has_imports);
+        assert_eq!(features.tier, LanguageTier::FullAst);
+        assert!(features.complexity_factors.contains(&"goroutines".to_string()));
+        assert!(features.complexity_factors.contains(&"channels".to_string()));
+    }
+
+    #[test]
+    fn test_java_features() {
+        let features = AstLanguage::Java.features();
+        assert!(features.has_functions);
+        assert!(features.has_classes);
+        assert!(features.has_documentation);
+        assert!(features.has_imports);
+        assert_eq!(features.tier, LanguageTier::FullAst);
+        assert!(features.complexity_factors.contains(&"inheritance".to_string()));
+        assert!(features.complexity_factors.contains(&"generics".to_string()));
+    }
+
+    #[test]
+    fn test_html_features() {
+        let features = AstLanguage::Html.features();
+        assert!(!features.has_functions);
+        assert!(!features.has_classes);
+        assert_eq!(features.tier, LanguageTier::SyntaxAware);
+    }
+
+    #[test]
+    fn test_default_features() {
+        // Languages that use the fallthrough case
+        let c_features = AstLanguage::C.features();
+        assert!(!c_features.has_functions);
+        assert!(!c_features.has_classes);
+        assert_eq!(c_features.tier, LanguageTier::Future);
+
+        let cpp_features = AstLanguage::Cpp.features();
+        assert!(!cpp_features.has_functions);
+        assert_eq!(cpp_features.tier, LanguageTier::Future);
+
+        let ruby_features = AstLanguage::Ruby.features();
+        assert!(!ruby_features.has_functions);
+        assert_eq!(ruby_features.tier, LanguageTier::Future);
+
+        let csharp_features = AstLanguage::CSharp.features();
+        assert!(!csharp_features.has_functions);
+        assert_eq!(csharp_features.tier, LanguageTier::Future);
+    }
+
+    #[test]
+    fn test_language_names() {
+        assert_eq!(AstLanguage::Python.name(), "Python");
+        assert_eq!(AstLanguage::JavaScript.name(), "JavaScript");
+        assert_eq!(AstLanguage::TypeScript.name(), "TypeScript");
+        assert_eq!(AstLanguage::Go.name(), "Go");
+        assert_eq!(AstLanguage::Rust.name(), "Rust");
+        assert_eq!(AstLanguage::Html.name(), "HTML");
+        assert_eq!(AstLanguage::Java.name(), "Java");
+        assert_eq!(AstLanguage::C.name(), "C");
+        assert_eq!(AstLanguage::Cpp.name(), "C++");
+        assert_eq!(AstLanguage::Ruby.name(), "Ruby");
+        assert_eq!(AstLanguage::CSharp.name(), "C#");
+    }
+
+    #[test]
+    fn test_all_language_tiers() {
+        // Full AST
+        assert_eq!(AstLanguage::Python.tier(), LanguageTier::FullAst);
+        assert_eq!(AstLanguage::JavaScript.tier(), LanguageTier::FullAst);
+        assert_eq!(AstLanguage::TypeScript.tier(), LanguageTier::FullAst);
+        assert_eq!(AstLanguage::Go.tier(), LanguageTier::FullAst);
+        assert_eq!(AstLanguage::Rust.tier(), LanguageTier::FullAst);
+
+        // Syntax Aware
+        assert_eq!(AstLanguage::Html.tier(), LanguageTier::SyntaxAware);
+
+        // Future
+        assert_eq!(AstLanguage::Java.tier(), LanguageTier::Future);
+        assert_eq!(AstLanguage::C.tier(), LanguageTier::Future);
+        assert_eq!(AstLanguage::Cpp.tier(), LanguageTier::Future);
+        assert_eq!(AstLanguage::Ruby.tier(), LanguageTier::Future);
+        assert_eq!(AstLanguage::CSharp.tier(), LanguageTier::Future);
+    }
+
+    #[test]
+    fn test_language_tier_equality() {
+        assert_eq!(LanguageTier::FullAst, LanguageTier::FullAst);
+        assert_ne!(LanguageTier::FullAst, LanguageTier::SyntaxAware);
+        assert_ne!(LanguageTier::SyntaxAware, LanguageTier::Future);
+    }
+
+    #[test]
+    fn test_language_tier_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(LanguageTier::FullAst);
+        set.insert(LanguageTier::SyntaxAware);
+        set.insert(LanguageTier::Future);
+        set.insert(LanguageTier::FullAst); // duplicate
+
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn test_language_tier_clone() {
+        let tier = LanguageTier::FullAst;
+        let cloned = tier.clone();
+        assert_eq!(tier, cloned);
+    }
+
+    #[test]
+    fn test_language_tier_debug() {
+        let tier = LanguageTier::FullAst;
+        let debug_str = format!("{:?}", tier);
+        assert!(debug_str.contains("FullAst"));
+    }
+
+    #[test]
+    fn test_language_features_clone() {
+        let features = AstLanguage::Python.features();
+        let cloned = features.clone();
+        assert_eq!(features.tier, cloned.tier);
+        assert_eq!(features.has_functions, cloned.has_functions);
+        assert_eq!(features.complexity_factors, cloned.complexity_factors);
+    }
+
+    #[test]
+    fn test_language_features_debug() {
+        let features = AstLanguage::Python.features();
+        let debug_str = format!("{:?}", features);
+        assert!(debug_str.contains("LanguageFeatures"));
+        assert!(debug_str.contains("FullAst"));
+    }
+
+    #[test]
+    fn test_language_features_serialize() {
+        let features = AstLanguage::Python.features();
+        let json = serde_json::to_string(&features).unwrap();
+        let deserialized: LanguageFeatures = serde_json::from_str(&json).unwrap();
+        assert_eq!(features.has_functions, deserialized.has_functions);
+        assert_eq!(features.tier, deserialized.tier);
+    }
+
+    #[test]
+    fn test_language_stats_serialize() {
+        let stats = LanguageStats::calculate();
+        let json = serde_json::to_string(&stats).unwrap();
+        let deserialized: LanguageStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats.total_languages, deserialized.total_languages);
+        assert_eq!(stats.ast_supported, deserialized.ast_supported);
+    }
+
+    #[test]
+    fn test_language_stats_clone() {
+        let stats = LanguageStats::calculate();
+        let cloned = stats.clone();
+        assert_eq!(stats.total_languages, cloned.total_languages);
+        assert_eq!(stats.by_tier, cloned.by_tier);
+    }
+
+    #[test]
+    fn test_language_stats_debug() {
+        let stats = LanguageStats::calculate();
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("LanguageStats"));
+        assert!(debug_str.contains("total_languages"));
+    }
+
+    #[test]
+    fn test_ast_language_equality() {
+        assert_eq!(AstLanguage::Python, AstLanguage::Python);
+        assert_ne!(AstLanguage::Python, AstLanguage::JavaScript);
+    }
+
+    #[test]
+    fn test_ast_language_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(AstLanguage::Python);
+        set.insert(AstLanguage::Rust);
+        set.insert(AstLanguage::Python); // duplicate
+
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_ast_language_copy() {
+        let lang = AstLanguage::Python;
+        let copied = lang;
+        assert_eq!(lang, copied);
+    }
+
+    #[test]
+    fn test_ast_language_serialize() {
+        let lang = AstLanguage::Python;
+        let json = serde_json::to_string(&lang).unwrap();
+        let deserialized: AstLanguage = serde_json::from_str(&json).unwrap();
+        assert_eq!(lang, deserialized);
+    }
+
+    #[test]
+    fn test_ast_language_debug() {
+        let lang = AstLanguage::Python;
+        let debug_str = format!("{:?}", lang);
+        assert!(debug_str.contains("Python"));
+    }
+
+    #[test]
+    fn test_all_supported_languages_unique() {
+        let all = AstLanguage::all_supported();
+        let mut unique: Vec<_> = all.clone();
+        unique.sort_by_key(|l| l.name());
+        unique.dedup();
+        assert_eq!(all.len(), unique.len());
+    }
+
+    #[test]
+    fn test_language_tier_serialize() {
+        let tier = LanguageTier::FullAst;
+        let json = serde_json::to_string(&tier).unwrap();
+        let deserialized: LanguageTier = serde_json::from_str(&json).unwrap();
+        assert_eq!(tier, deserialized);
+    }
+
+    #[test]
+    fn test_language_stats_ast_supported_count() {
+        let stats = LanguageStats::calculate();
+        // AST supported = FullAst (5) + SyntaxAware (1) = 6
+        assert_eq!(stats.ast_supported, 6);
+    }
+
+    #[test]
+    fn test_language_stats_tier_breakdown() {
+        let stats = LanguageStats::calculate();
+        // 5 FullAst (Python, JavaScript, TypeScript, Go, Rust)
+        assert_eq!(stats.by_tier.get(&LanguageTier::FullAst), Some(&5));
+        // 1 SyntaxAware (Html)
+        assert_eq!(stats.by_tier.get(&LanguageTier::SyntaxAware), Some(&1));
+        // 5 Future (Java, C, Cpp, Ruby, CSharp)
+        assert_eq!(stats.by_tier.get(&LanguageTier::Future), Some(&5));
+    }
 }

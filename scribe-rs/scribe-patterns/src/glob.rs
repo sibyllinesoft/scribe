@@ -751,4 +751,258 @@ mod tests {
         assert!(matcher.matches("src/subdir/lib.rs").unwrap());
         assert!(matcher.matches("src\\subdir\\lib.rs").unwrap()); // Windows-style
     }
+
+    #[test]
+    fn test_glob_pattern_as_str() {
+        let pattern = GlobPattern::new("**/*.rs").unwrap();
+        assert_eq!(pattern.as_str(), "**/*.rs");
+    }
+
+    #[test]
+    fn test_glob_matcher_add_patterns_vec() {
+        let mut matcher = GlobMatcher::new();
+        let patterns = vec!["**/*.rs", "**/*.py", "**/*.js"];
+        matcher.add_patterns(patterns).unwrap();
+
+        assert_eq!(matcher.pattern_count(), 3);
+        assert!(matcher.matches("src/lib.rs").unwrap());
+        assert!(matcher.matches("src/main.py").unwrap());
+    }
+
+    #[test]
+    fn test_glob_matcher_default() {
+        let matcher = GlobMatcher::default();
+        assert!(matcher.is_empty());
+        assert!(!matcher.is_compiled());
+    }
+
+    #[test]
+    fn test_glob_matcher_clear_cache() {
+        let mut matcher = GlobMatcher::new();
+        matcher.add_pattern("**/*.rs").unwrap();
+
+        // Add some entries to cache
+        matcher.matches("src/lib.rs").unwrap();
+        matcher.matches("src/main.rs").unwrap();
+
+        let (hits, misses, size) = matcher.cache_stats();
+        assert!(size > 0 || misses > 0);
+
+        // Clear cache and verify
+        matcher.clear_cache();
+        let (hits, misses, size) = matcher.cache_stats();
+        assert_eq!(hits, 0);
+        assert_eq!(misses, 0);
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_glob_matcher_cache_hit_ratio_zero() {
+        let matcher = GlobMatcher::new();
+        // No operations, so ratio should be 0.0
+        assert_eq!(matcher.cache_hit_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_glob_matcher_set_cache_enabled() {
+        let mut matcher = GlobMatcher::new();
+        matcher.add_pattern("**/*.rs").unwrap();
+
+        // Cache should be enabled by default
+        matcher.matches("src/lib.rs").unwrap();
+        let (_, _, size) = matcher.cache_stats();
+        assert!(size > 0);
+
+        // Disable cache - should clear it
+        matcher.set_cache_enabled(false);
+        let (hits, misses, size) = matcher.cache_stats();
+        assert_eq!(size, 0);
+
+        // Matches should not be cached when disabled
+        matcher.matches("src/main.rs").unwrap();
+        let (_, _, size) = matcher.cache_stats();
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_glob_matcher_set_cache_size_limit() {
+        let mut matcher = GlobMatcher::with_options(GlobOptions {
+            cache_enabled: true,
+            cache_size_limit: 100,
+            ..Default::default()
+        });
+        matcher.add_pattern("**/*").unwrap();
+
+        // Add entries to cache
+        for i in 0..10 {
+            matcher.matches(format!("file{}.rs", i)).unwrap();
+        }
+
+        let (_, _, size) = matcher.cache_stats();
+        assert!(size > 0);
+
+        // Set a smaller limit - should trim cache
+        matcher.set_cache_size_limit(3);
+        let (_, _, size) = matcher.cache_stats();
+        assert!(size <= 3);
+    }
+
+    #[test]
+    fn test_glob_matcher_literal_match_method() {
+        let mut matcher = GlobMatcher::new();
+        // Add a literal pattern (no glob characters)
+        matcher.add_pattern("src/lib.rs").unwrap();
+
+        let result = matcher.match_with_details("src/lib.rs").unwrap();
+        assert!(result.matched);
+        assert_eq!(result.match_method, MatchMethod::Literal);
+    }
+
+    #[test]
+    fn test_glob_matcher_match_all_single_pattern() {
+        let mut matcher = GlobMatcher::new();
+        // Only one pattern - should use fallback
+        matcher.add_pattern("**/*.rs").unwrap();
+
+        let matches = matcher.match_all("src/lib.rs").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches.contains(&0));
+    }
+
+    #[test]
+    fn test_glob_options_default() {
+        let options = GlobOptions::default();
+        assert!(options.case_sensitive);
+        assert!(!options.literal_separator);
+        assert!(!options.backslash_escape);
+        assert!(options.cache_enabled);
+        assert_eq!(options.cache_size_limit, 1000);
+    }
+
+    #[test]
+    fn test_glob_match_result_fields() {
+        let result = GlobMatchResult {
+            matched: true,
+            pattern_index: Some(0),
+            pattern: Some("**/*.rs".to_string()),
+            match_method: MatchMethod::Compiled,
+        };
+
+        assert!(result.matched);
+        assert_eq!(result.pattern_index, Some(0));
+        assert_eq!(result.pattern, Some("**/*.rs".to_string()));
+        assert_eq!(result.match_method, MatchMethod::Compiled);
+    }
+
+    #[test]
+    fn test_match_method_equality() {
+        assert_eq!(MatchMethod::Cached, MatchMethod::Cached);
+        assert_eq!(MatchMethod::Compiled, MatchMethod::Compiled);
+        assert_eq!(MatchMethod::Individual, MatchMethod::Individual);
+        assert_eq!(MatchMethod::Literal, MatchMethod::Literal);
+        assert_ne!(MatchMethod::Cached, MatchMethod::Compiled);
+    }
+
+    #[test]
+    fn test_glob_pattern_clone() {
+        let pattern = GlobPattern::new("**/*.rs").unwrap();
+        let cloned = pattern.clone();
+
+        assert_eq!(pattern.pattern, cloned.pattern);
+        assert_eq!(pattern.case_sensitive, cloned.case_sensitive);
+    }
+
+    #[test]
+    fn test_glob_options_clone() {
+        let options = GlobOptions {
+            case_sensitive: false,
+            cache_size_limit: 500,
+            ..Default::default()
+        };
+        let cloned = options.clone();
+
+        assert_eq!(options.case_sensitive, cloned.case_sensitive);
+        assert_eq!(options.cache_size_limit, cloned.cache_size_limit);
+    }
+
+    #[test]
+    fn test_empty_patterns_match_result() {
+        let mut matcher = GlobMatcher::new();
+
+        // Match with empty patterns should return not matched
+        let result = matcher.match_with_details("any/path.rs").unwrap();
+        assert!(!result.matched);
+        assert!(result.pattern_index.is_none());
+        assert!(result.pattern.is_none());
+    }
+
+    #[test]
+    fn test_recompile_empty_patterns() {
+        let mut matcher = GlobMatcher::new();
+        // Recompile with no patterns should succeed
+        matcher.recompile().unwrap();
+        assert!(!matcher.is_compiled());
+    }
+
+    #[test]
+    fn test_cache_eviction_during_match() {
+        // Test that cache eviction actually happens during matching
+        // when cache reaches limit (exercises lines 213-216)
+        let mut matcher = GlobMatcher::with_options(GlobOptions {
+            cache_enabled: true,
+            cache_size_limit: 3,
+            ..Default::default()
+        });
+
+        matcher.add_pattern("**/*").unwrap();
+
+        // Fill the cache to the limit
+        matcher.matches("file1.rs").unwrap();
+        matcher.matches("file2.py").unwrap();
+        matcher.matches("file3.js").unwrap();
+
+        let (_, _, initial_size) = matcher.cache_stats();
+        assert_eq!(initial_size, 3);
+
+        // Add one more - this should trigger eviction
+        matcher.matches("file4.ts").unwrap();
+
+        // Cache size should be within limit
+        let (_, _, final_size) = matcher.cache_stats();
+        assert!(final_size <= 3);
+    }
+
+    #[test]
+    fn test_empty_matcher_match_result() {
+        // Test matching on an empty matcher (line 232)
+        let mut matcher = GlobMatcher::new();
+
+        // No patterns - should not match with Individual method
+        let result = matcher.match_with_details("src/lib.rs").unwrap();
+        assert!(!result.matched);
+        assert_eq!(result.pattern_index, None);
+        assert_eq!(result.pattern, None);
+        assert_eq!(result.match_method, MatchMethod::Individual);
+    }
+
+    #[test]
+    fn test_cached_match_result() {
+        // Test that cached results return Cached match method (line 202-205)
+        let mut matcher = GlobMatcher::with_options(GlobOptions {
+            cache_enabled: true,
+            ..Default::default()
+        });
+
+        matcher.add_pattern("**/*.rs").unwrap();
+
+        // First match - not cached
+        let result1 = matcher.match_with_details("src/lib.rs").unwrap();
+        assert!(result1.matched);
+        assert_ne!(result1.match_method, MatchMethod::Cached);
+
+        // Second match - should be cached
+        let result2 = matcher.match_with_details("src/lib.rs").unwrap();
+        assert!(result2.matched);
+        assert_eq!(result2.match_method, MatchMethod::Cached);
+    }
 }

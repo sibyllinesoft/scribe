@@ -291,3 +291,482 @@ pub fn compute_config_hash(config: &ScalingConfig) -> String {
         Err(_) => "default".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_cache_config_default() {
+        let config = CacheConfig::default();
+        assert!(config.enable_persistent_cache);
+        assert_eq!(config.memory_cache_size, 128);
+        assert!(!config.compression_enabled);
+        assert!(config.cache_dir.is_none());
+        assert_eq!(config.cache_ttl, 3600);
+    }
+
+    #[test]
+    fn test_cache_config_resolved_dir_default() {
+        let config = CacheConfig::default();
+        assert_eq!(config.resolved_dir(), PathBuf::from(".scribe-cache"));
+    }
+
+    #[test]
+    fn test_cache_config_resolved_dir_custom() {
+        let config = CacheConfig {
+            cache_dir: Some(PathBuf::from("/custom/cache")),
+            ..Default::default()
+        };
+        assert_eq!(config.resolved_dir(), PathBuf::from("/custom/cache"));
+    }
+
+    #[test]
+    fn test_cache_config_cache_file_path() {
+        let config = CacheConfig::default();
+        let path = config.cache_file_path();
+        assert!(path.ends_with("scaling-cache.json"));
+    }
+
+    #[test]
+    fn test_cache_config_clone() {
+        let config = CacheConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.memory_cache_size, cloned.memory_cache_size);
+        assert_eq!(config.cache_ttl, cloned.cache_ttl);
+    }
+
+    #[test]
+    fn test_processing_cache_disabled() {
+        let config = CacheConfig {
+            memory_cache_size: 0,
+            enable_persistent_cache: false,
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        // Cache should be disabled
+        assert!(!cache.enabled);
+
+        // Operations should be no-ops
+        assert!(cache.get(123, "test").is_none());
+
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 0,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+        cache.insert(123, "test", result);
+        assert!(cache.get(123, "test").is_none());
+    }
+
+    #[test]
+    fn test_processing_cache_basic_operations() {
+        let config = CacheConfig {
+            memory_cache_size: 10,
+            enable_persistent_cache: false,
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        // Initially empty
+        assert!(cache.get(123, "config1").is_none());
+
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 5,
+            processing_time: Duration::from_millis(100),
+            memory_peak: 1024,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        cache.insert(123, "config1", result.clone());
+
+        // Should now be retrievable
+        let cached = cache.get(123, "config1");
+        assert!(cached.is_some());
+        assert_eq!(cached.unwrap().total_files, 5);
+    }
+
+    #[test]
+    fn test_processing_cache_different_keys() {
+        let config = CacheConfig {
+            memory_cache_size: 10,
+            enable_persistent_cache: false,
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        let result1 = ProcessingResult {
+            files: vec![],
+            total_files: 1,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+        let result2 = ProcessingResult {
+            files: vec![],
+            total_files: 2,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        cache.insert(100, "config_a", result1);
+        cache.insert(200, "config_b", result2);
+
+        assert_eq!(cache.get(100, "config_a").unwrap().total_files, 1);
+        assert_eq!(cache.get(200, "config_b").unwrap().total_files, 2);
+        assert!(cache.get(100, "config_b").is_none());
+        assert!(cache.get(200, "config_a").is_none());
+    }
+
+    #[test]
+    fn test_make_key() {
+        let key = ProcessingCache::make_key(123, "test_config");
+        assert_eq!(key, "123::test_config");
+    }
+
+    #[test]
+    fn test_compute_config_hash() {
+        let config1 = ScalingConfig::default();
+        let config2 = ScalingConfig::default();
+        let config3 = ScalingConfig::small_repository();
+
+        let hash1 = compute_config_hash(&config1);
+        let hash2 = compute_config_hash(&config2);
+        let hash3 = compute_config_hash(&config3);
+
+        // Same configs should produce same hash
+        assert_eq!(hash1, hash2);
+        // Different configs should produce different hashes
+        assert_ne!(hash1, hash3);
+        // Hashes should be non-empty
+        assert!(!hash1.is_empty());
+    }
+
+    #[test]
+    fn test_compute_repository_hash() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Create some test files
+        std::fs::write(repo_path.join("file1.txt"), "content1").unwrap();
+        std::fs::write(repo_path.join("file2.txt"), "content2").unwrap();
+
+        let hash = compute_repository_hash(repo_path);
+        assert!(hash.is_ok());
+        assert!(hash.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_compute_repository_hash_changes_with_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        std::fs::write(repo_path.join("file.txt"), "content1").unwrap();
+        let hash1 = compute_repository_hash(repo_path).unwrap();
+
+        // Modify file (changes size)
+        std::fs::write(repo_path.join("file.txt"), "different content").unwrap();
+        let hash2 = compute_repository_hash(repo_path).unwrap();
+
+        // Hashes should be different
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_cached_processing_result_not_expired() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 0,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        let cached = CachedProcessingResult {
+            repo_hash: 123,
+            config_hash: "test".to_string(),
+            last_updated_epoch: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            result,
+        };
+
+        // Should not be expired with TTL of 3600 seconds
+        assert!(!cached.is_expired(3600));
+
+        // Should not be expired with TTL of 0 (never expire)
+        assert!(!cached.is_expired(0));
+    }
+
+    #[test]
+    fn test_cached_processing_result_expired() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 0,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        // Set last_updated to 2 hours ago
+        let two_hours_ago = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() - 7200;
+
+        let cached = CachedProcessingResult {
+            repo_hash: 123,
+            config_hash: "test".to_string(),
+            last_updated_epoch: two_hours_ago,
+            result,
+        };
+
+        // Should be expired with TTL of 3600 seconds (1 hour)
+        assert!(cached.is_expired(3600));
+    }
+
+    #[test]
+    fn test_processing_cache_flush_no_persistent() {
+        let config = CacheConfig {
+            memory_cache_size: 10,
+            enable_persistent_cache: false,
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 1,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+        cache.insert(123, "test", result);
+
+        // Should not panic when flushing with persistent cache disabled
+        cache.flush();
+    }
+
+    #[test]
+    fn test_processing_cache_with_persistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = CacheConfig {
+            memory_cache_size: 10,
+            enable_persistent_cache: true,
+            cache_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config.clone());
+
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 42,
+            processing_time: Duration::from_millis(500),
+            memory_peak: 2048,
+            cache_hits: 10,
+            cache_misses: 5,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+        cache.insert(12345, "config_hash", result);
+        cache.flush();
+
+        // Verify cache file was created
+        let cache_file = config.cache_file_path();
+        assert!(cache_file.exists());
+
+        // Create new cache and verify it loads the data
+        let mut new_cache = ProcessingCache::new(config);
+        let loaded = new_cache.get(12345, "config_hash");
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().total_files, 42);
+    }
+
+    #[test]
+    fn test_processing_cache_expiration_removes_entry() {
+        let config = CacheConfig {
+            memory_cache_size: 10,
+            enable_persistent_cache: false,
+            cache_ttl: 1, // 1 second TTL
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        // Insert with old timestamp
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 5,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+        cache.insert(123, "test", result);
+
+        // Directly verify the entry is there initially
+        assert!(cache.entries.peek(&ProcessingCache::make_key(123, "test")).is_some());
+
+        // Note: This test verifies cache insertion works, but real TTL expiration
+        // would require waiting or mocking time
+    }
+
+    #[test]
+    fn test_cached_processing_result_future_timestamp() {
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 0,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        // Set timestamp in the future (simulates clock skew)
+        let future_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() + 3600;
+
+        let cached = CachedProcessingResult {
+            repo_hash: 123,
+            config_hash: "test".to_string(),
+            last_updated_epoch: future_time,
+            result,
+        };
+
+        // Should be expired due to clock error (duration_since returns Err)
+        assert!(cached.is_expired(100));
+    }
+
+    #[test]
+    fn test_processing_cache_lru_eviction() {
+        let config = CacheConfig {
+            memory_cache_size: 2, // Very small cache
+            enable_persistent_cache: false,
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 0,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        // Insert 3 items (more than capacity)
+        cache.insert(1, "a", result.clone());
+        cache.insert(2, "b", result.clone());
+        cache.insert(3, "c", result);
+
+        // First item should be evicted (LRU)
+        assert!(cache.get(1, "a").is_none());
+        // Later items should still be present
+        assert!(cache.get(2, "b").is_some());
+        assert!(cache.get(3, "c").is_some());
+    }
+
+    #[test]
+    fn test_cache_config_serialization() {
+        let config = CacheConfig {
+            enable_persistent_cache: true,
+            memory_cache_size: 64,
+            compression_enabled: true,
+            cache_dir: Some(PathBuf::from("/custom")),
+            cache_ttl: 7200,
+        };
+
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: CacheConfig = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(config.memory_cache_size, deserialized.memory_cache_size);
+        assert_eq!(config.cache_ttl, deserialized.cache_ttl);
+        assert_eq!(config.compression_enabled, deserialized.compression_enabled);
+    }
+
+    #[test]
+    fn test_compute_repository_hash_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Empty directory should still produce a valid hash
+        let hash = compute_repository_hash(repo_path);
+        assert!(hash.is_ok());
+    }
+
+    #[test]
+    fn test_compute_repository_hash_with_subdirs() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Create nested structure
+        std::fs::create_dir_all(repo_path.join("src/utils")).unwrap();
+        std::fs::write(repo_path.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(repo_path.join("src/utils/helper.rs"), "pub fn help() {}").unwrap();
+
+        let hash = compute_repository_hash(repo_path);
+        assert!(hash.is_ok());
+        assert!(hash.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_processing_cache_dirty_flag() {
+        let config = CacheConfig {
+            memory_cache_size: 10,
+            enable_persistent_cache: false,
+            ..Default::default()
+        };
+        let mut cache = ProcessingCache::new(config);
+
+        // Initially not dirty
+        assert!(!cache.dirty);
+
+        let result = ProcessingResult {
+            files: vec![],
+            total_files: 0,
+            processing_time: Duration::from_secs(0),
+            memory_peak: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            metrics: crate::io::metrics::ScalingMetrics::default(),
+        };
+
+        // After insert, should be dirty
+        cache.insert(123, "test", result);
+        assert!(cache.dirty);
+    }
+
+    #[test]
+    fn test_cache_config_debug() {
+        let config = CacheConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("CacheConfig"));
+        assert!(debug_str.contains("memory_cache_size"));
+    }
+}

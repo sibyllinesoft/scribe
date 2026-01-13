@@ -1,4 +1,4 @@
-use scribe_scaling::{ScalingConfig, ScalingEngine, ScalingFileInfo};
+use scribe_scaling::{ScalingConfig, ScalingEngine, FileMetadata};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -26,7 +26,7 @@ fn language_multiplier(language: &str) -> f64 {
 }
 
 /// Estimate tokens for a file
-fn estimate_file_tokens(file: &ScalingFileInfo, token_budget: usize) -> usize {
+fn estimate_file_tokens(file: &FileMetadata, token_budget: usize) -> usize {
     let base_tokens = ((file.size as f64) / 3.5) as usize;
     let min_tokens = if token_budget < 5000 { 100 } else { 50 };
     let base_tokens = base_tokens.max(min_tokens);

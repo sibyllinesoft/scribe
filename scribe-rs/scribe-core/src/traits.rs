@@ -512,4 +512,383 @@ mod tests {
         assert_eq!(doc_block.doc_type, DocumentationType::DocComment);
         assert!(doc_block.text.contains("test function"));
     }
+
+    #[test]
+    fn test_dependency_graph_default() {
+        let graph = DependencyGraph::default();
+        assert!(graph.nodes.is_empty());
+        assert!(graph.edges.is_empty());
+        assert!(graph.reverse_edges.is_empty());
+        assert!(graph.node_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_dependency_graph_stats_empty() {
+        let graph = DependencyGraph::new();
+        let stats = graph.stats();
+
+        assert_eq!(stats.total_nodes, 0);
+        assert_eq!(stats.total_edges, 0);
+        assert_eq!(stats.in_degree_avg, 0.0);
+        assert_eq!(stats.out_degree_avg, 0.0);
+        assert_eq!(stats.in_degree_max, 0);
+        assert_eq!(stats.out_degree_max, 0);
+        assert_eq!(stats.graph_density, 0.0);
+    }
+
+    #[test]
+    fn test_dependency_graph_stats_single_node() {
+        let mut graph = DependencyGraph::new();
+        let metadata = DependencyNodeMetadata {
+            path: "single.rs".to_string(),
+            language: crate::file::Language::Rust,
+            size: 50,
+            is_test: false,
+            is_entrypoint: true,
+        };
+        graph.add_node("single.rs".to_string(), metadata);
+
+        let stats = graph.stats();
+        assert_eq!(stats.total_nodes, 1);
+        assert_eq!(stats.total_edges, 0);
+        assert_eq!(stats.graph_density, 0.0); // No possible edges with single node
+    }
+
+    #[test]
+    fn test_dependency_graph_multiple_edges() {
+        let mut graph = DependencyGraph::new();
+        let metadata = DependencyNodeMetadata {
+            path: "test.rs".to_string(),
+            language: crate::file::Language::Rust,
+            size: 100,
+            is_test: false,
+            is_entrypoint: false,
+        };
+
+        let node0 = graph.add_node("a.rs".to_string(), metadata.clone());
+        let node1 = graph.add_node("b.rs".to_string(), metadata.clone());
+        let node2 = graph.add_node("c.rs".to_string(), metadata.clone());
+        let node3 = graph.add_node("d.rs".to_string(), metadata);
+
+        // a -> b, a -> c, b -> d, c -> d
+        graph.add_edge(node0, node1);
+        graph.add_edge(node0, node2);
+        graph.add_edge(node1, node3);
+        graph.add_edge(node2, node3);
+
+        let stats = graph.stats();
+        assert_eq!(stats.total_nodes, 4);
+        assert_eq!(stats.total_edges, 4);
+        assert_eq!(stats.out_degree_max, 2); // node0 has 2 outgoing edges
+        assert_eq!(stats.in_degree_max, 2);  // node3 has 2 incoming edges
+    }
+
+    #[test]
+    fn test_dependency_graph_add_edge_invalid() {
+        let mut graph = DependencyGraph::new();
+        let metadata = DependencyNodeMetadata {
+            path: "test.rs".to_string(),
+            language: crate::file::Language::Rust,
+            size: 100,
+            is_test: false,
+            is_entrypoint: false,
+        };
+        let node0 = graph.add_node("a.rs".to_string(), metadata);
+
+        // Try to add edge to non-existent node - should not panic
+        graph.add_edge(node0, 999);
+        graph.add_edge(999, node0);
+
+        // Graph should remain unchanged
+        assert!(graph.edges[node0].is_empty());
+    }
+
+    #[test]
+    fn test_dependency_node_metadata() {
+        let metadata = DependencyNodeMetadata {
+            path: "src/main.rs".to_string(),
+            language: crate::file::Language::Rust,
+            size: 500,
+            is_test: false,
+            is_entrypoint: true,
+        };
+
+        assert_eq!(metadata.path, "src/main.rs");
+        assert_eq!(metadata.language, crate::file::Language::Rust);
+        assert_eq!(metadata.size, 500);
+        assert!(!metadata.is_test);
+        assert!(metadata.is_entrypoint);
+    }
+
+    #[test]
+    fn test_dependency_node_metadata_clone() {
+        let metadata = DependencyNodeMetadata {
+            path: "test.py".to_string(),
+            language: crate::file::Language::Python,
+            size: 200,
+            is_test: true,
+            is_entrypoint: false,
+        };
+
+        let cloned = metadata.clone();
+        assert_eq!(metadata.path, cloned.path);
+        assert_eq!(metadata.language, cloned.language);
+        assert_eq!(metadata.is_test, cloned.is_test);
+    }
+
+    #[test]
+    fn test_documentation_type_equality() {
+        assert_eq!(DocumentationType::LineComment, DocumentationType::LineComment);
+        assert_eq!(DocumentationType::BlockComment, DocumentationType::BlockComment);
+        assert_eq!(DocumentationType::DocComment, DocumentationType::DocComment);
+        assert_eq!(DocumentationType::Docstring, DocumentationType::Docstring);
+        assert_eq!(DocumentationType::ModuleDoc, DocumentationType::ModuleDoc);
+        assert_eq!(DocumentationType::Readme, DocumentationType::Readme);
+
+        assert_ne!(DocumentationType::LineComment, DocumentationType::BlockComment);
+        assert_ne!(DocumentationType::DocComment, DocumentationType::Docstring);
+    }
+
+    #[test]
+    fn test_documentation_type_clone() {
+        let doc_type = DocumentationType::DocComment;
+        let cloned = doc_type.clone();
+        assert_eq!(doc_type, cloned);
+    }
+
+    #[test]
+    fn test_git_repository_info() {
+        let info = GitRepositoryInfo {
+            root: std::path::PathBuf::from("/repo"),
+            branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/user/repo.git".to_string()),
+            last_commit: Some("abc123".to_string()),
+            has_changes: true,
+        };
+
+        assert_eq!(info.root, std::path::PathBuf::from("/repo"));
+        assert_eq!(info.branch, Some("main".to_string()));
+        assert!(info.has_changes);
+    }
+
+    #[test]
+    fn test_git_repository_info_minimal() {
+        let info = GitRepositoryInfo {
+            root: std::path::PathBuf::from("."),
+            branch: None,
+            remote_url: None,
+            last_commit: None,
+            has_changes: false,
+        };
+
+        assert!(info.branch.is_none());
+        assert!(info.remote_url.is_none());
+        assert!(!info.has_changes);
+    }
+
+    #[test]
+    fn test_git_repository_info_clone() {
+        let info = GitRepositoryInfo {
+            root: std::path::PathBuf::from("/repo"),
+            branch: Some("develop".to_string()),
+            remote_url: Some("git@github.com:user/repo.git".to_string()),
+            last_commit: Some("def456".to_string()),
+            has_changes: false,
+        };
+
+        let cloned = info.clone();
+        assert_eq!(info.root, cloned.root);
+        assert_eq!(info.branch, cloned.branch);
+        assert_eq!(info.remote_url, cloned.remote_url);
+    }
+
+    #[test]
+    fn test_cache_stats() {
+        let stats = CacheStats {
+            item_count: 100,
+            size_bytes: 1024 * 1024,
+            hit_rate: 0.85,
+            hits: 850,
+            misses: 150,
+        };
+
+        assert_eq!(stats.item_count, 100);
+        assert_eq!(stats.size_bytes, 1024 * 1024);
+        assert!((stats.hit_rate - 0.85).abs() < 0.001);
+        assert_eq!(stats.hits, 850);
+        assert_eq!(stats.misses, 150);
+    }
+
+    #[test]
+    fn test_cache_stats_clone() {
+        let stats = CacheStats {
+            item_count: 50,
+            size_bytes: 512,
+            hit_rate: 0.9,
+            hits: 90,
+            misses: 10,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(stats.item_count, cloned.item_count);
+        assert_eq!(stats.hits, cloned.hits);
+    }
+
+    #[test]
+    fn test_documentation_block_clone() {
+        use crate::types::{Position, Range};
+
+        let doc = DocumentationBlock {
+            text: "Test documentation".to_string(),
+            position: Range::new(Position::new(10, 0), Position::new(15, 0)),
+            doc_type: DocumentationType::BlockComment,
+        };
+
+        let cloned = doc.clone();
+        assert_eq!(doc.text, cloned.text);
+        assert_eq!(doc.doc_type, cloned.doc_type);
+    }
+
+    #[test]
+    fn test_dependency_graph_graph_density() {
+        let mut graph = DependencyGraph::new();
+        let metadata = DependencyNodeMetadata {
+            path: "test.rs".to_string(),
+            language: crate::file::Language::Rust,
+            size: 100,
+            is_test: false,
+            is_entrypoint: false,
+        };
+
+        // Create 3 nodes with all possible edges (complete graph)
+        let n0 = graph.add_node("a.rs".to_string(), metadata.clone());
+        let n1 = graph.add_node("b.rs".to_string(), metadata.clone());
+        let n2 = graph.add_node("c.rs".to_string(), metadata);
+
+        // Add all possible directed edges (n*(n-1) = 6 edges)
+        graph.add_edge(n0, n1);
+        graph.add_edge(n0, n2);
+        graph.add_edge(n1, n0);
+        graph.add_edge(n1, n2);
+        graph.add_edge(n2, n0);
+        graph.add_edge(n2, n1);
+
+        let stats = graph.stats();
+        assert_eq!(stats.total_edges, 6);
+        // Complete graph should have density = 1.0
+        assert!((stats.graph_density - 1.0).abs() < 0.001);
+    }
+
+    // Test default trait implementations
+    struct MockScorer;
+
+    impl HeuristicScorer for MockScorer {
+        fn score_file(
+            &self,
+            _file_info: &FileInfo,
+            _repo_info: &RepositoryInfo,
+        ) -> Result<ScoreComponents> {
+            Ok(ScoreComponents::zero())
+        }
+
+        fn name(&self) -> &'static str {
+            "mock_scorer"
+        }
+
+        fn score_components(&self) -> Vec<&'static str> {
+            vec!["component1", "component2"]
+        }
+    }
+
+    #[test]
+    fn test_heuristic_scorer_defaults() {
+        let scorer = MockScorer;
+        assert!(!scorer.supports_advanced_features());
+        assert_eq!(scorer.name(), "mock_scorer");
+        assert_eq!(scorer.score_components().len(), 2);
+    }
+
+    struct MockPatternMatcher {
+        pattern: String,
+    }
+
+    impl PatternMatcher for MockPatternMatcher {
+        fn matches(&self, path: &Path) -> bool {
+            path.to_string_lossy().contains(&self.pattern)
+        }
+
+        fn pattern(&self) -> &str {
+            &self.pattern
+        }
+    }
+
+    #[test]
+    fn test_pattern_matcher_defaults() {
+        let matcher = MockPatternMatcher {
+            pattern: "*.rs".to_string(),
+        };
+        assert!(matcher.is_case_sensitive());
+        assert_eq!(matcher.pattern(), "*.rs");
+    }
+
+    #[test]
+    fn test_pattern_matcher_matches() {
+        let matcher = MockPatternMatcher {
+            pattern: "test".to_string(),
+        };
+        assert!(matcher.matches(Path::new("test.rs")));
+        assert!(!matcher.matches(Path::new("main.rs")));
+    }
+
+    struct MockOutputFormatter;
+
+    impl OutputFormatter for MockOutputFormatter {
+        fn format_results(&self, _results: &[AnalysisResult], _config: &Config) -> Result<String> {
+            Ok("formatted results".to_string())
+        }
+
+        fn format_repository_info(&self, _repo_info: &RepositoryInfo, _config: &Config) -> Result<String> {
+            Ok("formatted repo info".to_string())
+        }
+
+        fn format_name(&self) -> &'static str {
+            "mock"
+        }
+
+        fn file_extension(&self) -> &'static str {
+            "txt"
+        }
+    }
+
+    #[test]
+    fn test_output_formatter_defaults() {
+        let formatter = MockOutputFormatter;
+        assert!(!formatter.supports_streaming());
+        assert_eq!(formatter.format_name(), "mock");
+        assert_eq!(formatter.file_extension(), "txt");
+    }
+
+    struct MockRepositoryAnalyzer;
+
+    #[async_trait]
+    impl RepositoryAnalyzer for MockRepositoryAnalyzer {
+        async fn analyze_repository(&self, _root_path: &Path, _config: &Config) -> Result<RepositoryInfo> {
+            unimplemented!()
+        }
+
+        async fn get_statistics(&self, _root_path: &Path, _files: &[FileInfo]) -> Result<RepositoryInfo> {
+            unimplemented!()
+        }
+
+        fn can_analyze(&self, _root_path: &Path) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn test_repository_analyzer_defaults() {
+        let analyzer = MockRepositoryAnalyzer;
+        assert_eq!(analyzer.priority(), 0);
+        assert!(analyzer.can_analyze(Path::new("/tmp")));
+    }
 }
