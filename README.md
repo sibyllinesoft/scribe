@@ -11,43 +11,31 @@ Scribe is a code analysis tool designed for AI agents and LLM-powered developmen
 
 When an AI agent needs to understand a function and its dependencies, the traditional approach is painful:
 
-```
-Agent wants to understand `authenticate_user()` in auth.rs
+**Traditional approach** (4-10+ tool calls, ~30 seconds, wastes tokens):
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  TRADITIONAL APPROACH (4-10+ tool calls, ~30 seconds, wastes tokens)        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  1. grep "authenticate_user" --include="*.rs"     → Find the function      │
-│  2. read auth.rs                                  → Read ENTIRE 800-line file│
-│  3. grep "use crate::" auth.rs                    → Find imports manually  │
-│  4. read session.rs                               → Read ENTIRE dependency │
-│  5. grep "use crate::" session.rs                 → Find transitive imports│
-│  6. read crypto.rs                                → Another full file read │
-│  7. read config.rs                                → Keep going...          │
-│  ...                                                                        │
-│                                                                             │
-│  Result: Agent reads 4000+ lines, but only ~200 are relevant               │
-│  Cost: Multiple round-trips, 95% wasted tokens, slow iteration             │
-└─────────────────────────────────────────────────────────────────────────────┘
+1. `grep "authenticate_user" --include="*.rs"` — Find the function
+2. `read auth.rs` — Read ENTIRE 800-line file
+3. `grep "use crate::" auth.rs` — Find imports manually
+4. `read session.rs` — Read ENTIRE dependency
+5. `grep "use crate::" session.rs` — Find transitive imports
+6. `read crypto.rs` — Another full file read
+7. `read config.rs` — Keep going...
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  SCRIBE APPROACH (1 tool call, ~0.7 seconds, precise context)               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  $ scribe --covering-set "auth.rs:authenticate_user" --stdout              │
-│                                                                             │
-│  Result: Returns authenticate_user + only the functions/types it uses       │
-│  - auth.rs:authenticate_user (target)                                       │
-│  - session.rs:create_session (direct dependency)                           │
-│  - crypto.rs:verify_password (direct dependency)                           │
-│  - config.rs:AuthConfig (type dependency)                                  │
-│                                                                             │
-│  Cost: Single call, ~200 lines of precisely relevant code                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+Result: Agent reads 4000+ lines, but only ~200 are relevant. Multiple round-trips, 95% wasted tokens.
+
+**Scribe approach** (1 tool call, ~0.7 seconds, precise context):
+
+```bash
+scribe --covering-set "auth.rs:authenticate_user" --stdout
 ```
 
-**Scribe's covering set feature understands your code's dependency graph and returns only what's needed.**
+Returns `authenticate_user` + only the functions/types it uses:
+- `auth.rs:authenticate_user` (target)
+- `session.rs:create_session` (direct dependency)
+- `crypto.rs:verify_password` (direct dependency)
+- `config.rs:AuthConfig` (type dependency)
+
+Single call, ~200 lines of precisely relevant code.
 
 ## Key Differentiator: Surgical Code Retrieval
 
@@ -261,24 +249,14 @@ scribe = { version = "0.5", default-features = false, features = ["core", "analy
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          scribe-cli                             │
-├─────────────────────────────────────────────────────────────────┤
-│  scribe (main library)                                          │
-│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
-│  │ scribe-core │ │scribe-scanner │ │   scribe-patterns       │  │
-│  │  (types,    │ │ (file system  │ │ (glob, gitignore)       │  │
-│  │  config)    │ │  traversal)   │ │                         │  │
-│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
-│  ┌─────────────┐ ┌───────────────┐ ┌─────────────────────────┐  │
-│  │  scribe-    │ │ scribe-graph  │ │   scribe-selection      │  │
-│  │  analysis   │ │  (PageRank,   │ │  (covering sets,        │  │
-│  │ (heuristics)│ │  dependency   │ │   token budgeting)      │  │
-│  │             │ │   graphs)     │ │                         │  │
-│  └─────────────┘ └───────────────┘ └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-```
+The CLI is built on a modular Rust workspace:
+
+- **scribe-core** — Shared types and configuration
+- **scribe-scanner** — File system traversal and filtering
+- **scribe-patterns** — Glob and gitignore pattern matching
+- **scribe-analysis** — Heuristics and scoring
+- **scribe-graph** — PageRank and dependency graph construction
+- **scribe-selection** — Covering sets and token budgeting
 
 ## Performance
 
@@ -303,4 +281,4 @@ Licensed under either of Apache License 2.0 or MIT license at your option.
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! Please see the [contributing guide](https://scribe.sibylline.dev/contributing/) for guidelines.
