@@ -1,6 +1,7 @@
-# Ignore binary files (added during CI build)
-*/bin/scribe
-*/bin/scribe.exe
+# Ignore compiled binary files (added during CI build)
+# But NOT the main scribe package's JS shim
+scribe-*/bin/scribe
+scribe-*/bin/scribe.exe
 
 # Keep the bin directories
 !*/bin/.gitkeep
