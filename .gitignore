@@ -216,9 +216,6 @@ scribe-rs/scribe-scanner/src/performance.rs
 scribe-rs/scribe-scaling/tests/performance_regression_tests.rs
 scribe-rs/scribe-selection/repomix-output.xml
 
-# Rust binary outputs
-scribe-rs/src/bin/
-
 # Rust templates and documentation
 scribe-rs/FRONTEND_BUNDLE_SETUP.md
 

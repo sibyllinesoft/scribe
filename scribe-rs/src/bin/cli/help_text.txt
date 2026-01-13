@@ -1,0 +1,37 @@
+AGENT USAGE:
+  Scribe can be used by AI agents to quickly retrieve relevant code context.
+
+  EXAMPLES:
+    # Get covering set for a file (all dependencies)
+    scribe --covering-set "src/auth.rs" --stdout
+
+    # Get covering set for a specific function within a file
+    scribe --covering-set "src/auth.rs:login" --stdout
+
+    # Entity-level granularity (returns only specific functions/classes)
+    scribe --covering-set "src/service.rs:UserService" --granularity entity --stdout
+
+    # Windows paths work too (rightmost colon is the separator)
+    scribe --covering-set "C:\project\auth.rs:login" --stdout
+
+    # Analyze what code is affected by recent changes
+    scribe --covering-set-diff --stdout
+
+    # Get full repository context within token budget
+    scribe --token-target 50000 --stdout
+
+  COVERING SET OPTIONS:
+    --granularity file    Return whole files (default, faster)
+    --granularity entity  Return only specific functions/classes (more precise)
+    --include-dependents  Include code that depends on target (impact analysis)
+    --max-depth N         Limit dependency traversal depth
+    --max-files N         Limit number of results
+
+  TARGET FORMAT:
+    file                  Covering set for entire file
+    file:entity           Covering set for specific entity within file
+
+  OUTPUT FORMATS FOR AGENTS:
+    text     Plain text with file separators (default)
+    xml      Structured XML with metadata
+    json     JSON array of files with content

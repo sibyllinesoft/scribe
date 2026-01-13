@@ -74,51 +74,41 @@ scribe --covering-set "src/lib.rs:Config" --max-depth 2 --stdout
 ### Output Formats
 
 ```bash
-# XML output (recommended for agents - structured, includes metadata)
+# Text output (default)
+scribe --covering-set "module.py:MyClass" --stdout
+
+# XML output (structured, includes metadata)
 scribe --covering-set "module.py:MyClass" --stdout --output-format xml
 
 # JSON output (for programmatic use)
 scribe --covering-set "module.py:MyClass" --stdout --output-format json
-
-# Plain text (human readable)
-scribe --covering-set "module.py:MyClass" --stdout --output-format text
 ```
 
 ### Example Output
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<covering_set>
-  <files count="3">
-    <file>
-      <path>src/auth.rs</path>
-      <distance>0</distance>
-      <reason>TargetFile</reason>
-      <content><![CDATA[
+```
+Scribe Report
+============
+Total files: 3
+Total tokens: 847
+Algorithm: covering-set
+
+=== src/auth.rs (312 tokens)
 pub fn authenticate_user(credentials: &Credentials) -> Result<Session> {
     let user = lookup_user(&credentials.username)?;
     verify_password(&credentials.password, &user.password_hash)?;
     create_session(user.id)
 }
-]]></content>
-    </file>
-    <file>
-      <path>src/session.rs</path>
-      <distance>1</distance>
-      <reason>DirectDependency</reason>
-      <content><![CDATA[
+
+=== src/session.rs (245 tokens)
 pub fn create_session(user_id: UserId) -> Result<Session> {
     // ... only the relevant function, not the whole file
 }
-]]></content>
-    </file>
-  </files>
-  <statistics>
-    <files_examined>142</files_examined>
-    <files_selected>3</files_selected>
-    <max_depth_reached>2</max_depth_reached>
-  </statistics>
-</covering_set>
+
+=== src/crypto.rs (290 tokens)
+pub fn verify_password(input: &str, hash: &PasswordHash) -> Result<()> {
+    // ...
+}
 ```
 
 ## Features
@@ -196,7 +186,7 @@ Import resolution and dependency tracking works for:
 
 --stdout                    Output to stdout (for piping to other tools)
 
---output-format <FMT>       xml, json, text, markdown
+--output-format <FMT>       text (default), xml, json, markdown
 ```
 
 ### Repository Bundling Options
@@ -208,7 +198,7 @@ Import resolution and dependency tracking works for:
 
 --exclude <PATTERNS>        Exclude matching files
 
---output-format <FMT>       html, xml, json, text, markdown, repomix
+--output-format <FMT>       text (default), html, xml, json, markdown, repomix
 ```
 
 ## Library Usage
