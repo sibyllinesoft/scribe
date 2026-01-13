@@ -77,6 +77,53 @@ jobs:
           retention-days: 7
 
   # ================================
+  # CODE COVERAGE
+  # ================================
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: scribe-rs
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Generate coverage report
+        run: |
+          cd scribe-rs
+          cargo tarpaulin --workspace --out xml --out html --skip-clean --timeout 300
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: scribe-rs/cobertura.xml
+          flags: rust
+          name: scribe-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload coverage artifacts
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            scribe-rs/cobertura.xml
+            scribe-rs/tarpaulin-report.html
+          retention-days: 30
+
+  # ================================
   # E2E TEST INFRASTRUCTURE
   # ================================
   e2e-tests:

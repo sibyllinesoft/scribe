@@ -24,7 +24,12 @@ from common.results import save_results
 
 
 def load_task(task_id: str, dataset: str = "princeton-nlp/SWE-bench_Lite") -> dict:
-    """Load a specific task from SWE-bench."""
+    """Load a specific task from SWE-bench.
+
+    Supported datasets:
+    - princeton-nlp/SWE-bench_Lite (Python only)
+    - swe-bench/SWE-bench_Multilingual (TypeScript, Rust, Go, etc.)
+    """
     if not HAS_DATASETS:
         raise ImportError("datasets package required")
 
@@ -360,6 +365,7 @@ def run_task(
     mode: str = "standard",
     timeout_s: int = 600,
     model: str = "sonnet",
+    dataset: str = "princeton-nlp/SWE-bench_Lite",
 ) -> dict:
     """Run a single SWE-bench task with Claude Code."""
 
@@ -371,7 +377,7 @@ def run_task(
 
     # Load task
     print("Loading task...")
-    task = load_task(task_id)
+    task = load_task(task_id, dataset)
 
     # Setup container
     print("Setting up container...")
@@ -413,15 +419,17 @@ def main():
     parser.add_argument("--timeout", type=int, default=600, help="Timeout per task")
     parser.add_argument("--model", default="sonnet", help="Claude model to use")
     parser.add_argument("--output", help="Output JSON file")
+    parser.add_argument("--dataset", default="princeton-nlp/SWE-bench_Lite",
+                       help="Dataset to use (e.g., swe-bench/SWE-bench_Multilingual)")
 
     args = parser.parse_args()
 
     results = []
-    modes = ["standard", "scribe-context", "scribe-tool", "scribe-hooks"] if args.mode == "all" else [args.mode]
+    modes = ["standard", "scribe-context", "scribe-tool"] if args.mode == "all" else [args.mode]
 
     for task_id in args.task_ids:
         for mode in modes:
-            result = run_task(task_id, mode, args.timeout, args.model)
+            result = run_task(task_id, mode, args.timeout, args.model, args.dataset)
             results.append(result)
 
     # Save results

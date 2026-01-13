@@ -1,9 +1,10 @@
 # Scribe - Intelligent Code Context for AI Agents
 
-[![Crates.io](https://img.shields.io/crates/v/scribe.svg)](https://crates.io/crates/scribe)
-[![Documentation](https://docs.rs/scribe/badge.svg)](https://docs.rs/scribe)
-[![License](https://img.shields.io/crates/l/scribe.svg)](https://github.com/sibyllinesoft/scribe#license)
-[![Build Status](https://github.com/sibyllinesoft/scribe/workflows/CI/badge.svg)](https://github.com/sibyllinesoft/scribe/actions)
+[![CI](https://github.com/sibyllinesoft/scribe/actions/workflows/scribe-ci.yml/badge.svg)](https://github.com/sibyllinesoft/scribe/actions/workflows/scribe-ci.yml)
+[![codecov](https://codecov.io/gh/sibyllinesoft/scribe/graph/badge.svg)](https://codecov.io/gh/sibyllinesoft/scribe)
+[![Crates.io](https://img.shields.io/crates/v/scribe-cli.svg)](https://crates.io/crates/scribe-cli)
+[![npm](https://img.shields.io/npm/v/@sibyllinesoft/scribe.svg)](https://www.npmjs.com/package/@sibyllinesoft/scribe)
+[![License](https://img.shields.io/crates/l/scribe-cli.svg)](https://github.com/sibyllinesoft/scribe#license)
 
 Scribe is a code analysis tool designed for AI agents and LLM-powered development workflows. Unlike simple file bundlers, Scribe understands code structure and dependencies—giving agents exactly the context they need without wasting tokens on irrelevant code.
 

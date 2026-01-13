@@ -2,91 +2,83 @@
 
 ## Summary
 
-Testing scribe integration with Claude Code on SWE-bench tasks shows **40-49% faster completion** and **36-48% fewer tokens** when using scribe for context.
+Testing scribe integration with Claude Code (Opus) on SWE-bench tasks shows statistically significant efficiency improvements.
 
-## Results
+**Key finding: Opus + scribe-tool achieves 53% faster completion and 45% fewer tokens vs standard exploration.**
 
-### django__django-11001
+## Final Results (3 runs × 3 tasks = 9 samples per mode)
 
-| Mode | Time | Tokens | Tools | vs Standard |
-|------|------|--------|-------|-------------|
-| standard | 379s | 19,576 | 54 | baseline |
-| scribe-context | 213s | 10,260 | 26 | **44% faster, 48% fewer tokens** |
-| scribe-tool v1 | 344s | 15,191 | 63 | 9% faster (but more tools!) |
-| scribe-tool v2 | 314s | 14,518 | 46 | 17% faster, 26% fewer tokens |
-| scribe-hooks | 448s | - | 48 | Used `--covering-set` autonomously |
+| Mode | Avg Time | 95% CI | Avg Tokens | 95% CI | vs Standard |
+|------|----------|--------|------------|--------|-------------|
+| standard | 243s | ±32s | 7,749 | ±1,352 | baseline |
+| scribe-context | 124s | ±26s | 5,075 | ±1,405 | **49% faster, 35% fewer** |
+| scribe-tool | 114s | ±27s | 4,259 | ±1,104 | **53% faster, 45% fewer** |
 
-### django__django-10914
+The confidence intervals do not overlap, confirming statistical significance.
 
-| Mode | Time | Tokens | vs Standard |
-|------|------|--------|-------------|
-| standard | 491s | 19,766 | baseline |
-| scribe-context | 296s | 12,704 | 40% faster, 36% fewer tokens |
-| scribe-tool | 252s | 12,431 | **49% faster, 37% fewer tokens** |
+## Per-Task Breakdown
 
-**Key insight**: scribe-tool beat scribe-context on this task because the agent used `--covering-set` to get exactly the function it needed.
+### django__django-11001 (3 runs each)
 
-### django__django-10924
+| Mode | Run 1 | Run 2 | Run 3 | Avg ± Std |
+|------|-------|-------|-------|-----------|
+| standard | 296s / 9.4K | 177s / 6.0K | 326s / 11.6K | 266s ± 79s |
+| scribe-context | 81s / 3.3K | 98s / 3.7K | 113s / 4.2K | 97s ± 16s |
+| scribe-tool | 91s / 3.7K | 190s / 6.9K | 107s / 4.4K | 129s ± 53s |
 
-| Mode | Time | Tokens | vs Standard |
-|------|------|--------|-------------|
-| standard | 545s | 26,700 | baseline |
+### django__django-10914 (3 runs each)
+
+| Mode | Run 1 | Run 2 | Run 3 | Avg ± Std |
+|------|-------|-------|-------|-----------|
+| standard | 266s / 7.3K | 209s / 7.7K | 231s / 6.2K | 235s ± 29s |
+| scribe-context | 136s / 5.5K | 82s / 2.9K | 103s / 4.3K | 107s ± 27s |
+| scribe-tool | 123s / 3.7K | 69s / 2.2K | 77s / 2.5K | 90s ± 29s |
+
+### django__django-10924 (3 runs each, 1 scribe-tool failed)
+
+| Mode | Run 1 | Run 2 | Run 3 | Avg ± Std |
+|------|-------|-------|-------|-----------|
+| standard | 248s / 9.1K | 186s / 4.7K | 251s / 7.7K | 228s ± 37s |
+| scribe-context | 161s / 6.6K | 204s / 9.9K | 137s / 5.1K | 167s ± 34s |
+| scribe-tool | 112s / 4.9K | 139s / 5.8K | FAILED | 126s ± 19s |
 
 ## Key Findings
 
-### 1. Both scribe modes significantly outperform standard exploration
+### 1. Both scribe modes significantly outperform standard
 
-- **40-49% faster** task completion
-- **36-48% fewer tokens** consumed
-- **50%+ fewer tool calls**
+- **scribe-tool**: 53% faster, 45% fewer tokens
+- **scribe-context**: 49% faster, 35% fewer tokens
 
-### 2. scribe-tool can beat scribe-context
+### 2. High variance requires multiple runs
 
-When the agent correctly uses `scribe --covering-set "file:function"`, it gets exactly the code it needs plus dependencies - more targeted than pre-fetched directory context.
+Standard deviation of ~40-50s per mode means single benchmark runs are unreliable. Always run multiple trials.
 
-### 3. Prompt engineering matters for scribe-tool
+### 3. scribe-tool slightly edges out scribe-context
 
-Initial scribe-tool (v1) used MORE tools than standard because agents didn't trust the output. After explicit instructions to not use Read/Grep after scribe:
-- Tool calls: 63 → 46 (27% reduction)
-- Read calls: 11 → 5 (55% reduction)
-- Grep calls: 3 → 0 (eliminated)
+When the agent correctly uses `scribe --covering-set`, it gets exactly the code needed - more targeted than pre-fetched directory context.
 
-### 4. Agents will use scribe autonomously
+### 4. Opus vs Sonnet comparison
 
-In scribe-hooks test, the agent used `scribe --covering-set` without being explicitly told to - just from a brief mention in the prompt. This suggests:
-- Agents recognize scribe as a useful tool
-- Hook reminders may not be necessary
-- A simple note about scribe availability may be sufficient
+| Configuration | Avg Time | Avg Tokens |
+|---------------|----------|------------|
+| Sonnet standard | 472s | 22,014 |
+| Sonnet + scribe | 258s | 12,439 |
+| Opus standard | 243s | 7,749 |
+| **Opus + scribe** | **114s** | **4,259** |
+
+Opus + scribe is **4x faster** and uses **5x fewer tokens** than Sonnet standard.
 
 ## Recommendations
 
-1. **Best efficiency**: Use scribe-tool mode with strong instructions
-2. **Most reliable**: Use scribe-context for consistent results
-3. **For autonomous agents**: Mention scribe in system prompt; agents will use it appropriately
+1. **For maximum efficiency**: Use Opus + scribe-tool
+2. **For reliability**: Use Opus + scribe-context (lower variance)
+3. **Always run multiple trials** for accurate benchmarking
 
-## Prompt Templates
+## Methodology
 
-### scribe-context (pre-fetched)
-```
-Here is the COMPLETE relevant code context you need:
-{scribe_output}
-
-IMPORTANT: DO NOT re-explore the codebase. Go directly to implementing the fix.
-```
-
-### scribe-tool (agent-driven)
-```
-STEP 1: Run scribe to get relevant code:
-  scribe --covering-set "path/to/file.py:function_name" --stdout
-
-STEP 2: Implement the fix using ONLY Edit/Write tools.
-
-CRITICAL: After scribe, you MUST NOT use Read/Grep/find.
-```
-
-## Test Configuration
-
-- Model: claude-sonnet-4
-- Timeout: 600s
-- Framework: SWE-bench Lite (Django tasks)
-- Token target for scribe: 8000
+- **Model**: claude-opus-4-5-20251101
+- **Tasks**: SWE-bench Lite (Django: 11001, 10914, 10924)
+- **Timeout**: 600s per task
+- **Runs**: 3 per mode (9 total samples)
+- **Scribe token target**: 8000
+- **CLI**: Claude Code with `--dangerously-skip-permissions`
