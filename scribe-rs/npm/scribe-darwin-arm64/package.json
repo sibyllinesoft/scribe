@@ -1,6 +1,6 @@
 {
   "name": "@sibyllinesoft/scribe-darwin-arm64",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Scribe binary for macOS ARM64 (Apple Silicon)",
   "repository": {
     "type": "git",
