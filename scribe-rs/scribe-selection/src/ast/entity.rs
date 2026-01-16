@@ -84,7 +84,7 @@ impl EntityQuery {
         Self {
             entity_type: None,
             name_pattern: Some(entity.to_string()),
-            exact_match: false,
+            exact_match: true, // Default to exact match to avoid substring false positives
             public_only: None,
             file_pattern: Some(file.to_string()),
         }

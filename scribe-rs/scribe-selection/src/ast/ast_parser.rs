@@ -596,13 +596,18 @@ impl AstParser {
             let node_text = &content[node.start_byte()..node.end_byte()];
 
             match capture_name.as_str() {
-                "function" | "class" | "import" | "import_from" => {
-                    signature_text = node_text.lines().next().unwrap_or("").to_string();
+                // Primary node captures - extract signature
+                "function" | "class" | "import" | "import_from" | "interface"
+                | "type_alias" | "enum" | "method" | "field" | "struct" | "trait"
+                | "impl" | "module" | "use" | "type" | "export" | "package" => {
+                    signature_text = Self::extract_signature_lines(node_text);
                     signature_type = capture_name.to_string();
                     line = node.start_position().row + 1;
                     primary_node = Some(node);
                 }
-                "func_name" | "class_name" => {
+                // Name captures
+                "func_name" | "class_name" | "interface_name" | "type_name"
+                | "enum_name" | "method_name" | "field_name" | "name" => {
                     name = node_text.to_string();
                 }
                 _ => {}
@@ -623,6 +628,26 @@ impl AstParser {
             line,
             documentation,
         })
+    }
+
+    /// Extract signature lines from node text.
+    /// For functions/methods, capture the full signature up to the opening brace.
+    /// For types/interfaces, capture the declaration line.
+    fn extract_signature_lines(node_text: &str) -> String {
+        // Find the opening brace to determine where the signature ends
+        if let Some(brace_pos) = node_text.find('{') {
+            // Get everything before the brace, trimmed
+            let sig = node_text[..brace_pos].trim();
+            // If signature spans multiple lines, normalize whitespace
+            if sig.contains('\n') {
+                sig.split_whitespace().collect::<Vec<_>>().join(" ")
+            } else {
+                sig.to_string()
+            }
+        } else {
+            // No brace - just take first line (e.g., type alias, import)
+            node_text.lines().next().unwrap_or("").to_string()
+        }
     }
 
     // Delegate to import_extractors module
@@ -688,7 +713,8 @@ impl AstParser {
         if let Some(ref name_pattern) = query.name_pattern {
             let chunk_name = chunk.name.as_deref().unwrap_or("");
             if query.exact_match {
-                if chunk_name != name_pattern {
+                // Case-insensitive exact match (whole name must match)
+                if chunk_name.to_lowercase() != name_pattern.to_lowercase() {
                     return false;
                 }
             } else {

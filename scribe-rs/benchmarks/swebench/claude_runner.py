@@ -203,43 +203,47 @@ ISSUE:
 
 IMPORTANT: The context above contains all the relevant code. DO NOT re-explore the codebase. Go directly to implementing the fix. After fixing, run tests to verify."""
         else:
-            prompt = f"""Fix the following issue in this repository.
+            # No context available - return failure without crashing benchmark
+            return {
+                "success": False,
+                "error": f"scribe-context failed: no context returned for {work_dir}",
+                "tokens": 0,
+                "duration_s": 0,
+                "patch": "",
+            }
+
+    elif mode == "scribe-tool":
+        from runner import detect_repo_language, extract_code_references
+
+        language = detect_repo_language(work_dir)
+
+        # Set up hooks to remind about scribe when exploring
+        setup_scribe_hooks(work_dir)
+
+        # Extract key terms from issue for query-hint
+        refs = extract_code_references(issue, language)
+        import re
+        camel_matches = re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z0-9]*)+)\b', issue)
+        refs.extend(camel_matches[:5])
+        keywords = list(set(refs))[:8]
+        query_hint = " ".join(keywords) if keywords else "main"
+
+        prompt = f"""Fix the following issue in this repository.
 
 ISSUE:
 {issue}
 
-After fixing, run the relevant tests to verify your fix works."""
+TOOL GUIDANCE:
+1. Use `scribe` for code exploration - it returns COMPLETE file contents, not summaries:
+   scribe --covering-set "path/to/file.py:ClassName" --stdout
 
-    elif mode == "scribe-tool":
-        from runner import infer_target_directories
-        target_dirs = infer_target_directories(work_dir, issue)
-        if target_dirs:
-            dir_suggestions = "\n".join(f"  - {d.relative_to(work_dir)}" for d in target_dirs[:3])
-            dir_example = str(target_dirs[0].relative_to(work_dir))
-        else:
-            dir_suggestions = "  - Use grep to find the relevant directory first"
-            dir_example = "src/"
+2. IMPORTANT: After scribe runs, the <content>...</content> tags contain the FULL source code.
+   You MUST NOT call Read on files that scribe already returned - this wastes tokens.
 
-        prompt = f"""Fix the following issue in this repository.
+3. When scribe returns a file, treat it as if you already called Read on that file.
+   Go directly to editing or writing your fix.
 
-STEP 1: Run this scribe command to get all relevant code:
-```
-scribe --output-format text -o /dev/stdout --token-target 8000 {dir_example}
-```
-
-STEP 2: After scribe completes, implement the fix using ONLY Edit/Write tools.
-
-CRITICAL: After running scribe, you MUST NOT use these tools:
-- NO Read tool (scribe already showed you the code)
-- NO Grep tool (scribe already found the relevant files)
-- NO find/grep/cat bash commands (scribe already explored)
-
-The scribe output contains the complete relevant codebase. Trust it and go directly to editing.
-
-STEP 3: Run tests to verify your fix.
-
-ISSUE:
-{issue}"""
+After fixing, run tests to verify."""
 
     elif mode == "scribe-hooks":
         # Standard prompt but with hooks that remind about scribe
@@ -267,6 +271,9 @@ After fixing, run the relevant tests to verify your fix works."""
     prompt_file = work_dir / ".claude_prompt.txt"
     prompt_file.write_text(prompt)
 
+    # Output file for streaming results (preserves output even if interrupted)
+    output_file = work_dir / ".claude_output.jsonl"
+
     cmd = [
         "claude",
         "--print",
@@ -277,29 +284,51 @@ After fixing, run the relevant tests to verify your fix works."""
     ]
 
     print(f"    Running Claude Code ({model})...")
-    print(f"    Timeout: {timeout_s}s")
+    print(f"    Timeout: {timeout_s}s (soft - will wait for completion)")
     print(f"    Work dir: {work_dir}")
 
     start_time = datetime.now()
     try:
-        # Pipe prompt via stdin
-        result = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            cwd=work_dir,
-        )
+        # Use Popen to stream output to file, preserving it even on interrupt
+        with open(output_file, 'w') as outf:
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=outf,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=work_dir,
+            )
+            # Send prompt and close stdin
+            process.stdin.write(prompt)
+            process.stdin.close()
+
+            # Wait for completion (no forced timeout - let Claude finish)
+            # Check periodically and warn if exceeding soft timeout
+            warned = False
+            while process.poll() is None:
+                elapsed = (datetime.now() - start_time).total_seconds()
+                if elapsed > timeout_s and not warned:
+                    print(f"    Warning: Exceeded {timeout_s}s, still running...")
+                    warned = True
+                import time
+                time.sleep(1)
+
+            returncode = process.returncode
+            stderr = process.stderr.read()
+
         duration = (datetime.now() - start_time).total_seconds()
+
+        # Read output from file
+        stdout = output_file.read_text() if output_file.exists() else ""
 
         # Parse JSON output
         output = {
-            "success": result.returncode == 0,
+            "success": returncode == 0,
             "duration_s": duration,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": returncode,
         }
 
         # Parse stream-json output (newline-delimited JSON)
@@ -307,29 +336,55 @@ After fixing, run the relevant tests to verify your fix works."""
         total_input_tokens = 0
         total_output_tokens = 0
         tool_calls = []
+        task_succeeded = False  # Track if task completed successfully
 
-        for line in result.stdout.strip().split('\n'):
+        for line in stdout.strip().split('\n'):
             if not line.strip():
                 continue
             try:
                 event = json.loads(line)
                 events.append(event)
 
-                # Extract token usage from message events
+                # Extract token usage and success from result events
                 if event.get("type") == "result":
-                    usage = event.get("usage", {})
-                    total_input_tokens = usage.get("input_tokens", 0)
-                    total_output_tokens = usage.get("output_tokens", 0)
+                    # Check if this is a successful completion
+                    if event.get("subtype") == "success":
+                        task_succeeded = True
+                        # Use token usage from successful result (include cache tokens)
+                        usage = event.get("usage", {})
+                        total_input_tokens = (
+                            usage.get("input_tokens", 0) +
+                            usage.get("cache_creation_input_tokens", 0) +
+                            usage.get("cache_read_input_tokens", 0)
+                        )
+                        total_output_tokens = usage.get("output_tokens", 0)
+                    elif not task_succeeded:
+                        # Only use tokens from non-success if we haven't seen success
+                        usage = event.get("usage", {})
+                        if usage.get("input_tokens", 0) > 0 or usage.get("cache_read_input_tokens", 0) > 0:
+                            total_input_tokens = (
+                                usage.get("input_tokens", 0) +
+                                usage.get("cache_creation_input_tokens", 0) +
+                                usage.get("cache_read_input_tokens", 0)
+                            )
+                            total_output_tokens = usage.get("output_tokens", 0)
 
-                # Track tool calls
-                if event.get("type") == "tool_use":
-                    tool_calls.append({
-                        "name": event.get("tool", ""),
-                        "input": event.get("input", {}),
-                    })
-                elif event.get("type") == "tool_result":
-                    if tool_calls:
-                        tool_calls[-1]["result_preview"] = str(event.get("output", ""))[:200]
+                # Track tool calls - they're nested in assistant message content
+                if event.get("type") == "assistant":
+                    content = event.get("message", {}).get("content", [])
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "tool_use":
+                            tool_calls.append({
+                                "name": item.get("name", ""),
+                                "input": item.get("input", {}),
+                            })
+                elif event.get("type") == "user":
+                    # Tool results are in user messages
+                    content = event.get("message", {}).get("content", [])
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "tool_result":
+                            if tool_calls:
+                                tool_calls[-1]["result_preview"] = str(item.get("content", ""))[:200]
 
             except json.JSONDecodeError:
                 continue
@@ -341,22 +396,22 @@ After fixing, run the relevant tests to verify your fix works."""
         output["tool_calls"] = tool_calls
         output["num_tool_calls"] = len(tool_calls)
 
+        # Override success based on task completion, not just return code
+        # This handles cases where infrastructure errors occur after task completion
+        if task_succeeded:
+            output["success"] = True
+
         return output
 
-    except subprocess.TimeoutExpired:
-        duration = (datetime.now() - start_time).total_seconds()
-        return {
-            "success": False,
-            "duration_s": duration,
-            "error": f"Timeout after {timeout_s}s",
-            "timeout": True,
-        }
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
+        # Try to read any partial output
+        stdout = output_file.read_text() if output_file.exists() else ""
         return {
             "success": False,
             "duration_s": duration,
             "error": str(e),
+            "stdout": stdout,
         }
 
 

@@ -87,10 +87,11 @@ pub fn log_covering_set_progress(msg: &str, stdout_mode: bool, verbose_level: u8
 pub fn build_entity_query(
     entity_name: &str,
     entity_type: Option<&str>,
-    exact_match: bool,
+    _exact_match: bool, // Now defaults to true in EntityQuery, kept for CLI compat
 ) -> EntityQuery {
     let mut query = EntityQuery::parse(entity_name);
-    query.exact_match = exact_match;
+    // exact_match defaults to true in for_file_entity to avoid substring false positives
+    // The --exact-match CLI flag is now a no-op (always exact), preserved for backwards compat
 
     if let Some(t) = entity_type {
         query.entity_type = match t.to_lowercase().as_str() {
@@ -215,6 +216,7 @@ pub async fn run_covering_set_mode(
         force_traditional: false,
         algorithm_name: Some("covering-set".to_string()),
         include_directory_map: false,
+        query_hint: None,
     };
 
     log_covering_set_progress("📊 Scanning repository...", stdout_mode, verbose_level, true);
@@ -451,6 +453,7 @@ pub async fn run_covering_set_diff_mode(
         force_traditional: true,
         algorithm_name: Some("covering-set-diff".to_string()),
         include_directory_map: false,
+        query_hint: None,
     };
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
