@@ -130,8 +130,8 @@ def main():
 
 Use scribe to get complete context in ONE call instead:
 
-  # Get a function and ALL its dependencies:
-  scribe --covering-set "path/to/file.py:function_name" --stdout
+  # Get a function and ALL its dependencies (entity-level, most efficient):
+  scribe --covering-set "path/to/file.go:FunctionName" --granularity entity --stdout
 
   # Get prioritized context for a directory:
   scribe --token-target 8000 path/to/dir --stdout
@@ -234,8 +234,10 @@ ISSUE:
 {issue}
 
 TOOL GUIDANCE:
-1. Use `scribe` ONCE to get all code you need - it returns COMPLETE file contents plus dependencies:
-   scribe --covering-set "path/to/file.py:ClassName" --stdout
+1. Use `scribe` ONCE to get all code you need. For specific functions/methods, use entity granularity:
+   scribe --covering-set "path/to/file.go:MethodName" --granularity entity --stdout
+
+   This returns ONLY the target function plus its dependencies (not whole files).
 
 2. CRITICAL: Do NOT pipe scribe output through `head`, `tail`, `grep`, or any filtering.
    Let scribe run completely - truncating/filtering defeats the purpose and wastes tokens.
@@ -243,7 +245,7 @@ TOOL GUIDANCE:
    WRONG: scribe ... | grep "pattern"
    RIGHT: scribe ... --stdout
 
-3. After scribe runs, the <content>...</content> tags contain the FULL source code.
+3. After scribe runs, the <entity>...</entity> tags contain the relevant functions/methods.
    You MUST NOT call Read on files that scribe already returned - this wastes tokens.
 
 4. Scribe returns everything you need. After ONE scribe call, go directly to editing.
@@ -264,7 +266,7 @@ ISSUE:
 After fixing, run the relevant tests to verify your fix works.
 
 NOTE: The 'scribe' tool is available for efficient codebase exploration. Example:
-  scribe --covering-set "path/to/file.py:function_name" --stdout"""
+  scribe --covering-set "path/to/file.go:function_name" --granularity entity --stdout"""
 
     else:  # standard
         prompt = f"""Fix the following issue in this repository.
