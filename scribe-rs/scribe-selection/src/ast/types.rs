@@ -29,8 +29,8 @@ impl AstLanguage {
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext.to_lowercase().as_str() {
             "py" | "pyi" | "pyw" => Some(AstLanguage::Python),
-            "js" | "mjs" | "cjs" => Some(AstLanguage::JavaScript),
-            "ts" | "mts" | "cts" => Some(AstLanguage::TypeScript),
+            "js" | "mjs" | "cjs" | "jsx" => Some(AstLanguage::JavaScript),
+            "ts" | "mts" | "cts" | "tsx" => Some(AstLanguage::TypeScript),
             "go" => Some(AstLanguage::Go),
             "rs" => Some(AstLanguage::Rust),
             _ => None,
