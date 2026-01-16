@@ -234,14 +234,22 @@ ISSUE:
 {issue}
 
 TOOL GUIDANCE:
-1. Use `scribe` for code exploration - it returns COMPLETE file contents, not summaries:
+1. Use `scribe` ONCE to get all code you need - it returns COMPLETE file contents plus dependencies:
    scribe --covering-set "path/to/file.py:ClassName" --stdout
 
-2. IMPORTANT: After scribe runs, the <content>...</content> tags contain the FULL source code.
+2. CRITICAL: Do NOT pipe scribe output through `head`, `tail`, `grep`, or any filtering.
+   Let scribe run completely - truncating/filtering defeats the purpose and wastes tokens.
+   WRONG: scribe ... | head -200
+   WRONG: scribe ... | grep "pattern"
+   RIGHT: scribe ... --stdout
+
+3. After scribe runs, the <content>...</content> tags contain the FULL source code.
    You MUST NOT call Read on files that scribe already returned - this wastes tokens.
 
-3. When scribe returns a file, treat it as if you already called Read on that file.
-   Go directly to editing or writing your fix.
+4. Scribe returns everything you need. After ONE scribe call, go directly to editing.
+   Do not keep exploring - the dependency graph is complete.
+
+5. Minimize tool calls. Scribe gives you the context; now fix the code and run tests.
 
 After fixing, run tests to verify."""
 
