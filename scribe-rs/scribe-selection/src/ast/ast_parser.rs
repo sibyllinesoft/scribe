@@ -340,7 +340,11 @@ impl AstParser {
         // Look for name field in node
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
-                if child.kind() == "identifier" || child.kind() == "type_identifier" {
+                // Include field_identifier for Go methods
+                if child.kind() == "identifier"
+                    || child.kind() == "type_identifier"
+                    || child.kind() == "field_identifier"
+                {
                     let name_bytes = &content.as_bytes()[child.start_byte()..child.end_byte()];
                     if let Ok(name) = std::str::from_utf8(name_bytes) {
                         return Some(name.to_string());

@@ -42,15 +42,8 @@ const JAVASCRIPT_CHUNK_QUERY: &str = r#"
     (function_declaration) @function
     (arrow_function) @arrow_function
     (class_declaration) @class
-    (interface_declaration) @interface
-    (type_alias_declaration) @type_alias
-    (variable_declaration
-        declarations: (variable_declarator
-            name: (identifier) @const_name
-            value: (_) @const_value
-        ) @const_declarator
-        (#match? @const_name "^[A-Z_][A-Z0-9_]*$")
-    ) @constant
+    (lexical_declaration) @const
+    (variable_declaration) @var
 "#;
 
 const TYPESCRIPT_CHUNK_QUERY: &str = r#"
@@ -62,14 +55,9 @@ const TYPESCRIPT_CHUNK_QUERY: &str = r#"
     (interface_declaration) @interface
     (type_alias_declaration) @type_alias
     (enum_declaration) @enum
-    (module_declaration) @module
-    (variable_declaration
-        declarations: (variable_declarator
-            name: (identifier) @const_name
-            value: (_) @const_value
-        ) @const_declarator
-        (#match? @const_name "^[A-Z_][A-Z0-9_]*$")
-    ) @constant
+    (ambient_declaration) @ambient
+    (lexical_declaration) @const
+    (variable_declaration) @var
 "#;
 
 const GO_CHUNK_QUERY: &str = r#"
@@ -121,25 +109,35 @@ const JAVASCRIPT_SIGNATURE_QUERY: &str = r#"
 
 const TYPESCRIPT_SIGNATURE_QUERY: &str = r#"
     (function_declaration
-        name: (identifier) @name
+        name: (identifier) @func_name
     ) @function
     (interface_declaration
-        name: (type_identifier) @name
+        name: (type_identifier) @interface_name
     ) @interface
     (type_alias_declaration
-        name: (type_identifier) @name
-    ) @type
+        name: (type_identifier) @type_name
+    ) @type_alias
     (class_declaration
-        name: (identifier) @name
+        name: (type_identifier) @class_name
     ) @class
-    (import_statement) @import
-    (export_statement) @export
+    (enum_declaration
+        name: (identifier) @enum_name
+    ) @enum
+    (method_definition
+        name: (property_identifier) @method_name
+    ) @method
+    (public_field_definition
+        name: (property_identifier) @field_name
+    ) @field
 "#;
 
 const GO_SIGNATURE_QUERY: &str = r#"
     (function_declaration
         name: (identifier) @name
     ) @function
+    (method_declaration
+        name: (field_identifier) @name
+    ) @method
     (type_declaration
         (type_spec
             name: (type_identifier) @name
