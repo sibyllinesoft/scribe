@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use tracing::{debug, info, warn};
 
 use crate::report::SelectionMetrics;
 use crate::{
@@ -13,6 +14,164 @@ use crate::{
 };
 use scribe_core::tokenization::{utils as token_utils, TokenCounter};
 use scribe_core::{FileInfo, Result};
+use scribe_selection::FileWeights;
+
+#[cfg(feature = "scaling")]
+use scribe_index::{CodeDocument, CodeIndex};
+
+/// Apply BM25 reranking to files based on query hint.
+/// Returns FileWeights containing the BM25 boost scores for use in token budget selection.
+/// Files matching the query get a strong boost (up to 10.0) to ensure they're prioritized.
+#[cfg(feature = "scaling")]
+fn apply_bm25_reranking(
+    repo_path: &Path,
+    files: &mut [FileInfo],
+    query: &str,
+    final_scores: &std::collections::HashMap<String, f64>,
+) -> FileWeights {
+    info!("Applying BM25 reranking for query: '{}'", query);
+
+    // Try to create BM25 index
+    let index = match CodeIndex::open_for_repo(repo_path) {
+        Ok(idx) => idx,
+        Err(e) => {
+            warn!("Failed to open BM25 index: {}, skipping reranking", e);
+            return FileWeights::new();
+        }
+    };
+
+    // Build documents for indexing
+    let docs: Vec<CodeDocument> = files
+        .iter()
+        .filter_map(|file| {
+            let content = file.content.clone().or_else(|| fs::read_to_string(&file.path).ok())?;
+            let content_hash = scribe_cache::ContentHash::from_content(content.as_bytes());
+
+            // Extract symbols from content
+            let lang_name = file.language.display_name();
+            let symbols = extract_symbols_simple(&content, lang_name);
+
+            Some(CodeDocument {
+                path: file.path.to_string_lossy().to_string(),
+                content_hash: content_hash.as_u64(),
+                content,
+                symbols,
+                imports: vec![],
+                language: lang_name.to_string(),
+            })
+        })
+        .collect();
+
+    if docs.is_empty() {
+        return FileWeights::new();
+    }
+
+    // Index the documents
+    if let Err(e) = index.index_documents(&docs) {
+        warn!("Failed to index documents: {}, skipping reranking", e);
+        return FileWeights::new();
+    }
+
+    if let Err(e) = index.reload() {
+        warn!("Failed to reload index: {}", e);
+        return FileWeights::new();
+    }
+
+    // Get BM25 scores
+    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
+    let bm25_scores: std::collections::HashMap<PathBuf, f32> = match index.score_files(query, &file_paths) {
+        Ok(scores) => scores.into_iter().collect(),
+        Err(e) => {
+            warn!("Failed to get BM25 scores: {}", e);
+            return FileWeights::new();
+        }
+    };
+
+    // Build FileWeights with strong BM25 boost for matching files.
+    // Use a high multiplier (10x) so query-matched files are strongly prioritized.
+    let mut weights = FileWeights::new();
+    let max_bm25 = bm25_scores.values().copied().fold(0.0f32, f32::max);
+
+    for file in files.iter() {
+        let path_str = file.path.to_string_lossy().to_string();
+        let bm25 = bm25_scores.get(&file.path).copied().unwrap_or(0.0);
+
+        // Normalize BM25 score (0-1) and apply strong boost (up to 10.0)
+        // Files with any BM25 match get at least 2.0 boost
+        let normalized = if max_bm25 > 0.0 { bm25 / max_bm25 } else { 0.0 };
+        let boost = if bm25 > 0.0 {
+            2.0 + 8.0 * normalized as f64  // Range: 2.0 to 10.0
+        } else {
+            0.0
+        };
+
+        if boost > 0.0 {
+            weights.set(path_str, boost);
+        }
+    }
+
+    // Sort files by combined score (base + BM25) for ordering
+    files.sort_by(|a, b| {
+        let a_key = a.path.to_string_lossy().to_string();
+        let b_key = b.path.to_string_lossy().to_string();
+
+        let a_base = final_scores.get(&a_key).copied().unwrap_or(0.0);
+        let b_base = final_scores.get(&b_key).copied().unwrap_or(0.0);
+
+        let a_bm25 = bm25_scores.get(&a.path).copied().unwrap_or(0.0) as f64;
+        let b_bm25 = bm25_scores.get(&b.path).copied().unwrap_or(0.0) as f64;
+
+        // Normalize and combine: base + 2.0 * normalized_bm25
+        let a_combined = a_base + 2.0 * (a_bm25 / 10.0).min(3.0);
+        let b_combined = b_base + 2.0 * (b_bm25 / 10.0).min(3.0);
+
+        b_combined.partial_cmp(&a_combined).unwrap_or(Ordering::Equal)
+    });
+
+    // Log top results
+    let matched_count = weights.len();
+    info!("BM25 reranking complete: {} files matched query", matched_count);
+    for (i, file) in files.iter().take(5).enumerate() {
+        let bm25 = bm25_scores.get(&file.path).copied().unwrap_or(0.0);
+        let boost = weights.get_path(&file.path);
+        debug!(
+            "BM25 rank {}: {} (bm25={:.2}, boost={:.1})",
+            i + 1,
+            file.path.display(),
+            bm25,
+            boost
+        );
+    }
+
+    weights
+}
+
+/// Simple symbol extraction for BM25 indexing
+#[cfg(feature = "scaling")]
+fn extract_symbols_simple(content: &str, language: &str) -> Vec<String> {
+    let mut symbols = Vec::new();
+
+    let patterns: &[&str] = match language.to_lowercase().as_str() {
+        "rust" => &[r"fn\s+(\w+)", r"struct\s+(\w+)", r"enum\s+(\w+)", r"trait\s+(\w+)"],
+        "python" => &[r"def\s+(\w+)", r"class\s+(\w+)"],
+        "go" => &[r"func\s+(\w+)", r"type\s+(\w+)\s+struct"],
+        "javascript" | "typescript" => &[r"function\s+(\w+)", r"class\s+(\w+)"],
+        "java" => &[r"class\s+(\w+)", r"interface\s+(\w+)"],
+        _ => &[],
+    };
+
+    for pattern in patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            for cap in re.captures_iter(content) {
+                if let Some(name) = cap.get(1) {
+                    symbols.push(name.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    symbols
+}
 
 /// Configuration options controlling how selection behaves when generating
 /// analysis reports. These options capture the CLI behaviour but remain general
@@ -27,6 +186,8 @@ pub struct SelectionOptions {
     pub algorithm_name: Option<String>,
     /// Whether to inject the directory inventory map into the final bundle.
     pub include_directory_map: bool,
+    /// Query hint for BM25-based file relevance scoring.
+    pub query_hint: Option<String>,
 }
 
 impl Default for SelectionOptions {
@@ -36,6 +197,7 @@ impl Default for SelectionOptions {
             force_traditional: false,
             algorithm_name: None,
             include_directory_map: true,
+            query_hint: None,
         }
     }
 }
@@ -93,7 +255,7 @@ pub async fn select_from_analysis(
     let total_files_discovered = analysis.files.len();
     let include_filter = build_include_filter(&config.filtering.include_patterns);
 
-    let filtered_infos: Vec<FileInfo> = analysis
+    let mut filtered_infos: Vec<FileInfo> = analysis
         .files
         .iter()
         .filter(|info| info.decision.should_include())
@@ -104,6 +266,17 @@ pub async fn select_from_analysis(
         .cloned()
         .collect();
 
+    // Apply BM25 reranking if query_hint is provided
+    #[cfg(feature = "scaling")]
+    let bm25_weights: Option<FileWeights> = if let Some(ref query) = options.query_hint {
+        Some(apply_bm25_reranking(repo_path, &mut filtered_infos, query, &analysis.final_scores))
+    } else {
+        None
+    };
+
+    #[cfg(not(feature = "scaling"))]
+    let bm25_weights: Option<FileWeights> = None;
+
     let unlimited_budget = options.force_traditional || options.token_target == 0;
 
     let mut selected_infos = if unlimited_budget {
@@ -113,7 +286,7 @@ pub async fn select_from_analysis(
             filtered_infos.clone(),
             options.token_target,
             config,
-            None,
+            bm25_weights.as_ref(),
             &SelectionConfig::default(),
         ).await?
     };
@@ -520,11 +693,13 @@ mod tests {
             force_traditional: true,
             algorithm_name: Some("custom".to_string()),
             include_directory_map: false,
+            query_hint: Some("test query".to_string()),
         };
         assert_eq!(options.token_target, 50_000);
         assert!(options.force_traditional);
         assert_eq!(options.algorithm_name, Some("custom".to_string()));
         assert!(!options.include_directory_map);
+        assert_eq!(options.query_hint, Some("test query".to_string()));
     }
 
     #[test]
@@ -669,11 +844,13 @@ mod tests {
             force_traditional: true,
             algorithm_name: Some("test_algo".to_string()),
             include_directory_map: false,
+            query_hint: Some("test".to_string()),
         };
         let cloned = options.clone();
         assert_eq!(options.token_target, cloned.token_target);
         assert_eq!(options.force_traditional, cloned.force_traditional);
         assert_eq!(options.algorithm_name, cloned.algorithm_name);
+        assert_eq!(options.query_hint, cloned.query_hint);
     }
 
     #[test]
@@ -889,6 +1066,7 @@ mod tests {
             force_traditional: true,
             algorithm_name: None,
             include_directory_map: true,
+            query_hint: None,
         };
         let unlimited1 = options1.force_traditional || options1.token_target == 0;
         assert!(unlimited1);
@@ -899,6 +1077,7 @@ mod tests {
             force_traditional: false,
             algorithm_name: None,
             include_directory_map: true,
+            query_hint: None,
         };
         let unlimited2 = options2.force_traditional || options2.token_target == 0;
         assert!(unlimited2);
@@ -909,6 +1088,7 @@ mod tests {
             force_traditional: false,
             algorithm_name: None,
             include_directory_map: true,
+            query_hint: None,
         };
         let unlimited3 = options3.force_traditional || options3.token_target == 0;
         assert!(!unlimited3);

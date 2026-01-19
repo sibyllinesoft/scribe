@@ -86,83 +86,110 @@ def setup_scribe_hooks(work_dir: Path):
     hooks_dir = work_dir / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write the scribe reminder hook
-    hook_script = hooks_dir / "scribe_reminder.py"
+    # Write the scribe enforcement hook
+    hook_script = hooks_dir / "scribe_enforcer.py"
     hook_script.write_text('''#!/usr/bin/env python3
-"""Hook to remind agents about scribe when exploring."""
-import json
-import sys
+"""Hook to enforce scribe usage: blocks Read on code files, blocks piped scribe."""
+import json, sys, os, re
 
-EXPLORATION_THRESHOLD = 3
+CODE_EXTS = {".py",".pyi",".js",".jsx",".ts",".tsx",".mjs",".cjs",".go",".rs",
+    ".java",".kt",".c",".h",".cpp",".hpp",".cc",".rb",".php",".swift",".scala",
+    ".cs",".lua",".ex",".exs",".hs",".ml",".clj",".vue",".svelte",".sol"}
+ALLOWED_EXTS = {".md",".txt",".json",".yaml",".yml",".toml",".ini",".cfg",
+    ".xml",".html",".css",".env",".lock",".sum",".sh",".bash"}
 
-def get_counts(sid):
+def get_state(sid):
     try:
-        with open(f"/tmp/claude_hook_{sid}.json") as f:
-            return json.load(f)
-    except:
-        return {"count": 0, "reminded": False}
+        with open(f"/tmp/claude_hook_{sid}.json") as f: return json.load(f)
+    except: return {"grep_count": 0, "reminded": False}
 
-def save_counts(sid, c):
-    with open(f"/tmp/claude_hook_{sid}.json", "w") as f:
-        json.dump(c, f)
+def save_state(sid, s):
+    with open(f"/tmp/claude_hook_{sid}.json", "w") as f: json.dump(s, f)
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except:
-        sys.exit(0)
+    try: data = json.load(sys.stdin)
+    except: sys.exit(0)
 
     sid = data.get("session_id", "x")
     tool = data.get("tool_name", "")
     event = data.get("hook_event_name", "")
+    inp = data.get("tool_input", {})
 
-    if event != "PreToolUse" or tool not in ("Read", "Grep"):
-        sys.exit(0)
+    if event != "PreToolUse": sys.exit(0)
 
-    counts = get_counts(sid)
-    counts["count"] = counts.get("count", 0) + 1
+    state = get_state(sid)
+    msg, allow = "", True
 
-    if counts["count"] >= EXPLORATION_THRESHOLD and not counts.get("reminded"):
-        counts["reminded"] = True
-        save_counts(sid, counts)
+    # BLOCK: Read on code files
+    if tool == "Read":
+        fp = inp.get("file_path", "")
+        ext = os.path.splitext(fp)[1].lower()
+        if ext in CODE_EXTS:
+            msg = f"""BLOCKED: Use scribe instead of Read for code files.
 
-        reminder = f"""EFFICIENCY TIP: You have made {counts["count"]} Read/Grep calls.
+You tried to read: {fp}
 
-Use scribe to get complete context in ONE call instead:
+USE SCRIBE to get the code WITH its dependencies:
 
-  # Get a function and ALL its dependencies (entity-level, most efficient):
-  scribe --covering-set "path/to/file.go:FunctionName" --granularity entity --stdout
+  scribe --covering-set "{fp}:FUNCTION_NAME" --stdout
 
-  # Get prioritized context for a directory:
-  scribe --token-target 8000 path/to/dir --stdout
+Replace FUNCTION_NAME with the entity you need. This returns the function
+AND all types/functions it depends on. One call, complete context.
 
-Scribe returns the target plus all types, functions, and constants it uses."""
+Read is only allowed for non-code files (config, docs, etc.)."""
+            allow = False
+        elif ext not in ALLOWED_EXTS and ext:
+            pass  # Unknown ext, allow
 
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason": reminder
-            }
-        }
-        print(json.dumps(output))
-        sys.exit(0)
+    # BLOCK: Bash piping scribe output
+    elif tool == "Bash":
+        cmd = inp.get("command", "")
+        pipes = [r"scribe.*\\|\\s*head", r"scribe.*\\|\\s*tail", r"scribe.*\\|\\s*grep",
+                 r"scribe.*\\|\\s*awk", r"scribe.*\\|\\s*sed", r"scribe.*>\\s*/dev/null"]
+        for p in pipes:
+            if re.search(p, cmd, re.I):
+                msg = f"""BLOCKED: Do not pipe scribe output.
 
-    save_counts(sid, counts)
+You ran: {cmd[:80]}...
+
+This defeats scribe's purpose. Scribe returns exactly what you need.
+Truncating loses context and wastes tokens.
+
+CORRECT: scribe --covering-set "file.py:func" --stdout
+Use --token-target to limit size if needed."""
+                allow = False
+                break
+
+    # WARN: Too many Greps
+    elif tool == "Grep":
+        state["grep_count"] = state.get("grep_count", 0) + 1
+        if state["grep_count"] >= 3 and not state.get("reminded"):
+            state["reminded"] = True
+            msg = f"""STOP: {state["grep_count"]} Grep calls. Use scribe instead.
+
+  scribe --covering-set "file.py:function" --stdout
+
+One call = function + all dependencies. Stop grepping."""
+
+    save_state(sid, state)
+    if msg:
+        out = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+               "permissionDecision": "allow" if allow else "deny",
+               "permissionDecisionReason": msg}}
+        print(json.dumps(out))
     sys.exit(0)
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
 ''')
     hook_script.chmod(0o755)
 
-    # Write settings.json
+    # Write settings.json - hook applies to Read, Grep, AND Bash
     settings = work_dir / ".claude" / "settings.json"
     settings.write_text(json.dumps({
         "hooks": {
             "PreToolUse": [
                 {
-                    "matcher": "Read|Grep",
+                    "matcher": "Read|Grep|Bash",
                     "hooks": [
                         {
                             "type": "command",
@@ -233,25 +260,37 @@ IMPORTANT: The context above contains all the relevant code. DO NOT re-explore t
 ISSUE:
 {issue}
 
-TOOL GUIDANCE:
-1. Use `scribe` ONCE to get all code you need. For specific functions/methods, use entity granularity:
-   scribe --covering-set "path/to/file.go:MethodName" --granularity entity --stdout
+=== SCRIBE: YOUR PRIMARY EXPLORATION TOOL ===
 
-   This returns ONLY the target function plus its dependencies (not whole files).
+Scribe returns a function/class AND ALL ITS DEPENDENCIES in a single call.
+This replaces grep + read exploration. Use scribe INSTEAD of manual file reading.
 
-2. CRITICAL: Do NOT pipe scribe output through `head`, `tail`, `grep`, or any filtering.
-   Let scribe run completely - truncating/filtering defeats the purpose and wastes tokens.
-   WRONG: scribe ... | head -200
-   WRONG: scribe ... | grep "pattern"
-   RIGHT: scribe ... --stdout
+**How to use (ALWAYS use --covering-set for specific entities):**
+```
+scribe --covering-set "path/to/file.py:function_name" --stdout
+scribe --covering-set "path/to/file.ts:ClassName" --stdout
+scribe --covering-set "path/to/file.go:MethodName" --stdout
+```
 
-3. After scribe runs, the <entity>...</entity> tags contain the relevant functions/methods.
-   You MUST NOT call Read on files that scribe already returned - this wastes tokens.
+This returns the target PLUS every type, function, and constant it depends on.
+Complete dependency graph. One call. No manual import tracing needed.
 
-4. Scribe returns everything you need. After ONE scribe call, go directly to editing.
-   Do not keep exploring - the dependency graph is complete.
+=== WORKFLOW ===
 
-5. Minimize tool calls. Scribe gives you the context; now fix the code and run tests.
+1. Grep ONCE to find the file/function mentioned in the issue
+2. scribe --covering-set on that target to get ALL context
+3. Fix the code using what scribe returned
+4. Run tests
+
+=== MANDATORY RULES ===
+
+After scribe returns context:
+- DO NOT call Read on files scribe already returned. You have everything.
+- DO NOT grep for more context. The dependency graph is complete.
+- DO NOT pipe scribe through head/tail/grep. Let it complete.
+
+The purpose of scribe is to ELIMINATE iterative exploration.
+One scribe call replaces 10+ grep/read calls. USE IT.
 
 After fixing, run tests to verify."""
 
@@ -263,10 +302,9 @@ After fixing, run tests to verify."""
 ISSUE:
 {issue}
 
-After fixing, run the relevant tests to verify your fix works.
+HINT: Use `scribe --covering-set "file:function" --stdout` to get a function with all its dependencies in one call. This is faster than reading files individually.
 
-NOTE: The 'scribe' tool is available for efficient codebase exploration. Example:
-  scribe --covering-set "path/to/file.go:function_name" --granularity entity --stdout"""
+After fixing, run the relevant tests to verify your fix works."""
 
     else:  # standard
         prompt = f"""Fix the following issue in this repository.

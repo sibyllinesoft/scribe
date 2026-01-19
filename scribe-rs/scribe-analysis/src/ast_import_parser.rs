@@ -148,8 +148,32 @@ impl SimpleAstParser {
         pool.entry(language).or_insert_with(Vec::new).push(parser);
     }
 
-    /// Extract imports from the given content using optimized tree-sitter traversal
+    /// Extract imports from the given content using optimized traversal
+    ///
+    /// For TypeScript and JavaScript, uses SWC for better accuracy with:
+    /// - Type-only imports
+    /// - Re-exports (`export * from`, `export { x } from`)
+    /// - TSX/JSX syntax
+    ///
+    /// For other languages, uses tree-sitter.
     pub fn extract_imports(
+        &self,
+        content: &str,
+        language: ImportLanguage,
+    ) -> Result<Vec<SimpleImport>> {
+        match language {
+            // Use SWC for TypeScript/JavaScript (faster, handles edge cases better)
+            ImportLanguage::TypeScript | ImportLanguage::JavaScript => {
+                let is_typescript = matches!(language, ImportLanguage::TypeScript);
+                Ok(crate::swc_import_extractor::extract_imports(content, is_typescript))
+            }
+            // Use tree-sitter for other languages
+            _ => self.extract_imports_treesitter(content, language),
+        }
+    }
+
+    /// Extract imports using tree-sitter (for Python, Go, Rust)
+    fn extract_imports_treesitter(
         &self,
         content: &str,
         language: ImportLanguage,

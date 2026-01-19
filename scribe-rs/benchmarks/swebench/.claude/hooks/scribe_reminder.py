@@ -1,84 +1,174 @@
 #!/usr/bin/env python3
 """
-Hook to remind agents about scribe when they use Read/Grep for exploration.
+Hook to enforce scribe usage for code exploration.
 
-This hook intercepts Read and Grep tool calls and provides guidance about
-using scribe to get complete dependency context instead of manual exploration.
+This hook:
+1. BLOCKS Read on code files - redirects to scribe command
+2. BLOCKS Grep on code files - redirects to scribe command
+3. NUDGES on all other Read/Grep with short reminder
+4. BLOCKS Bash when piping scribe output (head/tail/grep)
 """
 
 import json
 import sys
 import os
+import re
 
-# Track exploration patterns per session
-EXPLORATION_THRESHOLD = 3  # After N reads/greps, remind about scribe
+# Code file extensions that scribe supports
+CODE_EXTENSIONS = {
+    ".py", ".pyi",  # Python
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",  # JavaScript/TypeScript
+    ".go",  # Go
+    ".rs",  # Rust
+    ".java", ".kt", ".kts",  # JVM
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",  # C/C++
+    ".rb",  # Ruby
+    ".php",  # PHP
+    ".swift",  # Swift
+    ".scala",  # Scala
+    ".cs",  # C#
+    ".lua",  # Lua
+    ".r", ".R",  # R
+    ".jl",  # Julia
+    ".ex", ".exs",  # Elixir
+    ".erl", ".hrl",  # Erlang
+    ".hs",  # Haskell
+    ".ml", ".mli",  # OCaml
+    ".clj", ".cljs", ".cljc",  # Clojure
+    ".elm",  # Elm
+    ".vue", ".svelte",  # Frontend frameworks
+    ".sol",  # Solidity
+}
+
+# Non-code files that Read is allowed without nudge
+ALLOWED_EXTENSIONS = {
+    ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+    ".xml", ".html", ".css", ".scss", ".less",
+    ".env", ".gitignore", ".dockerignore",
+    ".lock", ".sum",  # Lock files
+}
 
 
-def get_session_count_file(session_id: str) -> str:
-    """Get path to session exploration count file."""
+def get_session_file(session_id: str) -> str:
     return f"/tmp/claude_scribe_hook_{session_id}.json"
 
 
-def get_exploration_count(session_id: str) -> dict:
-    """Get exploration count for session."""
-    path = get_session_count_file(session_id)
+def get_session_state(session_id: str) -> dict:
     try:
-        with open(path) as f:
+        with open(get_session_file(session_id)) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"read_count": 0, "grep_count": 0, "reminded": False}
+        return {"grep_count": 0, "reminded": False, "allowed_reads": []}
 
 
-def save_exploration_count(session_id: str, counts: dict):
-    """Save exploration count for session."""
-    path = get_session_count_file(session_id)
-    with open(path, "w") as f:
-        json.dump(counts, f)
+def save_session_state(session_id: str, state: dict):
+    with open(get_session_file(session_id), "w") as f:
+        json.dump(state, f)
 
 
-def should_remind(tool_name: str, tool_input: dict, counts: dict) -> tuple[bool, str]:
-    """Determine if we should remind about scribe."""
-    # Don't remind if already reminded this session
-    if counts.get("reminded"):
-        return False, ""
+def is_code_file(file_path: str) -> bool:
+    """Check if file is a code file that scribe can handle."""
+    ext = os.path.splitext(file_path)[1].lower()
+    return ext in CODE_EXTENSIONS
 
-    total_exploration = counts.get("read_count", 0) + counts.get("grep_count", 0)
 
-    # Remind after threshold exploration calls
-    if total_exploration >= EXPLORATION_THRESHOLD:
-        return True, f"""EFFICIENCY TIP: You've made {total_exploration} exploration calls (Read/Grep).
+def is_allowed_file(file_path: str) -> bool:
+    """Check if file is explicitly allowed for Read (non-code)."""
+    ext = os.path.splitext(file_path)[1].lower()
+    return ext in ALLOWED_EXTENSIONS
 
-Instead of reading files one by one, use scribe to get complete context:
 
-  # Get a function and ALL its dependencies in one call:
-  scribe --covering-set "path/to/file.py:function_name" --stdout
+def get_scribe_command_for_file(file_path: str) -> str:
+    """Generate a short scribe command suggestion."""
+    return f'scribe --covering-set "{file_path}:ENTITY" --stdout'
 
-  # Get all code related to current git changes:
-  scribe --covering-set-diff --stdout
 
-  # Get prioritized context for a directory:
-  scribe --token-target 8000 path/to/dir --stdout
+# Short nudge message for non-code files
+NUDGE_MESSAGE = "Tip: scribe --covering-set may be faster for code exploration."
 
-Scribe returns the complete dependency cone - the target plus all types,
-functions, and constants it uses. This is more efficient than iterative discovery."""
 
-    # Check for patterns that suggest exploring dependencies
-    if tool_name == "Grep":
-        pattern = tool_input.get("pattern", "")
-        # Looking for imports, definitions, or references
-        if any(kw in pattern.lower() for kw in ["import", "from", "class ", "def ", "function"]):
-            return True, f"""TIP: Looking for "{pattern}"?
+def check_bash_for_scribe_pipe(command: str) -> tuple[bool, str]:
+    """Check if bash command pipes scribe output."""
+    # Patterns that indicate piping scribe output
+    pipe_patterns = [
+        r'scribe\s+.*\|\s*head',
+        r'scribe\s+.*\|\s*tail',
+        r'scribe\s+.*\|\s*grep',
+        r'scribe\s+.*\|\s*awk',
+        r'scribe\s+.*\|\s*sed',
+        r'scribe\s+.*\|\s*cut',
+        r'scribe\s+.*\|\s*wc',
+        r'scribe\s+.*\|\s*less',
+        r'scribe\s+.*\|\s*more',
+        r'scribe\s+.*>\s*/dev/null',
+    ]
 
-Use scribe to get the complete dependency graph:
-  scribe --covering-set "file.py:entity_name" --stdout
-
-This returns the entity AND all its dependencies in one call."""
+    for pattern in pipe_patterns:
+        if re.search(pattern, command, re.IGNORECASE):
+            return True, "BLOCKED: Don't pipe scribe output. Use --token-target to limit size."
 
     return False, ""
 
 
+def handle_read(file_path: str, session_id: str, state: dict) -> tuple[str, bool]:
+    """Handle Read tool - block code files, nudge on others."""
+
+    # Always allow config/doc files without nudge
+    if is_allowed_file(file_path):
+        return "", True
+
+    # Check if this specific file was already allowed (e.g., after scribe)
+    if file_path in state.get("allowed_reads", []):
+        return "", True
+
+    # Block code files - redirect to scribe
+    if is_code_file(file_path):
+        scribe_cmd = get_scribe_command_for_file(file_path)
+        return f"BLOCKED: Use {scribe_cmd} instead.", False
+
+    # Unknown extension - allow with short nudge
+    return NUDGE_MESSAGE, True
+
+
+def handle_grep(tool_input: dict, state: dict) -> tuple[str, bool]:
+    """Handle Grep tool - block on code files, nudge on others."""
+    pattern = tool_input.get("pattern", "")
+    path = tool_input.get("path", "")
+    glob_pattern = tool_input.get("glob", "")
+
+    # Check if targeting code files via path or glob
+    targets_code = False
+    if path:
+        targets_code = is_code_file(path)
+    if glob_pattern:
+        # Check if glob targets code extensions
+        for ext in CODE_EXTENSIONS:
+            if ext in glob_pattern or f"*{ext}" in glob_pattern:
+                targets_code = True
+                break
+
+    # Block grep on code files
+    if targets_code:
+        return "BLOCKED: Use scribe --covering-set for code search.", False
+
+    # Allow file discovery (files_with_matches mode)
+    output_mode = tool_input.get("output_mode", "")
+    if output_mode == "files_with_matches":
+        return "", True  # Allow without nudge - this is legitimate discovery
+
+    # Nudge on other grep usage
+    return NUDGE_MESSAGE, True
+
+
+def handle_bash(command: str) -> tuple[str, bool]:
+    """Handle Bash tool - block piped scribe commands."""
+    is_piped, message = check_bash_for_scribe_pipe(command)
+    if is_piped:
+        return message, False  # Block
+    return "", True
+
+
 def main():
-    # Read hook input from stdin
     try:
         data = json.load(sys.stdin)
     except json.JSONDecodeError:
@@ -89,40 +179,39 @@ def main():
     hook_event = data.get("hook_event_name", "")
     tool_input = data.get("tool_input", {})
 
-    # Only process PreToolUse for Read/Grep
-    if hook_event != "PreToolUse" or tool_name not in ("Read", "Grep"):
+    # Only process PreToolUse
+    if hook_event != "PreToolUse":
         sys.exit(0)
 
-    # Get and update exploration count
-    counts = get_exploration_count(session_id)
+    state = get_session_state(session_id)
+    message = ""
+    allow = True
 
     if tool_name == "Read":
-        counts["read_count"] = counts.get("read_count", 0) + 1
+        file_path = tool_input.get("file_path", "")
+        message, allow = handle_read(file_path, session_id, state)
+
     elif tool_name == "Grep":
-        counts["grep_count"] = counts.get("grep_count", 0) + 1
+        message, allow = handle_grep(tool_input, state)
 
-    # Check if we should remind
-    should_remind_user, reminder = should_remind(tool_name, tool_input, counts)
+    elif tool_name == "Bash":
+        command = tool_input.get("command", "")
+        message, allow = handle_bash(command)
 
-    if should_remind_user:
-        counts["reminded"] = True
-        save_exploration_count(session_id, counts)
+    # Save state
+    save_session_state(session_id, state)
 
-        # Output reminder to stderr and exit with code 2 to show it to Claude
-        # But allow the tool to proceed (don't block)
-        # Actually, exit 2 blocks - so we use a different approach
-        # We'll output JSON that allows but includes a reason
+    # Output decision
+    if message:
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason": reminder
+                "permissionDecision": "allow" if allow else "deny",
+                "permissionDecisionReason": message
             }
         }
         print(json.dumps(output))
-        sys.exit(0)
 
-    save_exploration_count(session_id, counts)
     sys.exit(0)
 
 

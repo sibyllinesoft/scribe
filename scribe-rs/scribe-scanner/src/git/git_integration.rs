@@ -1,16 +1,16 @@
 //! Git integration for enhanced file discovery and status tracking.
 //!
 //! This module provides comprehensive Git integration capabilities including:
-//! - Fast file discovery using `git ls-files`
+//! - Fast file discovery using libgit2 index
 //! - File status tracking (modified, staged, untracked)
 //! - Commit history and blame information
 //! - Repository statistics and health metrics
 
 use dashmap::DashMap;
+use git2::{Repository, StatusOptions};
 use scribe_core::{GitFileStatus, Result, ScribeError};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command as AsyncCommand;
 
@@ -20,11 +20,19 @@ use super::types::{
 };
 
 /// Git repository integration handler
-#[derive(Debug)]
 pub struct GitIntegrator {
     repo_path: PathBuf,
-    git_available: bool,
+    repo: parking_lot::Mutex<Repository>,
     cache: GitCache,
+}
+
+// Manual Debug impl since Repository doesn't implement Debug
+impl std::fmt::Debug for GitIntegrator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitIntegrator")
+            .field("repo_path", &self.repo_path)
+            .finish()
+    }
 }
 
 /// Git operations cache for performance
@@ -37,6 +45,8 @@ struct GitCache {
     cache_timestamp: parking_lot::RwLock<Option<SystemTime>>,
     cache_ttl: std::time::Duration,
     batch_status_cache: DashMap<PathBuf, GitFileStatus>,
+    /// Flag indicating batch status has been loaded (even if empty = all unmodified)
+    batch_status_loaded: std::sync::atomic::AtomicBool,
 }
 
 impl Default for GitCache {
@@ -49,6 +59,7 @@ impl Default for GitCache {
             cache_timestamp: parking_lot::RwLock::new(None),
             cache_ttl: std::time::Duration::from_secs(300),
             batch_status_cache: DashMap::new(),
+            batch_status_loaded: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -58,24 +69,12 @@ impl GitIntegrator {
     pub fn new<P: AsRef<Path>>(repo_path: P) -> Result<Self> {
         let repo_path = repo_path.as_ref().to_path_buf();
 
-        let git_dir = repo_path.join(".git");
-        if !git_dir.exists() {
-            return Err(ScribeError::git("Not a git repository".to_string()));
-        }
-
-        let git_available = Command::new("git")
-            .arg("--version")
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-
-        if !git_available {
-            log::warn!("Git command not available, falling back to filesystem scanning");
-        }
+        let repo = Repository::open(&repo_path)
+            .map_err(|e| ScribeError::git(format!("Failed to open repository: {}", e)))?;
 
         Ok(Self {
             repo_path,
-            git_available,
+            repo: parking_lot::Mutex::new(repo),
             cache: GitCache {
                 cache_ttl: std::time::Duration::from_secs(300),
                 ..Default::default()
@@ -83,30 +82,17 @@ impl GitIntegrator {
         })
     }
 
-    /// List all tracked files in the repository
+    /// List all tracked files in the repository using libgit2 index
     pub async fn list_tracked_files(&self) -> Result<Vec<PathBuf>> {
-        if !self.git_available {
-            return Err(ScribeError::git("Git not available".to_string()));
-        }
+        let repo = self.repo.lock();
+        let index = repo.index()
+            .map_err(|e| ScribeError::git(format!("Failed to read index: {}", e)))?;
 
-        let output = AsyncCommand::new("git")
-            .arg("ls-files")
-            .arg("-z")
-            .current_dir(&self.repo_path)
-            .output()
-            .await
-            .map_err(|e| ScribeError::git(format!("Failed to run git ls-files: {}", e)))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ScribeError::git(format!("git ls-files failed: {}", stderr)));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let files: Vec<PathBuf> = stdout
-            .split('\0')
-            .filter(|s| !s.is_empty())
-            .map(|s| self.repo_path.join(s))
+        let files: Vec<PathBuf> = index
+            .iter()
+            .filter_map(|entry| {
+                std::str::from_utf8(&entry.path).ok().map(|p| self.repo_path.join(p))
+            })
             .collect();
 
         *self.cache.files_discovered.write() = files.len();
@@ -116,66 +102,60 @@ impl GitIntegrator {
         Ok(files)
     }
 
-    /// Load all file statuses in a single batch operation for better performance
+    /// Load all file statuses in a single batch operation using libgit2
     pub async fn load_batch_file_statuses(&self) -> Result<()> {
-        if !self.git_available {
-            return Ok(());
-        }
+        let mut opts = StatusOptions::new();
+        opts.include_untracked(true)
+            .include_ignored(false)
+            .include_unmodified(false);
 
-        let output = AsyncCommand::new("git")
-            .arg("status")
-            .arg("--porcelain")
-            .arg("-z")
-            .current_dir(&self.repo_path)
-            .output()
-            .await
-            .map_err(|e| ScribeError::git(format!("Failed to get batch file status: {}", e)))?;
+        let repo = self.repo.lock();
+        let statuses = repo.statuses(Some(&mut opts))
+            .map_err(|e| ScribeError::git(format!("Failed to get status: {}", e)))?;
 
-        if !output.status.success() {
-            log::warn!("Git status failed, batch status unavailable");
-            return Ok(());
-        }
+        for entry in statuses.iter() {
+            let Some(path) = entry.path() else { continue };
+            let git_status = entry.status();
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        for line in stdout.split('\0') {
-            if line.len() < 3 {
-                continue;
-            }
-
-            let status_code = &line[..2];
-            let file_path = &line[3..];
-
-            if file_path.is_empty() {
-                continue;
-            }
-
-            let status = match status_code {
-                " M" | "M " | "MM" => GitFileStatus::Modified,
-                "A " | " A" => GitFileStatus::Added,
-                "D " | " D" => GitFileStatus::Deleted,
-                "R " | " R" => GitFileStatus::Renamed,
-                "C " | " C" => GitFileStatus::Copied,
-                "??" => GitFileStatus::Untracked,
-                "!!" => GitFileStatus::Ignored,
-                _ => GitFileStatus::Unmodified,
+            let status = if git_status.is_wt_new() {
+                GitFileStatus::Untracked
+            } else if git_status.is_wt_modified() || git_status.is_index_modified() {
+                GitFileStatus::Modified
+            } else if git_status.is_wt_deleted() || git_status.is_index_deleted() {
+                GitFileStatus::Deleted
+            } else if git_status.is_wt_renamed() || git_status.is_index_renamed() {
+                GitFileStatus::Renamed
+            } else if git_status.is_index_new() {
+                GitFileStatus::Added
+            } else if git_status.is_ignored() {
+                GitFileStatus::Ignored
+            } else if git_status.is_conflicted() {
+                GitFileStatus::Unmerged
+            } else {
+                continue; // Skip unmodified
             };
 
-            let full_path = self.repo_path.join(file_path);
+            let full_path = self.repo_path.join(path);
             self.cache.batch_status_cache.insert(full_path, status);
         }
 
+        // Mark batch status as loaded, even if empty (empty = all files unmodified)
+        self.cache.batch_status_loaded.store(true, std::sync::atomic::Ordering::Release);
         *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
         log::debug!(
-            "Loaded batch file statuses for {} files",
+            "Loaded batch file statuses for {} modified files",
             self.cache.batch_status_cache.len()
         );
 
         Ok(())
     }
 
-    /// Get detailed file information including git status
+    /// Get file status only (fast path for scanning)
+    ///
+    /// This method only retrieves git status, skipping expensive operations like
+    /// blame, commit history, and change stats. Use `get_file_info_detailed` if
+    /// you need the full information.
     pub async fn get_file_info(&self, file_path: &Path) -> Result<GitFileInfo> {
         if let Some(cached_status) = self.cache.file_statuses.get(file_path) {
             if self.is_cache_valid() {
@@ -183,7 +163,7 @@ impl GitIntegrator {
                     path: file_path.to_path_buf(),
                     status: cached_status.clone(),
                     last_commit: None,
-                    blame_info: self.cache.blame_cache.get(file_path).map(|entry| entry.clone()),
+                    blame_info: None,
                     changes_count: 0,
                     additions: 0,
                     deletions: 0,
@@ -192,11 +172,36 @@ impl GitIntegrator {
         }
 
         let status = self.get_file_status(file_path).await?;
+
+        self.cache.file_statuses.insert(file_path.to_path_buf(), status.clone());
+        *self.cache.cache_timestamp.write() = Some(SystemTime::now());
+
+        Ok(GitFileInfo {
+            path: file_path.to_path_buf(),
+            status,
+            last_commit: None,
+            blame_info: None,
+            changes_count: 0,
+            additions: 0,
+            deletions: 0,
+        })
+    }
+
+    /// Get detailed file information including blame, commit history, and change stats
+    ///
+    /// WARNING: This is expensive! It runs git log, git blame, and git numstat per file.
+    /// Only use when detailed git information is explicitly needed.
+    #[allow(dead_code)]
+    pub async fn get_file_info_detailed(&self, file_path: &Path) -> Result<GitFileInfo> {
+        let status = self.get_file_status(file_path).await?;
         let last_commit = self.get_last_commit_for_file(file_path).await.ok();
         let blame_info = self.get_blame_info(file_path).await.ok();
         let (changes_count, additions, deletions) = self.get_file_change_stats(file_path).await.unwrap_or((0, 0, 0));
 
         self.cache.file_statuses.insert(file_path.to_path_buf(), status.clone());
+        if let Some(ref blame) = blame_info {
+            self.cache.blame_cache.insert(file_path.to_path_buf(), blame.clone());
+        }
         *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
         Ok(GitFileInfo {
@@ -211,59 +216,46 @@ impl GitIntegrator {
     }
 
     async fn get_file_status(&self, file_path: &Path) -> Result<GitFileStatus> {
-        if !self.git_available {
-            return Ok(GitFileStatus::Untracked);
-        }
-
-        if !self.cache.batch_status_cache.is_empty() {
+        // If batch status was loaded, use it (even if empty = all unmodified)
+        if self.cache.batch_status_loaded.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(status) = self.cache.batch_status_cache.get(file_path) {
                 return Ok(status.clone());
             }
+            // Not in cache means unmodified (batch loaded all modified files)
             return Ok(GitFileStatus::Unmodified);
         }
 
+        // Fallback: use libgit2 single-file status (only if batch wasn't loaded)
         let relative_path = file_path
             .strip_prefix(&self.repo_path)
             .map_err(|_| ScribeError::git("File not in repository".to_string()))?;
 
-        let output = AsyncCommand::new("git")
-            .arg("status")
-            .arg("--porcelain")
-            .arg(relative_path)
-            .current_dir(&self.repo_path)
-            .output()
-            .await
+        let repo = self.repo.lock();
+        let status = repo.status_file(relative_path)
             .map_err(|e| ScribeError::git(format!("Failed to get file status: {}", e)))?;
 
-        if !output.status.success() {
-            return Ok(GitFileStatus::Unmodified);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let status = if stdout.is_empty() {
-            GitFileStatus::Unmodified
+        let result = if status.is_wt_new() {
+            GitFileStatus::Untracked
+        } else if status.is_wt_modified() || status.is_index_modified() {
+            GitFileStatus::Modified
+        } else if status.is_wt_deleted() || status.is_index_deleted() {
+            GitFileStatus::Deleted
+        } else if status.is_wt_renamed() || status.is_index_renamed() {
+            GitFileStatus::Renamed
+        } else if status.is_index_new() {
+            GitFileStatus::Added
+        } else if status.is_ignored() {
+            GitFileStatus::Ignored
+        } else if status.is_conflicted() {
+            GitFileStatus::Unmerged
         } else {
-            let status_code = stdout.chars().take(2).collect::<String>();
-            match status_code.as_str() {
-                " M" | "M " | "MM" => GitFileStatus::Modified,
-                "A " => GitFileStatus::Added,
-                "D " => GitFileStatus::Deleted,
-                "R " => GitFileStatus::Renamed,
-                "C " => GitFileStatus::Copied,
-                "??" => GitFileStatus::Untracked,
-                "!!" => GitFileStatus::Ignored,
-                _ => GitFileStatus::Unmodified,
-            }
+            GitFileStatus::Unmodified
         };
 
-        Ok(status)
+        Ok(result)
     }
 
     async fn get_last_commit_for_file(&self, file_path: &Path) -> Result<GitCommitInfo> {
-        if !self.git_available {
-            return Err(ScribeError::git("Git not available".to_string()));
-        }
-
         let relative_path = file_path
             .strip_prefix(&self.repo_path)
             .map_err(|_| ScribeError::git("File not in repository".to_string()))?;
@@ -306,10 +298,6 @@ impl GitIntegrator {
     }
 
     async fn get_blame_info(&self, file_path: &Path) -> Result<GitBlameInfo> {
-        if !self.git_available {
-            return Err(ScribeError::git("Git not available".to_string()));
-        }
-
         if let Some(cached_blame) = self.cache.blame_cache.get(file_path) {
             if self.is_cache_valid() {
                 return Ok(cached_blame.clone());
@@ -419,10 +407,6 @@ impl GitIntegrator {
     }
 
     async fn get_file_change_stats(&self, file_path: &Path) -> Result<(usize, usize, usize)> {
-        if !self.git_available {
-            return Err(ScribeError::git("Git not available".to_string()));
-        }
-
         let relative_path = file_path
             .strip_prefix(&self.repo_path)
             .map_err(|_| ScribeError::git("File not in repository".to_string()))?;
@@ -467,10 +451,6 @@ impl GitIntegrator {
 
     /// Get comprehensive repository statistics
     pub async fn get_repository_stats(&self) -> Result<GitRepositoryStats> {
-        if !self.git_available {
-            return Err(ScribeError::git("Git not available".to_string()));
-        }
-
         let (total_commits, contributors) = self.get_contributor_stats().await?;
         let branches = self.get_branches().await?;
         let tags = self.get_tags().await?;
@@ -690,9 +670,9 @@ impl GitIntegrator {
         *self.cache.files_discovered.read()
     }
 
-    /// Check if git is available
+    /// Check if git is available (always true if GitIntegrator was created successfully)
     pub fn is_git_available(&self) -> bool {
-        self.git_available
+        true
     }
 
     /// Get repository root path

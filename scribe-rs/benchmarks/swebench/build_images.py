@@ -11,8 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Must run from a directory where swebench doesn't conflict with local package
-sys.path.insert(0, "/home/nathan/.local/share/mise/installs/python/3.14.0/lib/python3.14/site-packages")
+# No path manipulation needed - use virtual environment packages
 
 import docker
 from datasets import load_dataset
@@ -32,13 +31,21 @@ def main():
                         help="Force rebuild even if images exist")
     parser.add_argument("--dataset", type=str, default="princeton-nlp/SWE-bench_Lite",
                         help="Dataset to build images for")
+    parser.add_argument("--task-ids", nargs="+", type=str,
+                        help="Specific task IDs to build images for")
     args = parser.parse_args()
 
     print(f"Loading dataset: {args.dataset}")
     ds = load_dataset(args.dataset, split="test")
 
     tasks = list(ds)
-    if not args.all and args.max_tasks:
+
+    # Filter to specific task IDs if provided
+    if args.task_ids:
+        task_ids_set = set(args.task_ids)
+        tasks = [t for t in tasks if t.get('instance_id') in task_ids_set]
+        print(f"Filtered to {len(tasks)} tasks: {[t.get('instance_id') for t in tasks]}")
+    elif not args.all and args.max_tasks:
         tasks = tasks[:args.max_tasks]
 
     print(f"Building images for {len(tasks)} tasks...")

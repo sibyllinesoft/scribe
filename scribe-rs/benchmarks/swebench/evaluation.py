@@ -165,9 +165,28 @@ def generate_report(results: list, metadata: dict) -> str:
     lines.append("# SWE-bench Benchmark Results")
     lines.append("")
     lines.append(f"**Generated:** {datetime.now().isoformat()}")
-    lines.append(f"**Model:** {metadata.get('model', 'unknown')}")
+
+    # Model info - show both the argument and resolved model if different
+    model_arg = metadata.get('model', 'unknown')
+    model_resolved = metadata.get('model_resolved')
+    if model_resolved and model_resolved != model_arg:
+        lines.append(f"**Model:** {model_arg} (`{model_resolved}`)")
+    else:
+        lines.append(f"**Model:** {model_arg}")
+
     lines.append(f"**Tasks:** {metadata.get('n_tasks', 0)}")
     lines.append(f"**Dataset:** {metadata.get('dataset', 'unknown')}")
+
+    # Scribe version tracking
+    scribe_commit = metadata.get('scribe_commit')
+    if scribe_commit:
+        scribe_version = scribe_commit
+        if metadata.get('scribe_dirty'):
+            scribe_version += " (dirty)"
+        if metadata.get('scribe_branch') and metadata.get('scribe_branch') != 'main':
+            scribe_version += f" [{metadata.get('scribe_branch')}]"
+        lines.append(f"**Scribe Version:** {scribe_version}")
+
     lines.append("")
 
     # Executive Summary

@@ -83,6 +83,11 @@ struct FidelityCandidate {
     content: String,
 }
 
+/// Minimum tokens for a signature to be considered useful.
+/// Signatures below this threshold are likely just file paths (from fallback)
+/// which duplicate the directory map and waste tokens.
+const MIN_USEFUL_SIGNATURE_TOKENS: usize = 30;
+
 /// Pre-computed fidelity options for a single file.
 #[derive(Debug)]
 struct FileFidelityOptions {
@@ -96,9 +101,9 @@ struct FileFidelityOptions {
     /// Chunk content and token count (None if chunking not applicable/failed).
     chunk_content: Option<String>,
     chunk_tokens: Option<usize>,
-    /// Signature content and token count.
-    signature_content: String,
-    signature_tokens: usize,
+    /// Signature content and token count (None if extraction failed or below threshold).
+    signature_content: Option<String>,
+    signature_tokens: Option<usize>,
 }
 
 /// Apply the optimization-based token budget selection.
@@ -614,22 +619,21 @@ fn precompute_fidelity_options(
         };
 
         // Compute signature content and tokens
+        // Only use signatures that provide meaningful content (above threshold).
+        // Path-only signatures duplicate the directory map and waste tokens.
         let (signature_content, signature_tokens) = match demotion_engine.demote_content(
             &full_content,
             &file.relative_path,
             FidelityMode::Signature,
             None,
         ) {
-            Ok(result) if result.demoted_tokens > 0 => {
-                (result.content, result.demoted_tokens)
+            Ok(result) if result.demoted_tokens >= MIN_USEFUL_SIGNATURE_TOKENS => {
+                (Some(result.content), Some(result.demoted_tokens))
             }
             _ => {
-                // Fallback: use a minimal representation
-                let fallback = format!("// {}\n", file.relative_path);
-                let fallback_tokens = counter
-                    .count_tokens(&fallback)
-                    .unwrap_or(1);
-                (fallback, fallback_tokens.max(1))
+                // No useful signature available - file can only be included
+                // at full or chunk fidelity levels
+                (None, None)
             }
         };
 
@@ -693,21 +697,25 @@ fn generate_fidelity_candidates(
             });
         }
 
-        // Signature candidate
-        let signature_score = opt.priority * config.signature_boost;
-        let signature_density = if opt.signature_tokens > 0 {
-            signature_score / opt.signature_tokens as f64
-        } else {
-            0.0
-        };
-        candidates.push(FidelityCandidate {
-            file_index: index,
-            mode: FidelityMode::Signature,
-            score: signature_score,
-            tokens: opt.signature_tokens,
-            density: signature_density,
-            content: opt.signature_content.clone(),
-        });
+        // Signature candidate (only if meaningful signature was extracted)
+        if let (Some(ref signature_content), Some(signature_tokens)) =
+            (&opt.signature_content, opt.signature_tokens)
+        {
+            let signature_score = opt.priority * config.signature_boost;
+            let signature_density = if signature_tokens > 0 {
+                signature_score / signature_tokens as f64
+            } else {
+                0.0
+            };
+            candidates.push(FidelityCandidate {
+                file_index: index,
+                mode: FidelityMode::Signature,
+                score: signature_score,
+                tokens: signature_tokens,
+                density: signature_density,
+                content: signature_content.clone(),
+            });
+        }
     }
 
     candidates
@@ -1090,8 +1098,8 @@ mod tests {
             full_tokens: 10,
             chunk_content: None,
             chunk_tokens: None,
-            signature_content: "fn main()".to_string(),
-            signature_tokens: 3,
+            signature_content: Some("fn main()".to_string()),
+            signature_tokens: Some(50), // Above MIN_USEFUL_SIGNATURE_TOKENS threshold
         }];
 
         let config = SelectionConfig::default();
@@ -1105,7 +1113,7 @@ mod tests {
         assert_eq!(full.score, 1.0);
 
         let sig = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Signature)).unwrap();
-        assert_eq!(sig.tokens, 3);
+        assert_eq!(sig.tokens, 50);
         assert_eq!(sig.score, 1.0 * 1.5); // priority * signature_boost
     }
 
@@ -1118,8 +1126,8 @@ mod tests {
             full_tokens: 20,
             chunk_content: Some("fn main() { ... }".to_string()),
             chunk_tokens: Some(10),
-            signature_content: "fn main()".to_string(),
-            signature_tokens: 5,
+            signature_content: Some("fn main()".to_string()),
+            signature_tokens: Some(50), // Above MIN_USEFUL_SIGNATURE_TOKENS threshold
         }];
 
         let config = SelectionConfig::default();
@@ -1131,6 +1139,35 @@ mod tests {
         let chunk = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Chunk)).unwrap();
         assert_eq!(chunk.tokens, 10);
         assert_eq!(chunk.score, 2.0 * 1.2); // priority * chunk_boost
+    }
+
+    #[test]
+    fn test_generate_fidelity_candidates_no_signature_when_none() {
+        // When signature is None, only Full candidate should be generated
+        let options = vec![FileFidelityOptions {
+            file: create_test_file_info("test.rs"),
+            priority: 1.0,
+            full_content: "fn main() {}".to_string(),
+            full_tokens: 10,
+            chunk_content: None,
+            chunk_tokens: None,
+            signature_content: None, // No useful signature available
+            signature_tokens: None,
+        }];
+
+        let config = SelectionConfig::default();
+        let candidates = generate_fidelity_candidates(&options, &config);
+
+        // Should have only 1 candidate: Full (no chunk, no signature)
+        assert_eq!(candidates.len(), 1);
+        assert!(matches!(candidates[0].mode, FidelityMode::Full));
+    }
+
+    #[test]
+    fn test_min_useful_signature_tokens_constant() {
+        // Verify the threshold is reasonable
+        assert!(MIN_USEFUL_SIGNATURE_TOKENS > 0);
+        assert!(MIN_USEFUL_SIGNATURE_TOKENS < 100);
     }
 
     #[test]
@@ -1275,8 +1312,8 @@ mod tests {
             full_tokens: 10,
             chunk_content: Some("chunk".to_string()),
             chunk_tokens: Some(5),
-            signature_content: "sig".to_string(),
-            signature_tokens: 2,
+            signature_content: Some("sig".to_string()),
+            signature_tokens: Some(50),
         };
 
         // Test debug output works

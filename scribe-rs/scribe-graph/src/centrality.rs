@@ -191,8 +191,15 @@ impl CentralityCalculator {
         let mut graph = DependencyGraph::with_capacity(scan_results.len());
 
         // Create optimized import detector with pre-computed lookup maps
-        let optimized_detector =
+        let mut optimized_detector =
             ImportDetector::with_file_index(self.import_detector.config.clone(), scan_results);
+
+        // Initialize TypeScript resolver if this is a TypeScript project
+        if let Some(project_root) = Self::detect_project_root(scan_results) {
+            if Self::is_typescript_project(&project_root) {
+                optimized_detector.init_ts_resolver(&project_root);
+            }
+        }
 
         // Add all files as nodes first
         for result in scan_results {
@@ -207,6 +214,46 @@ impl CentralityCalculator {
         };
 
         Ok((graph, import_stats))
+    }
+
+    /// Detect the project root from scan results by finding the common parent directory
+    fn detect_project_root<T>(scan_results: &[T]) -> Option<std::path::PathBuf>
+    where
+        T: ScanResult,
+    {
+        if scan_results.is_empty() {
+            return None;
+        }
+
+        // Get the first file path and find its root
+        let first_path = Path::new(scan_results[0].path());
+
+        // Start from the first path's parent and work up
+        let mut current = first_path.parent();
+
+        while let Some(dir) = current {
+            // Check for common project indicators
+            if dir.join("package.json").exists()
+                || dir.join("tsconfig.json").exists()
+                || dir.join("jsconfig.json").exists()
+                || dir.join("Cargo.toml").exists()
+                || dir.join("pyproject.toml").exists()
+                || dir.join(".git").exists()
+            {
+                return Some(dir.to_path_buf());
+            }
+            current = dir.parent();
+        }
+
+        // Fallback: use the parent of the first file
+        first_path.parent().map(|p| p.to_path_buf())
+    }
+
+    /// Check if a directory is a TypeScript/JavaScript project
+    fn is_typescript_project(root: &Path) -> bool {
+        root.join("tsconfig.json").exists()
+            || root.join("jsconfig.json").exists()
+            || root.join("package.json").exists()
     }
 
     /// Build graph edges sequentially

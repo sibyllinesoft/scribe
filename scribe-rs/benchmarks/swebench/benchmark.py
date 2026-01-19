@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -33,10 +34,10 @@ from common.results import get_results_dir
 
 # Handle both direct execution and module import
 try:
-    from .runner import TaskRunner, run_task_batch, check_opencode_installed
+    from .runner import TaskRunner, run_task_batch, check_opencode_installed, get_scribe_git_info
     from .evaluation import analyze_results, generate_report, save_benchmark_results
 except ImportError:
-    from runner import TaskRunner, run_task_batch, check_opencode_installed
+    from runner import TaskRunner, run_task_batch, check_opencode_installed, get_scribe_git_info
     from evaluation import analyze_results, generate_report, save_benchmark_results
 
 
@@ -77,26 +78,75 @@ def load_swebench_tasks(dataset: str = "princeton-nlp/SWE-bench_Lite", split: st
     return tasks
 
 
+def load_tasks_from_config(config_path: str = None) -> tuple[list, list[str]]:
+    """Load tasks from benchmark_config.json.
+
+    Supports multiple datasets and returns all tasks.
+
+    Args:
+        config_path: Path to config file (defaults to benchmark_config.json in same dir)
+
+    Returns:
+        Tuple of (tasks list, list of dataset names used)
+    """
+    if config_path is None:
+        config_path = Path(__file__).parent / "benchmark_config.json"
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    all_tasks = []
+    datasets_used = []
+
+    for ds_config in config.get("datasets", []):
+        dataset_name = ds_config["name"]
+        task_ids = [t["id"] for t in ds_config.get("tasks", [])]
+
+        if not task_ids:
+            continue
+
+        datasets_used.append(dataset_name)
+
+        # Load the full dataset and filter to our tasks
+        full_tasks = load_swebench_tasks(dataset_name)
+        task_id_set = set(task_ids)
+        filtered = [t for t in full_tasks if t.get("instance_id") in task_id_set]
+
+        print(f"  Selected {len(filtered)}/{len(task_ids)} tasks from {dataset_name}")
+        all_tasks.extend(filtered)
+
+    return all_tasks, datasets_used
+
+
 def run_benchmark(
     max_tasks: int = 50,
     mode: str = "both",
-    model: str = "anthropic/claude-sonnet-4-20250514",
+    model: str = "sonnet",
     dataset: str = "princeton-nlp/SWE-bench_Lite",
     use_docker: bool = True,
     quick: bool = False,
     task_timeout_s: int = 600,
     skip: int = 0,
     task_ids: list = None,
+    parallel_workers: int = 1,
+    runs_per_task: int = 1,
+    delay_between_runs: int = 30,
+    use_config: bool = False,
+    config_path: str = None,
+    context_tokens: int = 4000,
 ) -> dict:
-    """Run the SWE-bench benchmark using OpenCode.
+    """Run the SWE-bench benchmark using Claude Code.
 
     Args:
         max_tasks: Maximum number of tasks to run.
         mode: "scribe", "standard", or "both".
-        model: Model to use (format: provider/model, e.g., openrouter/z-ai/glm-4.7).
+        model: Model to use (e.g., "sonnet", "opus", "claude-sonnet-4-5-20250929").
         dataset: SWE-bench dataset name.
         use_docker: Whether to use Docker for isolation.
         quick: Quick mode with minimal tasks.
+        parallel_workers: Number of tasks to run in parallel.
+        runs_per_task: Number of times to run each task.
+        delay_between_runs: Delay in seconds between runs for rate limiting.
 
     Returns:
         Dict with results and analysis.
@@ -112,16 +162,23 @@ def run_benchmark(
         print("Install with: curl -fsSL https://opencode.ai/install | bash")
         sys.exit(1)
 
-    # Load tasks
-    tasks = load_swebench_tasks(dataset)
-
-    # Filter by specific task IDs if provided
-    if task_ids:
+    # Load tasks - either from config or from dataset directly
+    datasets_used = [dataset]
+    if use_config:
+        print("Loading tasks from config file...")
+        tasks, datasets_used = load_tasks_from_config(config_path)
+        if not tasks:
+            print("Error: No tasks loaded from config")
+            sys.exit(1)
+    elif task_ids:
+        # Filter by specific task IDs
+        tasks = load_swebench_tasks(dataset)
         task_id_set = set(task_ids)
         tasks = [t for t in tasks if t.get("instance_id") in task_id_set]
         print(f"Filtered to {len(tasks)} specific tasks: {task_ids}")
     else:
-        # Apply skip and limit only if not filtering by task IDs
+        # Load from dataset with skip and limit
+        tasks = load_swebench_tasks(dataset)
         if skip > 0:
             tasks = tasks[skip:]
             print(f"Skipped first {skip} tasks")
@@ -130,33 +187,84 @@ def run_benchmark(
             tasks = tasks[:max_tasks]
             print(f"Limited to {max_tasks} tasks")
 
+    # Capture scribe git info for tracking
+    scribe_git_info = get_scribe_git_info()
+
     print()
     print("=" * 70)
-    print("SWE-bench Benchmark (using OpenCode)")
+    print("SWE-bench Benchmark (using Claude Code)")
     print("=" * 70)
-    print(f"Dataset: {dataset}")
+    print(f"Dataset(s): {', '.join(datasets_used)}")
     print(f"Tasks: {len(tasks)}")
     print(f"Mode: {mode}")
     print(f"Model: {model}")
+    if scribe_git_info.get("commit"):
+        scribe_version = scribe_git_info["commit"]
+        if scribe_git_info.get("dirty"):
+            scribe_version += " (dirty)"
+        print(f"Scribe commit: {scribe_version}")
     print(f"Docker: {'enabled' if use_docker else 'disabled'}")
+    print(f"Runs per task: {runs_per_task}")
+    print(f"Delay between runs: {delay_between_runs}s")
+    print(f"Timeout per task: {task_timeout_s}s")
+    print(f"Context tokens: {context_tokens}")
     print()
 
-    # Run benchmark
-    results = run_task_batch(
-        tasks=tasks,
-        mode=mode,
-        model=model,
-        use_docker=use_docker,
-        task_timeout_s=task_timeout_s,
-    )
+    # Run benchmark - multiple runs per task
+    all_results = []
+    for run_num in range(1, runs_per_task + 1):
+        if runs_per_task > 1:
+            print(f"\n{'=' * 70}")
+            print(f"RUN {run_num}/{runs_per_task}")
+            print(f"{'=' * 70}\n")
+
+        results = run_task_batch(
+            tasks=tasks,
+            mode=mode,
+            model=model,
+            use_docker=use_docker,
+            task_timeout_s=task_timeout_s,
+            parallel_workers=parallel_workers,
+            context_tokens=context_tokens,
+        )
+
+        # Tag results with run number
+        for r in results:
+            r.run_number = run_num
+
+        all_results.extend(results)
+
+        # Delay between runs (but not after the last run)
+        if run_num < runs_per_task and delay_between_runs > 0:
+            print(f"\nWaiting {delay_between_runs}s before next run (rate limiting)...")
+            time.sleep(delay_between_runs)
+
+    # Use all results for analysis
+    results = all_results
 
     # Analyze and save
+    # Extract model_resolved from results if available (most specific model ID)
+    model_resolved = None
+    for r in results:
+        if hasattr(r, 'model_resolved') and r.model_resolved:
+            model_resolved = r.model_resolved
+            break
+
     metadata = {
-        "dataset": dataset,
+        "dataset": ", ".join(datasets_used),
         "n_tasks": len(tasks),
         "mode": mode,
         "model": model,
+        "model_resolved": model_resolved,  # Actual model ID (e.g., "claude-sonnet-4-5-20250929")
+        "scribe_commit": scribe_git_info.get("commit"),
+        "scribe_commit_full": scribe_git_info.get("commit_full"),
+        "scribe_branch": scribe_git_info.get("branch"),
+        "scribe_dirty": scribe_git_info.get("dirty"),
         "use_docker": use_docker,
+        "runs_per_task": runs_per_task,
+        "delay_between_runs": delay_between_runs,
+        "context_tokens": context_tokens,
+        "task_timeout_s": task_timeout_s,
     }
 
     results_path, report_path = save_benchmark_results(results, metadata)
@@ -223,8 +331,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="anthropic/claude-sonnet-4-20250514",
-        help="Model in provider/model format (e.g., openrouter/z-ai/glm-4.7, anthropic/claude-sonnet-4-20250514)",
+        default="sonnet",
+        help="Model to use (e.g., 'sonnet', 'opus', 'claude-sonnet-4-5-20250929')",
     )
     parser.add_argument(
         "--dataset",
@@ -260,6 +368,41 @@ def main():
         default=0,
         help="Number of tasks to skip from the start",
     )
+    parser.add_argument(
+        "--parallel", "-j",
+        type=int,
+        default=1,
+        help="Number of parallel workers (default: 1 = sequential)",
+    )
+    parser.add_argument(
+        "--runs", "-r",
+        type=int,
+        default=1,
+        help="Number of times to run each task (default: 1)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=30,
+        help="Delay in seconds between task runs for rate limiting (default: 30)",
+    )
+    parser.add_argument(
+        "--config",
+        action="store_true",
+        help="Load tasks from benchmark_config.json instead of dataset",
+    )
+    parser.add_argument(
+        "--config-path",
+        type=str,
+        default=None,
+        help="Path to config file (default: benchmark_config.json in same dir)",
+    )
+    parser.add_argument(
+        "--context-tokens",
+        type=int,
+        default=4000,
+        help="Token budget for scribe-context mode (default: 4000). Range 1000-16000 recommended.",
+    )
 
     args = parser.parse_args()
 
@@ -273,6 +416,12 @@ def main():
         task_timeout_s=args.timeout,
         skip=args.skip,
         task_ids=args.task_ids,
+        parallel_workers=args.parallel,
+        runs_per_task=args.runs,
+        delay_between_runs=args.delay,
+        use_config=args.config,
+        config_path=args.config_path,
+        context_tokens=args.context_tokens,
     )
 
 

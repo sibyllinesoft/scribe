@@ -337,7 +337,7 @@ impl AstParser {
 
     /// Extract name/identifier from a node
     fn extract_name_from_node(&self, node: Node, content: &str) -> Option<String> {
-        // Look for name field in node
+        // Look for name field in node (direct children first)
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
                 // Include field_identifier for Go methods
@@ -348,6 +348,20 @@ impl AstParser {
                     let name_bytes = &content.as_bytes()[child.start_byte()..child.end_byte()];
                     if let Ok(name) = std::str::from_utf8(name_bytes) {
                         return Some(name.to_string());
+                    }
+                }
+                // For lexical/variable declarations, look inside variable_declarator
+                if child.kind() == "variable_declarator" {
+                    for j in 0..child.child_count() {
+                        if let Some(grandchild) = child.child(j) {
+                            if grandchild.kind() == "identifier" {
+                                let name_bytes =
+                                    &content.as_bytes()[grandchild.start_byte()..grandchild.end_byte()];
+                                if let Ok(name) = std::str::from_utf8(name_bytes) {
+                                    return Some(name.to_string());
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -603,7 +617,8 @@ impl AstParser {
                 // Primary node captures - extract signature
                 "function" | "class" | "import" | "import_from" | "interface"
                 | "type_alias" | "enum" | "method" | "field" | "struct" | "trait"
-                | "impl" | "module" | "use" | "type" | "export" | "package" => {
+                | "impl" | "module" | "use" | "type" | "export" | "package"
+                | "arrow_const" | "arrow_var" => {
                     signature_text = Self::extract_signature_lines(node_text);
                     signature_type = capture_name.to_string();
                     line = node.start_position().row + 1;
@@ -611,7 +626,7 @@ impl AstParser {
                 }
                 // Name captures
                 "func_name" | "class_name" | "interface_name" | "type_name"
-                | "enum_name" | "method_name" | "field_name" | "name" => {
+                | "enum_name" | "method_name" | "field_name" | "name" | "arrow_name" => {
                     name = node_text.to_string();
                 }
                 _ => {}

@@ -1,0 +1,20 @@
+# Benchmark artifacts
+
+# Docker build logs (large, regenerable)
+swebench/logs/
+
+# Generated reports (regenerable from JSON data)
+results/swebench/report_*.md
+results/swebench/benchmark_*.json
+
+# Keep archived reports separate for curation
+# (archive/ is NOT ignored - manually curate what to keep)
+
+# Python cache
+__pycache__/
+*.pyc
+.venv/
+
+# Temporary files
+*.tmp
+*.log

@@ -2,19 +2,21 @@
 members = [
     ".",
     "scribe-core",
-    "scribe-analysis", 
+    "scribe-analysis",
     "scribe-graph",
     "scribe-scanner",
-    "scribe-patterns", 
+    "scribe-patterns",
     "scribe-selection",
     "scribe-scaling",
     "scribe-webservice",
+    "scribe-cache",
+    "scribe-index",
 ]
 default-members = ["."]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.1"
+version = "1.0.0"
 edition = "2021"
 authors = ["Nathan Rice <nathan@sibylline.dev>"]
 license = "MIT OR Apache-2.0"
@@ -99,7 +101,7 @@ graph = ["core", "analysis", "dep:scribe-graph"]
 scanner = ["core", "dep:scribe-scanner"]
 patterns = ["core", "dep:scribe-patterns"]
 selection = ["core", "analysis", "graph", "dep:scribe-selection"]
-scaling = ["core", "dep:scribe-scaling"]
+scaling = ["core", "dep:scribe-scaling", "dep:scribe-cache", "dep:scribe-index"]
 web = ["scaling", "dep:scribe-webservice"]
 
 # Convenience feature groups
@@ -128,14 +130,16 @@ open = "5.0"
 indicatif = { version = "0.17", features = ["tokio", "futures", "rayon"] }
 
 # Sub-crate dependencies with optional features
-scribe-core = { path = "./scribe-core", version = "1.0.1", optional = true }
-scribe-analysis = { path = "./scribe-analysis", version = "1.0.1", optional = true }
-scribe-graph = { path = "./scribe-graph", version = "1.0.1", optional = true }
-scribe-scanner = { path = "./scribe-scanner", version = "1.0.1", optional = true }
-scribe-patterns = { path = "./scribe-patterns", version = "1.0.1", optional = true }
-scribe-selection = { path = "./scribe-selection", version = "1.0.1", optional = true }
-scribe-scaling = { path = "./scribe-scaling", version = "1.0.1", optional = true }
-scribe-webservice = { path = "./scribe-webservice", version = "1.0.1", optional = true, default-features = false }
+scribe-core = { path = "./scribe-core", version = "1.0.0", optional = true }
+scribe-analysis = { path = "./scribe-analysis", version = "1.0.0", optional = true }
+scribe-graph = { path = "./scribe-graph", version = "1.0.0", optional = true }
+scribe-scanner = { path = "./scribe-scanner", version = "1.0.0", optional = true }
+scribe-patterns = { path = "./scribe-patterns", version = "1.0.0", optional = true }
+scribe-selection = { path = "./scribe-selection", version = "1.0.0", optional = true }
+scribe-scaling = { path = "./scribe-scaling", version = "1.0.0", optional = true, features = ["bm25"] }
+scribe-cache = { path = "./scribe-cache", version = "1.0.0", optional = true }
+scribe-index = { path = "./scribe-index", version = "1.0.0", optional = true }
+scribe-webservice = { path = "./scribe-webservice", version = "1.0.0", optional = true, default-features = false }
 
 # Core dependencies used by multiple crates
 serde = { version = "1.0", features = ["derive"] }

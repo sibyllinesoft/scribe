@@ -27,6 +27,9 @@ anyhow = "1.0"
 # Graph processing
 petgraph = "0.6"
 
+# TypeScript/JavaScript module resolution
+oxc_resolver = "11"
+
 # Async processing
 async-trait = "0.1"
 futures = "0.3"
@@ -44,4 +47,5 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.22"
 

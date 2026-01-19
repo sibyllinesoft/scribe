@@ -83,6 +83,47 @@ pub fn log_covering_set_progress(msg: &str, stdout_mode: bool, verbose_level: u8
     }
 }
 
+/// File count threshold for applying adaptive depth limiting.
+/// Repos with more than this many files get an automatic max_depth cap.
+const LARGE_REPO_FILE_THRESHOLD: usize = 1000;
+
+/// Default max_depth for large repos when user doesn't specify one.
+/// Depth 3 captures direct deps, their deps, and one more level.
+const LARGE_REPO_DEFAULT_DEPTH: usize = 3;
+
+/// Default max_depth for entity-level granularity (always applied).
+/// Entity traversal is much more expensive, so we always limit depth.
+const ENTITY_GRANULARITY_DEFAULT_DEPTH: usize = 3;
+
+/// Compute adaptive max_depth based on repo size and granularity.
+///
+/// If user explicitly specified a depth, use it. Otherwise:
+/// - For entity granularity: always cap at depth 3 (entity traversal is expensive)
+/// - For repos with > 1000 files: cap at depth 3 to prevent exponential slowdown
+/// - For smaller repos with file granularity: allow unlimited traversal
+fn adaptive_max_depth(
+    user_specified: Option<usize>,
+    file_count: usize,
+    is_entity_granularity: bool,
+) -> Option<usize> {
+    // If user explicitly set a depth, respect it
+    if user_specified.is_some() {
+        return user_specified;
+    }
+
+    // Entity-level granularity is always expensive, cap depth regardless of repo size
+    if is_entity_granularity {
+        return Some(ENTITY_GRANULARITY_DEFAULT_DEPTH);
+    }
+
+    // For large repos, apply a sensible default to prevent timeouts
+    if file_count > LARGE_REPO_FILE_THRESHOLD {
+        Some(LARGE_REPO_DEFAULT_DEPTH)
+    } else {
+        None // Allow unlimited for smaller repos
+    }
+}
+
 /// Build entity query from name and options
 pub fn build_entity_query(
     entity_name: &str,
@@ -258,10 +299,28 @@ pub async fn run_covering_set_mode(
         _ => CoveringSetGranularity::File,
     };
 
+    // Apply adaptive depth limit for large repos or entity granularity
+    let is_entity_granularity = granularity_option == CoveringSetGranularity::Entity;
+    let effective_depth = adaptive_max_depth(max_depth, file_contents.len(), is_entity_granularity);
+
+    // Log if we applied adaptive depth limiting
+    if max_depth.is_none() && effective_depth.is_some() {
+        let reason = if is_entity_granularity {
+            "entity granularity".to_string()
+        } else {
+            format!("{} files", file_contents.len())
+        };
+        log_covering_set_progress(
+            &format!("⚡ Limiting depth to {} for performance ({})",
+                effective_depth.unwrap(), reason),
+            stdout_mode, verbose_level, true
+        );
+    }
+
     let options = CoveringSetOptions {
         include_dependencies: true,
         include_dependents,
-        max_depth,
+        max_depth: effective_depth,
         max_files,
         min_importance: None,
         granularity: granularity_option,
@@ -402,16 +461,21 @@ fn build_dependency_graph(
     Ok(graph)
 }
 
-/// Create covering set options from parameters
+/// Create covering set options from parameters (for diff mode, always file granularity)
 fn create_covering_set_options(
     include_dependents: bool,
     max_depth: Option<usize>,
     max_files: Option<usize>,
+    file_count: usize,
 ) -> CoveringSetOptions {
+    // Apply adaptive depth limit for large repos to prevent exponential slowdown
+    // Diff mode is always file granularity, so pass false for is_entity_granularity
+    let effective_depth = adaptive_max_depth(max_depth, file_count, false);
+
     CoveringSetOptions {
         include_dependencies: true,
         include_dependents,
-        max_depth,
+        max_depth: effective_depth,
         max_files,
         min_importance: None,
         granularity: CoveringSetGranularity::File,
@@ -467,7 +531,7 @@ pub async fn run_covering_set_diff_mode(
     let graph = build_dependency_graph(&diff_scan_files)?;
 
     // Compute and display covering set
-    let options = create_covering_set_options(include_dependents, max_depth, max_files);
+    let options = create_covering_set_options(include_dependents, max_depth, max_files, diff_scan_files.len());
     let computer = CoveringSetComputer::new()?;
     let result = computer.compute_covering_set_for_files(&changed_files, &graph, None, &options)?;
     print_covering_set_results(&result, verbose_level);
@@ -513,5 +577,51 @@ fn print_covering_set_results(result: &CoveringSetResult, verbose_level: u8) {
 
     if verbose_level > 0 {
         info!("✨ Diff covering set computation complete");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adaptive_max_depth_user_specified() {
+        // User-specified depth should always be respected regardless of repo size or granularity
+        assert_eq!(adaptive_max_depth(Some(5), 500, false), Some(5));
+        assert_eq!(adaptive_max_depth(Some(5), 2000, false), Some(5));
+        assert_eq!(adaptive_max_depth(Some(0), 2000, true), Some(0));
+        assert_eq!(adaptive_max_depth(Some(10), 100, true), Some(10));
+    }
+
+    #[test]
+    fn test_adaptive_max_depth_small_repo_file_granularity() {
+        // Small repos (<=1000 files) with file granularity should have unlimited depth
+        assert_eq!(adaptive_max_depth(None, 100, false), None);
+        assert_eq!(adaptive_max_depth(None, 500, false), None);
+        assert_eq!(adaptive_max_depth(None, 1000, false), None);
+    }
+
+    #[test]
+    fn test_adaptive_max_depth_large_repo() {
+        // Large repos (>1000 files) should be capped at default depth
+        assert_eq!(adaptive_max_depth(None, 1001, false), Some(LARGE_REPO_DEFAULT_DEPTH));
+        assert_eq!(adaptive_max_depth(None, 5000, false), Some(LARGE_REPO_DEFAULT_DEPTH));
+        assert_eq!(adaptive_max_depth(None, 12000, false), Some(LARGE_REPO_DEFAULT_DEPTH));
+    }
+
+    #[test]
+    fn test_adaptive_max_depth_entity_granularity() {
+        // Entity granularity should always be capped regardless of repo size
+        assert_eq!(adaptive_max_depth(None, 100, true), Some(ENTITY_GRANULARITY_DEFAULT_DEPTH));
+        assert_eq!(adaptive_max_depth(None, 500, true), Some(ENTITY_GRANULARITY_DEFAULT_DEPTH));
+        assert_eq!(adaptive_max_depth(None, 2000, true), Some(ENTITY_GRANULARITY_DEFAULT_DEPTH));
+    }
+
+    #[test]
+    fn test_threshold_constants() {
+        // Verify constants are sensible
+        assert_eq!(LARGE_REPO_FILE_THRESHOLD, 1000);
+        assert_eq!(LARGE_REPO_DEFAULT_DEPTH, 3);
+        assert_eq!(ENTITY_GRANULARITY_DEFAULT_DEPTH, 3);
     }
 }

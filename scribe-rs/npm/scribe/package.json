@@ -21,9 +21,13 @@
   "bin": {
     "scribe": "bin/scribe"
   },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
   "files": [
     "bin",
-    "index.js"
+    "index.js",
+    "scripts"
   ],
   "optionalDependencies": {
     "@sibyllinesoft/scribe-darwin-arm64": "1.0.1",

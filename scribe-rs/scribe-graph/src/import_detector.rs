@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::centrality_types::ImportResolutionConfig;
+use crate::ts_resolver::TsResolver;
 
 // File extension constants for each supported language
 const PYTHON_FILE_EXTENSIONS: &[&str] = &["py"];
@@ -37,6 +38,8 @@ pub struct ImportDetector {
     filename_to_paths: HashMap<String, Vec<String>>,
     /// Set of all available file paths for quick existence checks
     available_paths: HashSet<String>,
+    /// Cached TypeScript/JavaScript resolver for accurate module resolution
+    ts_resolver: Option<TsResolver>,
 }
 
 impl ImportDetector {
@@ -47,7 +50,19 @@ impl ImportDetector {
             stem_to_paths: HashMap::new(),
             filename_to_paths: HashMap::new(),
             available_paths: HashSet::new(),
+            ts_resolver: None,
         }
+    }
+
+    /// Initialize the TypeScript/JavaScript resolver for a project root
+    ///
+    /// This enables accurate resolution of:
+    /// - tsconfig.json paths (e.g., `@/` -> `src/`)
+    /// - package.json exports field
+    /// - Re-exports (`export * from`)
+    /// - Node.js module resolution
+    pub fn init_ts_resolver(&mut self, project_root: &Path) {
+        self.ts_resolver = Some(TsResolver::new(project_root));
     }
 
     /// Create with pre-computed lookup maps for massive performance improvement
@@ -209,6 +224,9 @@ impl ImportDetector {
     }
 
     /// Resolve JavaScript/TypeScript import
+    ///
+    /// Uses oxc_resolver for accurate TypeScript/JavaScript resolution when available,
+    /// with fallback to basic resolution for simple cases.
     fn resolve_js_import<T>(
         &self,
         import_str: &str,
@@ -223,6 +241,25 @@ impl ImportDetector {
             return None;
         }
 
+        // Try oxc_resolver first (handles tsconfig paths, package.json exports, etc.)
+        if let Some(ref resolver) = self.ts_resolver {
+            if let Some(resolved_path) = resolver.resolve(current_path, cleaned_import) {
+                // Check if the resolved path is in our file set
+                if let Some(path_str) = resolved_path.to_str() {
+                    if self.available_paths.contains(path_str) {
+                        return Some(path_str.to_string());
+                    }
+                    // Try with canonical path matching
+                    for available in &self.available_paths {
+                        if resolved_path.ends_with(available) || available.ends_with(path_str) {
+                            return Some(available.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to basic resolution for simple cases
         let parent_dir = current_path.parent().unwrap_or(current_path);
 
         if cleaned_import.starts_with("./") || cleaned_import.starts_with("../") {

@@ -7,6 +7,7 @@
 pub mod ast_import_parser;
 pub mod heuristics;
 pub mod language_support;
+pub mod swc_import_extractor;
 
 // Re-export main heuristic types
 pub use heuristics::{

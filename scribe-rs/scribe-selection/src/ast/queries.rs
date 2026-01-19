@@ -99,12 +99,23 @@ const JAVASCRIPT_SIGNATURE_QUERY: &str = r#"
     (function_declaration
         name: (identifier) @name
     ) @function
-    (arrow_function) @function
     (class_declaration
         name: (identifier) @name
     ) @class
     (import_statement) @import
     (export_statement) @export
+    (lexical_declaration
+        (variable_declarator
+            name: (identifier) @arrow_name
+            value: (arrow_function)
+        )
+    ) @arrow_const
+    (variable_declaration
+        (variable_declarator
+            name: (identifier) @arrow_name
+            value: (arrow_function)
+        )
+    ) @arrow_var
 "#;
 
 const TYPESCRIPT_SIGNATURE_QUERY: &str = r#"
@@ -129,6 +140,18 @@ const TYPESCRIPT_SIGNATURE_QUERY: &str = r#"
     (public_field_definition
         name: (property_identifier) @field_name
     ) @field
+    (lexical_declaration
+        (variable_declarator
+            name: (identifier) @arrow_name
+            value: (arrow_function)
+        )
+    ) @arrow_const
+    (variable_declaration
+        (variable_declarator
+            name: (identifier) @arrow_name
+            value: (arrow_function)
+        )
+    ) @arrow_var
 "#;
 
 const GO_SIGNATURE_QUERY: &str = r#"

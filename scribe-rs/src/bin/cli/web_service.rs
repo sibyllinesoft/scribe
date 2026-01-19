@@ -37,6 +37,7 @@ impl AnalysisProvider for CliAnalysisProvider {
             force_traditional: config.token_budget == 0,
             algorithm_name: Some("web-service".to_string()),
             include_directory_map: true,
+            query_hint: None,
         };
 
         let outcome = analyze_and_select(&config.repo_path, &scribe_config, &selection_options)

@@ -94,6 +94,7 @@ pub mod graph;
 pub mod import_detector;
 pub mod pagerank;
 pub mod statistics;
+pub mod ts_resolver;
 
 // Primary API exports - PageRank centrality system
 pub use centrality::{

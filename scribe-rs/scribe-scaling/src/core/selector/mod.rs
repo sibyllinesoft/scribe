@@ -6,6 +6,11 @@
 mod scoring;
 mod types;
 
+#[cfg(feature = "bm25")]
+mod bm25;
+#[cfg(feature = "bm25")]
+pub use bm25::Bm25Scorer;
+
 pub use types::{
     FileCategory, ScalingSelectionConfig, ScalingSelectionResult, ScalingSelector,
     SelectionAlgorithm,
@@ -14,6 +19,11 @@ pub use types::{
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+#[cfg(feature = "bm25")]
+use std::sync::Arc;
+#[cfg(feature = "bm25")]
+use parking_lot::RwLock;
 
 use tracing::{debug, info, warn};
 
@@ -83,13 +93,19 @@ impl ScalingSelector {
             self.config.token_budget, self.config.selection_algorithm
         );
         if let Some(query) = query_hint {
-            info!("Query hint for positioning: '{}'", query);
+            info!("Query hint for selection and positioning: '{}'", query);
         }
 
         // Phase 1: Optimized streaming discovery and selection
         let discovery_start = Instant::now();
-        let selected_files = self.discover_and_select_files_streaming(repo_path).await?;
+        let mut selected_files = self.discover_and_select_files_streaming(repo_path).await?;
         let discovery_time = discovery_start.elapsed();
+
+        // Phase 2: Apply BM25 re-ranking if enabled and query_hint provided
+        #[cfg(feature = "bm25")]
+        if let Some(query) = query_hint {
+            selected_files = self.apply_bm25_reranking(repo_path, selected_files, query).await?;
+        }
 
         info!(
             "Selected {} files in {:?}",
@@ -202,6 +218,92 @@ impl ScalingSelector {
             selected_files.len()
         );
         Ok(selected_files)
+    }
+
+    /// Apply BM25 re-ranking to boost query-relevant files
+    #[cfg(feature = "bm25")]
+    async fn apply_bm25_reranking(
+        &self,
+        repo_path: &Path,
+        files: Vec<FileMetadata>,
+        query: &str,
+    ) -> ScalingResult<Vec<FileMetadata>> {
+        use std::cmp::Ordering;
+
+        info!("Applying BM25 re-ranking for query: '{}'", query);
+
+        // Try to create BM25 scorer
+        let scorer = match bm25::Bm25Scorer::new(repo_path) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to create BM25 scorer: {}, skipping re-ranking", e);
+                return Ok(files);
+            }
+        };
+
+        // Index the discovered files
+        if let Err(e) = scorer.index_files(&files) {
+            warn!("Failed to index files for BM25: {}, skipping re-ranking", e);
+            return Ok(files);
+        }
+
+        // Get BM25 scores for all files
+        let file_paths: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+        let bm25_scores = match scorer.score_files(query, &file_paths) {
+            Ok(scores) => scores,
+            Err(e) => {
+                warn!("Failed to get BM25 scores: {}, skipping re-ranking", e);
+                return Ok(files);
+            }
+        };
+
+        // Combine scores and re-sort
+        let mut scored_files: Vec<(FileMetadata, f64)> = files
+            .into_iter()
+            .map(|file| {
+                let base_score = Self::calculate_file_score_static(&file, self.config.token_budget);
+                let bm25_score = bm25_scores.get(&file.path).copied().unwrap_or(0.0);
+                let combined = bm25::combine_scores(base_score, bm25_score, 2.0); // BM25 weight of 2.0
+                (file, combined)
+            })
+            .collect();
+
+        // Sort by combined score (descending)
+        scored_files.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal)
+        });
+
+        // Log top boosted files
+        let top_files: Vec<_> = scored_files.iter().take(5).collect();
+        for (file, score) in &top_files {
+            let bm25 = bm25_scores.get(&file.path).copied().unwrap_or(0.0);
+            debug!(
+                "BM25 boosted: {} (combined={:.2}, bm25={:.2})",
+                file.path.display(),
+                score,
+                bm25
+            );
+        }
+
+        info!(
+            "BM25 re-ranking complete: top file is {} with score {:.2}",
+            scored_files.first().map(|(f, _)| f.path.display().to_string()).unwrap_or_default(),
+            scored_files.first().map(|(_, s)| *s).unwrap_or(0.0)
+        );
+
+        // Re-select within budget after re-ranking
+        let mut selected = Vec::new();
+        let mut remaining_budget = self.config.token_budget;
+
+        for (file, _score) in scored_files {
+            let tokens = Self::estimate_tokens_static(&file, self.config.token_budget);
+            if tokens <= remaining_budget {
+                remaining_budget -= tokens;
+                selected.push(file);
+            }
+        }
+
+        Ok(selected)
     }
 
     /// Estimate target number of files to select

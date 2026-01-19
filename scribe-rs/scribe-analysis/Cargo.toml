@@ -36,6 +36,11 @@ tree-sitter-typescript = "0.20.3"
 tree-sitter-go = "0.20.0"
 tree-sitter-rust = "0.20.4"
 
+# SWC for enhanced TypeScript/JavaScript parsing
+swc_ecma_parser = "33"
+swc_ecma_ast = "20"
+swc_common = "18"
+
 # Async processing
 async-trait = { workspace = true }
 futures = { workspace = true }

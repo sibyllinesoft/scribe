@@ -406,6 +406,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Standard analysis mode
+    let stdout_mode = matches.get_flag("stdout");
     run_standard_analysis(
         &repo_dir,
         &matches,
@@ -414,6 +415,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         max_bytes,
         verbose_level,
         include_line_numbers,
+        stdout_mode,
     )
     .await
 }
@@ -426,6 +428,7 @@ async fn run_standard_analysis(
     max_bytes: usize,
     verbose_level: u8,
     include_line_numbers: bool,
+    stdout_mode: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let force_traditional = matches.get_flag("force_traditional");
     let algorithm = matches.get_one::<Algorithm>("algorithm").unwrap();
@@ -531,6 +534,7 @@ async fn run_standard_analysis(
         force_traditional,
         algorithm_name: Some(algorithm_name.clone()),
         include_directory_map: true,
+        query_hint: query_hint.clone(),
     };
 
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
@@ -540,16 +544,18 @@ async fn run_standard_analysis(
     let unlimited_budget = analysis_outcome.selection.unlimited_budget;
     let total_files_discovered = metrics.total_files_discovered;
 
-    if verbose_level > 0 {
-        info!(
-            "Selected {} files ({} tokens)",
-            metrics.files_selected, metrics.total_tokens_estimated
-        );
-    } else {
-        print_selection_summary(&metrics, eligible_file_count, token_target, unlimited_budget);
+    if !stdout_mode {
+        if verbose_level > 0 {
+            info!(
+                "Selected {} files ({} tokens)",
+                metrics.files_selected, metrics.total_tokens_estimated
+            );
+        } else {
+            print_selection_summary(&metrics, eligible_file_count, token_target, unlimited_budget);
+        }
     }
 
-    if show_metrics {
+    if show_metrics && !stdout_mode {
         print_detailed_metrics(
             &metrics,
             &selected_files,
@@ -564,10 +570,12 @@ async fn run_standard_analysis(
 
     let format_label = report_format_label(report_format);
 
-    if verbose_level == 0 {
-        println!("📝 Generating {} output...", format_label);
-    } else {
-        info!("📝 Generating {} output", format_label);
+    if !stdout_mode {
+        if verbose_level == 0 {
+            println!("📝 Generating {} output...", format_label);
+        } else {
+            info!("📝 Generating {} output", format_label);
+        }
     }
 
     if include_line_numbers {
@@ -575,16 +583,22 @@ async fn run_standard_analysis(
     }
 
     let report_content = generate_report(report_format, &selected_files, &metrics)?;
-    fs::write(&output_path, report_content)?;
 
-    if verbose_level > 0 {
-        info!(
-            "🎉 Analysis complete! Output saved to: {}",
-            output_path.display()
-        );
+    if stdout_mode {
+        // Write directly to stdout for agent/pipeline use
+        print!("{}", report_content);
     } else {
-        println!("  • Output location : {}", output_path.display());
-        println!("\n🎉 Analysis complete");
+        fs::write(&output_path, report_content)?;
+
+        if verbose_level > 0 {
+            info!(
+                "🎉 Analysis complete! Output saved to: {}",
+                output_path.display()
+            );
+        } else {
+            println!("  • Output location : {}", output_path.display());
+            println!("\n🎉 Analysis complete");
+        }
     }
 
     if config.output.file_path.is_some() && matches.get_one::<String>("output").is_none() {
