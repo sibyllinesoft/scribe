@@ -1,6 +1,6 @@
 {
   "name": "@sibyllinesoft/scribe-win32-x64",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Scribe binary for Windows x64",
   "repository": {
     "type": "git",

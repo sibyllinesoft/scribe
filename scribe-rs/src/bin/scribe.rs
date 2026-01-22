@@ -14,6 +14,7 @@ use cli::config::{
     parse_pattern_list,
 };
 use cli::covering_set::{run_covering_set_diff_mode, run_covering_set_mode};
+use cli::install::{run_install, Agent, HookMode};
 use cli::output::{
     apply_line_numbers_to_files, determine_output_path, print_selection_summary,
     report_format_label,
@@ -320,6 +321,23 @@ fn build_cli() -> Command {
                 .help("Output directly to stdout (for agent/pipeline use)")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("install")
+                .long("install")
+                .help("Install scribe integration for AI coding agents (claude, opencode, or all)")
+                .value_name("AGENT")
+                .num_args(0..=1)
+                .default_missing_value("all"),
+        )
+        .arg(
+            Arg::new("install_mode")
+                .long("install-mode")
+                .help("Hook behavior: 'block' (recommended) or 'warn'")
+                .value_name("MODE")
+                .value_parser(["block", "warn"])
+                .default_value("block")
+                .requires("install"),
+        )
         .after_help(include_str!("cli/help_text.txt"))
 }
 
@@ -334,6 +352,19 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let matches = build_cli().get_matches();
+
+    // Handle --install before anything else
+    if let Some(agent_str) = matches.get_one::<String>("install") {
+        let agent: Agent = agent_str.parse().unwrap_or_else(|e: String| {
+            error!("{}", e);
+            process::exit(1);
+        });
+        let mode = match matches.get_one::<String>("install_mode").map(|s| s.as_str()) {
+            Some("warn") => HookMode::Warn,
+            _ => HookMode::Block,
+        };
+        return run_install(agent, mode).map_err(|e| e.into());
+    }
 
     // Parse arguments
     let repo_path_or_url = matches.get_one::<String>("repo_path").unwrap();

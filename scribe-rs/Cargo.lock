@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "scribe-cache"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "scribe-cli"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2865,6 +2865,7 @@ dependencies = [
  "clap",
  "criterion",
  "dashmap",
+ "dirs",
  "env_logger",
  "futures",
  "git2",
@@ -2960,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "scribe-index"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3002,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "scribe-scaling"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3083,7 +3084,7 @@ dependencies = [
 
 [[package]]
 name = "scribe-selection"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3113,7 +3114,7 @@ dependencies = [
 
 [[package]]
 name = "scribe-webservice"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
