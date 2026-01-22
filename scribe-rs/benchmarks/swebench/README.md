@@ -2,28 +2,34 @@
 
 Compares SWE-bench task success rates and token usage with and without scribe.
 
-Uses [OpenCode](https://opencode.ai) as the agent for realistic benchmarking.
+Uses the Claude Code CLI as the agent for realistic benchmarking.
 
 ## Quick Start
 
 ```bash
-# Install OpenCode
-curl -fsSL https://opencode.ai/install | bash
+# Install Claude Code
+# npm install -g @anthropic-ai/claude-code
 
 # Install Python dependencies
 pip install datasets
 
-# Configure OpenCode with your provider (run once)
-opencode
+# Configure Claude Code with your provider (run once, or use a custom config dir)
+./setup_zai_claude_config.sh
 
-# Run quick test (3 tasks) with GLM-4.7 via OpenRouter
-./benchmark.py --quick --model openrouter/z-ai/glm-4.7
+# Run Claude Code via the Z.ai wrapper (avoids Anthropic login screen)
+./claude_zai.sh
+
+# Run quick test (3 tasks) with GLM-4.7 via Z.ai plan
+./benchmark.py --quick --model glm-4.7
 
 # Run with Claude
 ./benchmark.py --quick --model anthropic/claude-sonnet-4-20250514
 
+# Use a custom Claude Code config dir (recommended for benchmarks)
+./benchmark.py --quick --claude-config-dir "$(pwd)/.claude-config"
+
 # Run full benchmark
-./benchmark.py --max-tasks 50 --model openrouter/z-ai/glm-4.7
+./benchmark.py --max-tasks 50 --model glm-4.7
 ```
 
 ## What This Measures
@@ -141,7 +147,7 @@ Comparison:
 ## Requirements
 
 - Python 3.9+
-- [OpenCode](https://opencode.ai) CLI installed
+- Claude Code CLI installed
 - Docker (for isolated evaluation)
 - `pip install datasets`
-- API key configured in OpenCode (run `opencode` to set up)
+- API key configured in Claude Code (run `claude` to set up)

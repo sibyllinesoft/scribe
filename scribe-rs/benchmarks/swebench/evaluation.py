@@ -140,11 +140,12 @@ def analyze_results(results: list) -> dict:
 
     scribe_tool_stats = compute_mode_stats(results, "scribe-tool")
 
-    # For backwards compatibility, use scribe-context for "scribe" comparison
-    comparison = compute_comparison(scribe_context_stats, standard_stats)
+    # Prefer scribe-tool for comparisons when available; fallback to scribe-context
+    primary_scribe_stats = scribe_tool_stats if scribe_tool_stats.n_tasks > 0 else scribe_context_stats
+    comparison = compute_comparison(primary_scribe_stats, standard_stats)
 
     return {
-        "scribe": asdict(scribe_context_stats),  # backwards compatible key
+        "scribe": asdict(primary_scribe_stats),  # backwards compatible key
         "scribe-context": asdict(scribe_context_stats),
         "scribe-tool": asdict(scribe_tool_stats),
         "standard": asdict(standard_stats),
@@ -158,6 +159,16 @@ def generate_report(results: list, metadata: dict) -> str:
     scribe = analysis["scribe"]
     standard = analysis["standard"]
     comparison = analysis["comparison"]
+
+    modes_present = set(
+        r.mode if hasattr(r, "mode") else r.get("mode") for r in results
+    )
+    if "scribe-tool" in modes_present:
+        primary_scribe_mode = "scribe-tool"
+    elif "scribe-context" in modes_present:
+        primary_scribe_mode = "scribe-context"
+    else:
+        primary_scribe_mode = "scribe"
 
     lines = []
 
@@ -272,7 +283,7 @@ def generate_report(results: list, metadata: dict) -> str:
 
     for task_id in sorted(by_task.keys()):
         task_results = by_task[task_id]
-        scribe_r = task_results.get("scribe")
+        scribe_r = task_results.get(primary_scribe_mode) or task_results.get("scribe")
         std_r = task_results.get("standard")
 
         scribe_status = "PASS" if scribe_r and scribe_r.resolved else "FAIL" if scribe_r else "-"

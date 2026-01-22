@@ -8,11 +8,17 @@ import subprocess
 import sys
 import tempfile
 import shutil
+from typing import Optional
 from datetime import datetime
 from pathlib import Path
 
 # Add parent for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+try:
+    from common.claude_config import resolve_claude_config_dir, build_claude_env
+except ImportError:
+    from ..common.claude_config import resolve_claude_config_dir, build_claude_env
 
 try:
     from datasets import load_dataset
@@ -120,7 +126,7 @@ def main():
     state = get_state(sid)
     msg, allow = "", True
 
-    # BLOCK: Read on code files
+    # BLOCK: Read on code files - suggest scribe as alternative
     if tool == "Read":
         fp = inp.get("file_path", "")
         ext = os.path.splitext(fp)[1].lower()
@@ -129,23 +135,27 @@ def main():
 
 You tried to read: {fp}
 
-USE SCRIBE to get the code WITH its dependencies:
+USE SCRIBE instead (two options):
 
-  scribe --covering-set "{fp}:FUNCTION_NAME" --stdout
+  # Option 1: Just read the file (like Read, but with entity support)
+  scribe "{fp}" --stdout
 
-Replace FUNCTION_NAME with the entity you need. This returns the function
-AND all types/functions it depends on. One call, complete context.
+  # Option 2: Get a specific entity WITH all its dependencies
+  scribe --covering-set "{fp}:ENTITY_NAME" --stdout
 
-Read is only allowed for non-code files (config, docs, etc.)."""
+Option 1 is a direct replacement for Read. Option 2 gives you the entity
+plus all types/functions it depends on - use this when you need context."""
             allow = False
         elif ext not in ALLOWED_EXTS and ext:
             pass  # Unknown ext, allow
 
-    # BLOCK: Bash piping scribe output
+    # BLOCK: Bash piping scribe output OR reading code files with cat/head/tail
     elif tool == "Bash":
         cmd = inp.get("command", "")
-        pipes = [r"scribe.*\\|\\s*head", r"scribe.*\\|\\s*tail", r"scribe.*\\|\\s*grep",
-                 r"scribe.*\\|\\s*awk", r"scribe.*\\|\\s*sed", r"scribe.*>\\s*/dev/null"]
+
+        # Block piped scribe output
+        pipes = ["scribe.*[|].*head", "scribe.*[|].*tail", "scribe.*[|].*grep",
+                 "scribe.*[|].*awk", "scribe.*[|].*sed", "scribe.*>.*dev.null"]
         for p in pipes:
             if re.search(p, cmd, re.I):
                 msg = f"""BLOCKED: Do not pipe scribe output.
@@ -160,16 +170,43 @@ Use --token-target to limit size if needed."""
                 allow = False
                 break
 
-    # WARN: Too many Greps
+        # Block reading code files with cat/head/tail/less
+        if allow:
+            code_ext_pattern = "[.](py|pyi|js|jsx|ts|tsx|mjs|cjs|go|rs|java|kt|c|h|cpp|hpp|cc|rb|php|swift|scala|cs|lua|ex|exs|hs|ml|clj|vue|svelte|sol)"
+            read_cmds = ["cat ", "head ", "tail ", "less "]
+            for rc in read_cmds:
+                if rc in cmd.lower() and re.search(code_ext_pattern, cmd, re.I):
+                    msg = f"""BLOCKED: Do not use cat/head/tail to read code files.
+
+You ran: {cmd[:80]}...
+
+USE SCRIBE instead (two options):
+
+  # Option 1: Just read the file
+  scribe "path/to/file" --stdout
+
+  # Option 2: Get entity with dependencies
+  scribe --covering-set "path/to/file:entity" --stdout"""
+                    allow = False
+                    break
+
+    # BLOCK: Too many Greps (allow 2, then block)
     elif tool == "Grep":
         state["grep_count"] = state.get("grep_count", 0) + 1
-        if state["grep_count"] >= 3 and not state.get("reminded"):
-            state["reminded"] = True
-            msg = f"""STOP: {state["grep_count"]} Grep calls. Use scribe instead.
+        if state["grep_count"] > 2:
+            msg = f"""BLOCKED: Too many Grep calls ({state["grep_count"]}). Use scribe instead.
 
-  scribe --covering-set "file.py:function" --stdout
+You've done enough searching. Now use scribe to get the code WITH dependencies:
 
-One call = function + all dependencies. Stop grepping."""
+  scribe --covering-set "path/to/file:function_name" --stdout
+
+This returns the function AND all its imports/dependencies in one call.
+Stop grepping and start fixing."""
+            allow = False
+        elif state["grep_count"] == 2:
+            msg = """NOTE: This is your last Grep. After this, use scribe for code exploration.
+
+  scribe --covering-set "path/to/file:function_name" --stdout"""
 
     save_state(sid, state)
     if msg:
@@ -206,8 +243,9 @@ def run_with_claude(
     task: dict,
     work_dir: Path,
     mode: str = "standard",
-    timeout_s: int = 600,
-    model: str = "sonnet",
+    timeout_s: int = 2400,
+    model: str = "glm-4.7",
+    claude_config_dir: Optional[Path] = None,
 ) -> dict:
     """Run Claude Code on a task and capture JSON output."""
 
@@ -240,59 +278,79 @@ IMPORTANT: The context above contains all the relevant code. DO NOT re-explore t
             }
 
     elif mode == "scribe-tool":
-        from runner import detect_repo_language, extract_code_references
+        from runner import detect_repo_language, extract_code_references, extract_github_file_refs
 
         language = detect_repo_language(work_dir)
 
-        # Set up hooks to remind about scribe when exploring
+        # Set up hooks to enforce scribe usage
         setup_scribe_hooks(work_dir)
 
-        # Extract key terms from issue for query-hint
-        refs = extract_code_references(issue, language)
-        import re
-        camel_matches = re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z0-9]*)+)\b', issue)
-        refs.extend(camel_matches[:5])
-        keywords = list(set(refs))[:8]
-        query_hint = " ".join(keywords) if keywords else "main"
+        # Extract file paths from GitHub links (highest priority - direct pointers)
+        github_refs = extract_github_file_refs(issue)
+
+        # Build suggested scribe commands based on extracted references
+        scribe_suggestions = []
+        for ref in github_refs[:2]:  # Top 2 GitHub file refs
+            path = ref["path"]
+            # For files with line numbers, we want to get the function at that line
+            scribe_suggestions.append(f'scribe --covering-set "{path}" --token-target 8000 --stdout')
+
+        # Also extract code references (CamelCase, dotted paths)
+        code_refs = extract_code_references(issue, language)
+
+        # Build the scribe command section
+        if scribe_suggestions:
+            scribe_cmd_section = f"""
+=== START HERE - Run this scribe command FIRST ===
+
+The issue mentions specific files. Get the code with dependencies:
+
+{chr(10).join('  ' + cmd for cmd in scribe_suggestions)}
+
+This returns the file AND all its dependencies in one call.
+"""
+        elif code_refs:
+            # No GitHub links, but have code references
+            example_ref = code_refs[0]
+            scribe_cmd_section = f"""
+=== START HERE ===
+
+Use scribe to find and get code with dependencies:
+
+  scribe --query-hint "{example_ref}" --token-target 8000 --stdout
+
+Or if you find a specific file:function:
+
+  scribe --covering-set "path/to/file:function_name" --token-target 8000 --stdout
+"""
+        else:
+            scribe_cmd_section = """
+=== SCRIBE TOOL ===
+
+Use scribe to get code with all dependencies in one call:
+
+  scribe --covering-set "path/to/file:function_name" --token-target 8000 --stdout
+"""
 
         prompt = f"""Fix the following issue in this repository.
 
 ISSUE:
 {issue}
-
-=== SCRIBE: YOUR PRIMARY EXPLORATION TOOL ===
-
-Scribe returns a function/class AND ALL ITS DEPENDENCIES in a single call.
-This replaces grep + read exploration. Use scribe INSTEAD of manual file reading.
-
-**How to use (ALWAYS use --covering-set for specific entities):**
-```
-scribe --covering-set "path/to/file.py:function_name" --stdout
-scribe --covering-set "path/to/file.ts:ClassName" --stdout
-scribe --covering-set "path/to/file.go:MethodName" --stdout
-```
-
-This returns the target PLUS every type, function, and constant it depends on.
-Complete dependency graph. One call. No manual import tracing needed.
-
+{scribe_cmd_section}
 === WORKFLOW ===
 
-1. Grep ONCE to find the file/function mentioned in the issue
-2. scribe --covering-set on that target to get ALL context
-3. Fix the code using what scribe returned
-4. Run tests
+1. Run the scribe command above (or find the target first if not obvious)
+2. scribe returns the code AND all its dependencies - complete context
+3. Fix the code based on what scribe returned
+4. Run tests to verify
 
-=== MANDATORY RULES ===
+=== RULES ===
 
-After scribe returns context:
-- DO NOT call Read on files scribe already returned. You have everything.
-- DO NOT grep for more context. The dependency graph is complete.
-- DO NOT pipe scribe through head/tail/grep. Let it complete.
+- Use scribe for code exploration, not Read/Grep on code files
+- scribe --covering-set "file:entity" gets one entity with all deps
+- After scribe returns context, you have everything - go fix the code
 
-The purpose of scribe is to ELIMINATE iterative exploration.
-One scribe call replaces 10+ grep/read calls. USE IT.
-
-After fixing, run tests to verify."""
+After fixing, run relevant tests."""
 
     elif mode == "scribe-hooks":
         # Standard prompt but with hooks that remind about scribe
@@ -346,6 +404,7 @@ After fixing, run the relevant tests to verify your fix works."""
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=work_dir,
+                env=build_claude_env(claude_config_dir),
             )
             # Send prompt and close stdin
             process.stdin.write(prompt)
@@ -466,9 +525,10 @@ After fixing, run the relevant tests to verify your fix works."""
 def run_task(
     task_id: str,
     mode: str = "standard",
-    timeout_s: int = 600,
-    model: str = "sonnet",
+    timeout_s: int = 2400,
+    model: str = "glm-4.7",
     dataset: str = "princeton-nlp/SWE-bench_Lite",
+    claude_config_dir: Optional[Path] = None,
 ) -> dict:
     """Run a single SWE-bench task with Claude Code."""
 
@@ -490,7 +550,7 @@ def run_task(
 
     try:
         # Run with Claude
-        result = run_with_claude(task, work_dir, mode, timeout_s, model)
+        result = run_with_claude(task, work_dir, mode, timeout_s, model, claude_config_dir)
         result["task_id"] = task_id
         result["mode"] = mode
         result["model"] = model
@@ -519,8 +579,9 @@ def main():
     parser.add_argument("--task-ids", nargs="+", required=True, help="Task IDs to run")
     parser.add_argument("--mode", choices=["standard", "scribe-context", "scribe-tool", "scribe-hooks", "all"],
                        default="standard", help="Mode to run")
-    parser.add_argument("--timeout", type=int, default=600, help="Timeout per task")
-    parser.add_argument("--model", default="sonnet", help="Claude model to use")
+    parser.add_argument("--timeout", type=int, default=2400, help="Timeout per task")
+    parser.add_argument("--model", default="glm-4.7", help="Claude model to use")
+    parser.add_argument("--claude-config-dir", default=None, help="Custom Claude Code config dir")
     parser.add_argument("--output", help="Output JSON file")
     parser.add_argument("--dataset", default="princeton-nlp/SWE-bench_Lite",
                        help="Dataset to use (e.g., swe-bench/SWE-bench_Multilingual)")
@@ -532,7 +593,8 @@ def main():
 
     for task_id in args.task_ids:
         for mode in modes:
-            result = run_task(task_id, mode, args.timeout, args.model, args.dataset)
+            claude_config_dir = resolve_claude_config_dir(args.claude_config_dir)
+            result = run_task(task_id, mode, args.timeout, args.model, args.dataset, claude_config_dir)
             results.append(result)
 
     # Save results

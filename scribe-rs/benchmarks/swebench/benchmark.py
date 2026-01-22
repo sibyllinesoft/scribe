@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional
 from datetime import datetime
 from pathlib import Path
 
@@ -36,9 +37,11 @@ from common.results import get_results_dir
 try:
     from .runner import TaskRunner, run_task_batch, check_opencode_installed, get_scribe_git_info
     from .evaluation import analyze_results, generate_report, save_benchmark_results
+    from ..common.claude_config import resolve_claude_config_dir
 except ImportError:
     from runner import TaskRunner, run_task_batch, check_opencode_installed, get_scribe_git_info
     from evaluation import analyze_results, generate_report, save_benchmark_results
+    from common.claude_config import resolve_claude_config_dir
 
 
 def load_swebench_tasks(dataset: str = "princeton-nlp/SWE-bench_Lite", split: str = "test") -> list:
@@ -121,11 +124,11 @@ def load_tasks_from_config(config_path: str = None) -> tuple[list, list[str]]:
 def run_benchmark(
     max_tasks: int = 50,
     mode: str = "both",
-    model: str = "sonnet",
+    model: str = "glm-4.7",
     dataset: str = "princeton-nlp/SWE-bench_Lite",
     use_docker: bool = True,
     quick: bool = False,
-    task_timeout_s: int = 600,
+    task_timeout_s: int = 2400,
     skip: int = 0,
     task_ids: list = None,
     parallel_workers: int = 1,
@@ -134,13 +137,14 @@ def run_benchmark(
     use_config: bool = False,
     config_path: str = None,
     context_tokens: int = 4000,
+    claude_config_dir: Optional[str] = None,
 ) -> dict:
     """Run the SWE-bench benchmark using Claude Code.
 
     Args:
         max_tasks: Maximum number of tasks to run.
         mode: "scribe", "standard", or "both".
-        model: Model to use (e.g., "sonnet", "opus", "claude-sonnet-4-5-20250929").
+        model: Model to use (default: "glm-4.7").
         dataset: SWE-bench dataset name.
         use_docker: Whether to use Docker for isolation.
         quick: Quick mode with minimal tasks.
@@ -197,6 +201,8 @@ def run_benchmark(
     print(f"Dataset(s): {', '.join(datasets_used)}")
     print(f"Tasks: {len(tasks)}")
     print(f"Mode: {mode}")
+    if mode in ("scribe-context", "scribe"):
+        print("  WARNING: scribe-context mode is deprecated. Use scribe-tool instead.")
     print(f"Model: {model}")
     if scribe_git_info.get("commit"):
         scribe_version = scribe_git_info["commit"]
@@ -209,6 +215,8 @@ def run_benchmark(
     print(f"Timeout per task: {task_timeout_s}s")
     print(f"Context tokens: {context_tokens}")
     print()
+
+    resolved_claude_config_dir = resolve_claude_config_dir(claude_config_dir)
 
     # Run benchmark - multiple runs per task
     all_results = []
@@ -226,6 +234,7 @@ def run_benchmark(
             task_timeout_s=task_timeout_s,
             parallel_workers=parallel_workers,
             context_tokens=context_tokens,
+            claude_config_dir=resolved_claude_config_dir,
         )
 
         # Tag results with run number
@@ -256,6 +265,7 @@ def run_benchmark(
         "mode": mode,
         "model": model,
         "model_resolved": model_resolved,  # Actual model ID (e.g., "claude-sonnet-4-5-20250929")
+        "claude_config_dir": str(resolved_claude_config_dir) if resolved_claude_config_dir else None,
         "scribe_commit": scribe_git_info.get("commit"),
         "scribe_commit_full": scribe_git_info.get("commit_full"),
         "scribe_branch": scribe_git_info.get("branch"),
@@ -324,15 +334,21 @@ def main():
     )
     parser.add_argument(
         "--mode", "-m",
-        choices=["scribe-context", "scribe-tool", "standard", "both", "all", "scribe"],
-        default="both",
-        help="Which mode(s) to run: standard, scribe-context (pre-fetched), scribe-tool (agent uses scribe), both (standard+scribe-context), all (all three). Legacy 'scribe' = 'scribe-context'. (default: both)",
+        choices=["scribe-tool", "standard", "both", "all", "scribe-context", "scribe"],
+        default="scribe-tool",
+        help="Which mode(s) to run: scribe-tool (recommended), standard, both (standard+scribe-tool). Legacy modes: scribe-context (deprecated), all, scribe. (default: scribe-tool)",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="sonnet",
-        help="Model to use (e.g., 'sonnet', 'opus', 'claude-sonnet-4-5-20250929')",
+        default="glm-4.7",
+        help="Model to use (default: glm-4.7)",
+    )
+    parser.add_argument(
+        "--claude-config-dir",
+        type=str,
+        default=None,
+        help="Custom Claude Code config dir (overrides system config)",
     )
     parser.add_argument(
         "--dataset",
@@ -359,8 +375,8 @@ def main():
     parser.add_argument(
         "--timeout",
         type=int,
-        default=600,
-        help="Timeout per task in seconds (default: 600 = 10 min)",
+        default=2400,
+        help="Timeout per task in seconds (default: 2400 = 40 min)",
     )
     parser.add_argument(
         "--skip",
@@ -422,6 +438,7 @@ def main():
         use_config=args.config,
         config_path=args.config_path,
         context_tokens=args.context_tokens,
+        claude_config_dir=args.claude_config_dir,
     )
 
 

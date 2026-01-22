@@ -6,8 +6,9 @@ Measures token usage when AI agents understand code dependencies with vs without
 
 ```bash
 # Run REAL Claude Code benchmark (recommended)
-./claude_code_benchmark.py --quick --model haiku     # 1 iteration, 3 targets (cheapest)
+./claude_code_benchmark.py --quick --model glm-4.7  # 1 iteration, 3 targets (cheapest)
 ./claude_code_benchmark.py -n 3                      # 3 iterations, all targets
+./claude_code_benchmark.py --claude-config-dir ../.claude-config
 
 # Run simulated agent benchmark (no API key required)
 ./statistical_benchmark.py              # 5 iterations, all targets

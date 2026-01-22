@@ -99,6 +99,8 @@ fastpath_quality_analysis/
 benchmark_reports/
 evaluation_results/
 test_results/
+scribe-rs/benchmarks/.claude-config/
+scribe-rs/benchmarks/.workdirs/
 
 # Large benchmark test files (ignore pattern for storage tests)
 benchmarks/results/*_test_*

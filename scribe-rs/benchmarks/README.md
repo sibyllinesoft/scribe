@@ -25,7 +25,8 @@ Measures token efficiency when AI agents understand code dependencies with vs wi
 ./run.py agent-efficiency statistical --quick
 
 # Real Claude Code benchmark
-./run.py agent-efficiency claude-code --quick --model haiku
+./run.py agent-efficiency claude-code --quick --model glm-4.7
+./run.py agent-efficiency claude-code --quick --claude-config-dir ./benchmarks/.claude-config
 
 # Real agent with tools
 ./run.py agent-efficiency real-agent --quick

@@ -15,7 +15,8 @@ Usage:
     ./claude_code_benchmark.py                    # Default: 3 iterations
     ./claude_code_benchmark.py --iterations 5    # More iterations
     ./claude_code_benchmark.py --quick           # 1 iteration, 3 targets
-    ./claude_code_benchmark.py --model haiku     # Use Haiku (cheaper)
+    ./claude_code_benchmark.py --model glm-4.7  # Use GLM 4.7 via Z.ai plan
+    ./claude_code_benchmark.py --claude-config-dir ./benchmarks/.claude-config
 """
 
 import argparse
@@ -30,6 +31,14 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+try:
+    from common.claude_config import resolve_claude_config_dir, build_claude_env
+except ImportError:
+    # Allow running directly from this directory
+    from ..common.claude_config import resolve_claude_config_dir, build_claude_env
 
 
 @dataclass
@@ -82,7 +91,12 @@ class ScribeRun:
     error: str = ""
 
 
-def run_claude_code(repo_root: Path, target_query: str, model: str = "sonnet") -> ClaudeCodeRun:
+def run_claude_code(
+    repo_root: Path,
+    target_query: str,
+    model: str = "glm-4.7",
+    claude_config_dir: Optional[Path] = None,
+) -> ClaudeCodeRun:
     """Run Claude Code to find dependencies for a target."""
 
     # Extract file and entity from query
@@ -123,6 +137,7 @@ Be efficient - don't read files you don't need."""
             cwd=repo_root,
             capture_output=True,
             text=True,
+            env=build_claude_env(claude_config_dir),
             timeout=300  # 5 minute timeout
         )
 
@@ -216,7 +231,14 @@ def run_scribe(repo_root: Path, target_query: str) -> ScribeRun:
     return run
 
 
-def run_benchmark(repo_root: Path, targets: list, iterations: int, model: str, output_dir: Path):
+def run_benchmark(
+    repo_root: Path,
+    targets: list,
+    iterations: int,
+    model: str,
+    output_dir: Path,
+    claude_config_dir: Optional[Path],
+):
     """Run the full benchmark."""
     all_claude_runs = []
     all_scribe_runs = []
@@ -244,7 +266,7 @@ def run_benchmark(repo_root: Path, targets: list, iterations: int, model: str, o
 
             # Run Claude Code
             print(f"    [CLAUDE] Running...", end=" ", flush=True)
-            claude_run = run_claude_code(repo_root, query, model)
+            claude_run = run_claude_code(repo_root, query, model, claude_config_dir)
 
             if claude_run.success:
                 print(f"OK ({claude_run.total_tokens:,} tokens, {claude_run.num_turns} turns, ${claude_run.total_cost_usd:.4f})")
@@ -290,6 +312,7 @@ def run_benchmark(repo_root: Path, targets: list, iterations: int, model: str, o
         "metadata": {
             "timestamp": datetime.now().isoformat(),
             "model": model,
+            "claude_config_dir": str(claude_config_dir) if claude_config_dir else None,
             "iterations": iterations,
             "n_targets": len(targets)
         },
@@ -509,8 +532,10 @@ def main():
     parser = argparse.ArgumentParser(description="Claude Code vs Scribe Benchmark")
     parser.add_argument("--iterations", "-n", type=int, default=3,
                         help="Number of iterations per target (default: 3)")
-    parser.add_argument("--model", "-m", type=str, default="sonnet",
-                        help="Claude model alias: sonnet, opus, haiku (default: sonnet)")
+    parser.add_argument("--model", "-m", type=str, default="glm-4.7",
+                        help="Claude model to use (default: glm-4.7)")
+    parser.add_argument("--claude-config-dir", type=str,
+                        help="Custom Claude Code config dir (overrides system config)")
     parser.add_argument("--targets", "-t", type=str, nargs="*",
                         help="Specific target IDs to run")
     parser.add_argument("--quick", action="store_true",
@@ -542,7 +567,8 @@ def main():
         print("No targets selected")
         sys.exit(1)
 
-    run_benchmark(repo_root, targets, iterations, args.model, results_dir)
+    claude_config_dir = resolve_claude_config_dir(args.claude_config_dir)
+    run_benchmark(repo_root, targets, iterations, args.model, results_dir, claude_config_dir)
 
 
 if __name__ == "__main__":
