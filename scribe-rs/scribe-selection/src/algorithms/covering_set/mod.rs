@@ -96,7 +96,9 @@ impl CoveringSetComputer {
         // If entity name is specified, find the specific entity
         let target_entity = if query.name_pattern.is_some() {
             if let Some(content) = file_contents.get(&target_file_path) {
-                let entities = self.ast_parser.find_entities(content, &target_file_path, query)?;
+                let entities = self
+                    .ast_parser
+                    .find_entities(content, &target_file_path, query)?;
                 entities.into_iter().next()
             } else {
                 None
@@ -160,12 +162,8 @@ impl CoveringSetComputer {
                 continue; // Already added
             }
 
-            let (reason, distance) = self.compute_inclusion_info(
-                &file,
-                &target_file,
-                graph,
-                options,
-            );
+            let (reason, distance) =
+                self.compute_inclusion_info(&file, &target_file, graph, options);
 
             covering_set.push(CoveringSetFile {
                 path: file.clone(),
@@ -189,11 +187,7 @@ impl CoveringSetComputer {
         }
 
         statistics.files_selected = covering_set.len();
-        statistics.max_depth_reached = covering_set
-            .iter()
-            .map(|f| f.distance)
-            .max()
-            .unwrap_or(0);
+        statistics.max_depth_reached = covering_set.iter().map(|f| f.distance).max().unwrap_or(0);
 
         Ok(CoveringSetResult {
             target_entity,
@@ -294,11 +288,7 @@ impl CoveringSetComputer {
         }
 
         statistics.files_selected = covering_set.len();
-        statistics.max_depth_reached = covering_set
-            .iter()
-            .map(|f| f.distance)
-            .max()
-            .unwrap_or(0);
+        statistics.max_depth_reached = covering_set.iter().map(|f| f.distance).max().unwrap_or(0);
 
         Ok(CoveringSetResult {
             target_entity: None,
@@ -330,7 +320,8 @@ impl CoveringSetComputer {
         visited_entities.insert(target_id.clone());
 
         // Extract references from target entity's content
-        let target_references = self.extract_symbol_references(&target.content, &target.file_path)?;
+        let target_references =
+            self.extract_symbol_references(&target.content, &target.file_path)?;
 
         entities.push(CoveringSetEntity {
             file_path: target.file_path.clone(),
@@ -347,13 +338,12 @@ impl CoveringSetComputer {
 
         // Get file-level dependencies from graph
         let direction = self.get_traversal_direction(options);
-        let closure_files = graph.compute_closure(&[target_file.clone()], direction, options.max_depth);
+        let closure_files =
+            graph.compute_closure(&[target_file.clone()], direction, options.max_depth);
 
         // For each referenced symbol, try to find its definition in dependency files
-        let mut pending_refs: Vec<(String, usize)> = target_references
-            .iter()
-            .map(|r| (r.clone(), 1))
-            .collect();
+        let mut pending_refs: Vec<(String, usize)> =
+            target_references.iter().map(|r| (r.clone(), 1)).collect();
 
         while let Some((ref_name, distance)) = pending_refs.pop() {
             // Check depth limit
@@ -375,8 +365,11 @@ impl CoveringSetComputer {
             for dep_file in &closure_files {
                 if let Some(content) = file_contents.get(dep_file) {
                     // Try to find entity definition matching the reference name
-                    if let Some(found_entity) = self.find_entity_by_name(content, dep_file, &ref_name)? {
-                        let entity_id = format!("{}::{}", found_entity.file_path, found_entity.entity_name);
+                    if let Some(found_entity) =
+                        self.find_entity_by_name(content, dep_file, &ref_name)?
+                    {
+                        let entity_id =
+                            format!("{}::{}", found_entity.file_path, found_entity.entity_name);
 
                         if visited_entities.contains(&entity_id) {
                             continue;
@@ -384,7 +377,8 @@ impl CoveringSetComputer {
                         visited_entities.insert(entity_id.clone());
 
                         // Extract references from this entity too (for transitive deps)
-                        let nested_refs = self.extract_symbol_references(&found_entity.content, dep_file)?;
+                        let nested_refs =
+                            self.extract_symbol_references(&found_entity.content, dep_file)?;
 
                         let reason = if distance == 1 {
                             InclusionReason::DirectDependency
@@ -404,14 +398,15 @@ impl CoveringSetComputer {
                             references: nested_refs.clone(),
                         });
 
-                        inclusion_reasons.insert(
-                            entity_id,
-                            self.format_inclusion_reason(&reason, distance),
-                        );
+                        inclusion_reasons
+                            .insert(entity_id, self.format_inclusion_reason(&reason, distance));
 
                         // Add nested references to pending (for next depth level)
                         for nested_ref in nested_refs {
-                            if !visited_entities.iter().any(|id| id.ends_with(&format!("::{}", nested_ref))) {
+                            if !visited_entities
+                                .iter()
+                                .any(|id| id.ends_with(&format!("::{}", nested_ref)))
+                            {
                                 pending_refs.push((nested_ref, distance + 1));
                             }
                         }
@@ -752,11 +747,36 @@ fn is_common_keyword(name: &str) -> bool {
 fn is_common_type(name: &str) -> bool {
     matches!(
         name,
-        "String" | "str" | "Int" | "Integer" | "Float" | "Double" | "Bool" | "Boolean" |
-        "List" | "Array" | "Vec" | "Dict" | "Map" | "HashMap" | "Set" | "HashSet" |
-        "Option" | "Result" | "Some" | "None" | "Ok" | "Err" |
-        "Any" | "Object" | "Void" | "Unit" | "Never" |
-        "Promise" | "Future" | "Task" | "Tuple"
+        "String"
+            | "str"
+            | "Int"
+            | "Integer"
+            | "Float"
+            | "Double"
+            | "Bool"
+            | "Boolean"
+            | "List"
+            | "Array"
+            | "Vec"
+            | "Dict"
+            | "Map"
+            | "HashMap"
+            | "Set"
+            | "HashSet"
+            | "Option"
+            | "Result"
+            | "Some"
+            | "None"
+            | "Ok"
+            | "Err"
+            | "Any"
+            | "Object"
+            | "Void"
+            | "Unit"
+            | "Never"
+            | "Promise"
+            | "Future"
+            | "Task"
+            | "Tuple"
     )
 }
-

@@ -388,7 +388,9 @@ mod tests {
             },
         ];
 
-        let scores = scorer.score_with_preset(&files, WeightPreset::Documentation).unwrap();
+        let scores = scorer
+            .score_with_preset(&files, WeightPreset::Documentation)
+            .unwrap();
         assert_eq!(scores.len(), 2);
     }
 
@@ -403,7 +405,9 @@ mod tests {
             priority_boost: 0.0,
         }];
 
-        let scores = scorer.score_with_preset(&files, WeightPreset::CoreCode).unwrap();
+        let scores = scorer
+            .score_with_preset(&files, WeightPreset::CoreCode)
+            .unwrap();
         assert!(!scores.is_empty());
     }
 
@@ -418,7 +422,9 @@ mod tests {
             priority_boost: 0.0,
         }];
 
-        let scores = scorer.score_with_preset(&files, WeightPreset::Tests).unwrap();
+        let scores = scorer
+            .score_with_preset(&files, WeightPreset::Tests)
+            .unwrap();
         assert!(!scores.is_empty());
     }
 
@@ -433,7 +439,9 @@ mod tests {
             priority_boost: 0.0,
         }];
 
-        let scores = scorer.score_with_preset(&files, WeightPreset::Balanced).unwrap();
+        let scores = scorer
+            .score_with_preset(&files, WeightPreset::Balanced)
+            .unwrap();
         assert!(!scores.is_empty());
     }
 
@@ -476,7 +484,7 @@ mod tests {
 
         // Scores should be sorted descending
         for i in 1..scores.len() {
-            assert!(scores[i-1].1.final_score >= scores[i].1.final_score);
+            assert!(scores[i - 1].1.final_score >= scores[i].1.final_score);
         }
     }
 

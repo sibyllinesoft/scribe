@@ -144,8 +144,7 @@ impl LanguageDetector {
         }
 
         if !hints.framework_indicators.is_empty() {
-            base_result =
-                detection::apply_framework_bias(base_result, &hints.framework_indicators);
+            base_result = detection::apply_framework_bias(base_result, &hints.framework_indicators);
         }
 
         base_result
@@ -184,9 +183,7 @@ impl LanguageDetector {
             }
         }
 
-        if let Some(shebang_lang) =
-            detection::detect_by_shebang(content, &self.shebang_patterns)
-        {
+        if let Some(shebang_lang) = detection::detect_by_shebang(content, &self.shebang_patterns) {
             candidates.push((shebang_lang.clone(), 0.95));
             evidence.push(DetectionEvidence {
                 evidence_type: EvidenceType::Shebang,
@@ -228,11 +225,8 @@ impl LanguageDetector {
     fn detect_with_full_analysis(&mut self, path: &Path, content: &str) -> DetectionResult {
         let mut base_result = self.detect_with_content_analysis(path, content);
 
-        let statistical_results = analysis::statistical_analysis(
-            content,
-            &mut self.ast_parsers,
-            &self.syntax_analyzers,
-        );
+        let statistical_results =
+            analysis::statistical_analysis(content, &mut self.ast_parsers, &self.syntax_analyzers);
         for (lang, confidence) in statistical_results {
             base_result.alternatives.push((lang, confidence));
         }
@@ -651,7 +645,8 @@ if __name__ == "__main__":
 
         let mut detector = LanguageDetector::with_strategy(DetectionStrategy::Custom(custom_rules));
 
-        let result = detector.detect_language_with_content(Path::new("MyCustomFile"), "package main");
+        let result =
+            detector.detect_language_with_content(Path::new("MyCustomFile"), "package main");
         assert_eq!(result.language, Language::Go);
         assert_eq!(result.confidence, 1.0);
     }
@@ -845,11 +840,7 @@ from module import thing
 
         for (path, code, expected_lang) in test_cases {
             let result = detector.detect_language_with_content(Path::new(path), code);
-            assert_eq!(
-                result.language, expected_lang,
-                "Failed for path: {}",
-                path
-            );
+            assert_eq!(result.language, expected_lang, "Failed for path: {}", path);
         }
     }
 }

@@ -83,7 +83,13 @@ mod tests {
     use scribe_core::{FileInfo, FileType, Language, RenderDecision};
     use std::path::PathBuf;
 
-    fn create_test_file(path: &str, rel_path: &str, content: &str, tokens: usize, size: u64) -> FileInfo {
+    fn create_test_file(
+        path: &str,
+        rel_path: &str,
+        content: &str,
+        tokens: usize,
+        size: u64,
+    ) -> FileInfo {
         FileInfo {
             path: PathBuf::from(path),
             relative_path: rel_path.to_string(),
@@ -93,7 +99,9 @@ mod tests {
             is_binary: false,
             language: Language::Rust,
             modified: None,
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             decision: RenderDecision::include("test"),
             centrality_score: None,
             line_count: None,
@@ -184,7 +192,10 @@ mod tests {
 
         // Check second file
         assert_eq!(context.files[1].path, "src/lib.rs");
-        assert_eq!(context.files[1].contents, Some("pub mod utils;".to_string()));
+        assert_eq!(
+            context.files[1].contents,
+            Some("pub mod utils;".to_string())
+        );
         assert_eq!(context.files[1].token_estimate, Some(5));
     }
 

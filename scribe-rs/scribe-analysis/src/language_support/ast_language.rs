@@ -367,24 +367,52 @@ mod tests {
     #[test]
     fn test_python_extension_variants() {
         assert_eq!(AstLanguage::from_extension("py"), Some(AstLanguage::Python));
-        assert_eq!(AstLanguage::from_extension("pyi"), Some(AstLanguage::Python));
-        assert_eq!(AstLanguage::from_extension("pyw"), Some(AstLanguage::Python));
-        assert_eq!(AstLanguage::from_extension("PY"), Some(AstLanguage::Python)); // case insensitive
+        assert_eq!(
+            AstLanguage::from_extension("pyi"),
+            Some(AstLanguage::Python)
+        );
+        assert_eq!(
+            AstLanguage::from_extension("pyw"),
+            Some(AstLanguage::Python)
+        );
+        assert_eq!(AstLanguage::from_extension("PY"), Some(AstLanguage::Python));
+        // case insensitive
     }
 
     #[test]
     fn test_javascript_extension_variants() {
-        assert_eq!(AstLanguage::from_extension("js"), Some(AstLanguage::JavaScript));
-        assert_eq!(AstLanguage::from_extension("mjs"), Some(AstLanguage::JavaScript));
-        assert_eq!(AstLanguage::from_extension("cjs"), Some(AstLanguage::JavaScript));
+        assert_eq!(
+            AstLanguage::from_extension("js"),
+            Some(AstLanguage::JavaScript)
+        );
+        assert_eq!(
+            AstLanguage::from_extension("mjs"),
+            Some(AstLanguage::JavaScript)
+        );
+        assert_eq!(
+            AstLanguage::from_extension("cjs"),
+            Some(AstLanguage::JavaScript)
+        );
     }
 
     #[test]
     fn test_typescript_extension_variants() {
-        assert_eq!(AstLanguage::from_extension("ts"), Some(AstLanguage::TypeScript));
-        assert_eq!(AstLanguage::from_extension("tsx"), Some(AstLanguage::TypeScript));
-        assert_eq!(AstLanguage::from_extension("mts"), Some(AstLanguage::TypeScript));
-        assert_eq!(AstLanguage::from_extension("cts"), Some(AstLanguage::TypeScript));
+        assert_eq!(
+            AstLanguage::from_extension("ts"),
+            Some(AstLanguage::TypeScript)
+        );
+        assert_eq!(
+            AstLanguage::from_extension("tsx"),
+            Some(AstLanguage::TypeScript)
+        );
+        assert_eq!(
+            AstLanguage::from_extension("mts"),
+            Some(AstLanguage::TypeScript)
+        );
+        assert_eq!(
+            AstLanguage::from_extension("cts"),
+            Some(AstLanguage::TypeScript)
+        );
     }
 
     #[test]
@@ -432,8 +460,12 @@ mod tests {
         assert!(features.has_documentation);
         assert!(features.has_imports);
         assert_eq!(features.tier, LanguageTier::FullAst);
-        assert!(features.complexity_factors.contains(&"closures".to_string()));
-        assert!(features.complexity_factors.contains(&"promises".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"closures".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"promises".to_string()));
         assert!(features.extensions.contains(&"js".to_string()));
     }
 
@@ -445,8 +477,12 @@ mod tests {
         assert!(features.has_documentation);
         assert!(features.has_imports);
         assert_eq!(features.tier, LanguageTier::FullAst);
-        assert!(features.complexity_factors.contains(&"generic_types".to_string()));
-        assert!(features.complexity_factors.contains(&"type_guards".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"generic_types".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"type_guards".to_string()));
     }
 
     #[test]
@@ -457,8 +493,12 @@ mod tests {
         assert!(features.has_documentation);
         assert!(features.has_imports);
         assert_eq!(features.tier, LanguageTier::FullAst);
-        assert!(features.complexity_factors.contains(&"lifetimes".to_string()));
-        assert!(features.complexity_factors.contains(&"borrowing".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"lifetimes".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"borrowing".to_string()));
     }
 
     #[test]
@@ -469,8 +509,12 @@ mod tests {
         assert!(features.has_documentation);
         assert!(features.has_imports);
         assert_eq!(features.tier, LanguageTier::FullAst);
-        assert!(features.complexity_factors.contains(&"goroutines".to_string()));
-        assert!(features.complexity_factors.contains(&"channels".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"goroutines".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"channels".to_string()));
     }
 
     #[test]
@@ -481,8 +525,12 @@ mod tests {
         assert!(features.has_documentation);
         assert!(features.has_imports);
         assert_eq!(features.tier, LanguageTier::FullAst);
-        assert!(features.complexity_factors.contains(&"inheritance".to_string()));
-        assert!(features.complexity_factors.contains(&"generics".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"inheritance".to_string()));
+        assert!(features
+            .complexity_factors
+            .contains(&"generics".to_string()));
     }
 
     #[test]

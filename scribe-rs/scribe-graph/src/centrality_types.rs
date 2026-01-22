@@ -376,8 +376,14 @@ mod tests {
         let config = CentralityConfig::default();
         let cloned = config.clone();
 
-        assert_eq!(config.analyze_graph_structure, cloned.analyze_graph_structure);
-        assert_eq!(config.integration.centrality_weight, cloned.integration.centrality_weight);
+        assert_eq!(
+            config.analyze_graph_structure,
+            cloned.analyze_graph_structure
+        );
+        assert_eq!(
+            config.integration.centrality_weight,
+            cloned.integration.centrality_weight
+        );
     }
 
     #[test]
@@ -386,7 +392,10 @@ mod tests {
         let cloned = config.clone();
 
         assert_eq!(config.max_search_depth, cloned.max_search_depth);
-        assert_eq!(config.resolve_relative_imports, cloned.resolve_relative_imports);
+        assert_eq!(
+            config.resolve_relative_imports,
+            cloned.resolve_relative_imports
+        );
     }
 
     #[test]
@@ -483,7 +492,10 @@ mod tests {
         let cloned = results.clone();
 
         assert_eq!(results.pagerank_scores.len(), cloned.pagerank_scores.len());
-        assert_eq!(results.import_stats.files_processed, cloned.import_stats.files_processed);
+        assert_eq!(
+            results.import_stats.files_processed,
+            cloned.import_stats.files_processed
+        );
     }
 
     #[test]

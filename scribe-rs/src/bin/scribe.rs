@@ -377,7 +377,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if matches.get_flag("covering_set_diff") {
         return run_covering_set_diff_mode(
             &repo_dir,
-            matches.get_one::<String>("diff_against").map(|s| s.as_str()),
+            matches
+                .get_one::<String>("diff_against")
+                .map(|s| s.as_str()),
             matches.get_flag("include_dependents"),
             matches.get_one::<usize>("max_depth").copied(),
             matches.get_one::<usize>("max_files_covering").copied(),
@@ -388,7 +390,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Check for covering set mode
     if let Some(entity_name) = matches.get_one::<String>("covering_set") {
-        let granularity = matches.get_one::<String>("granularity").map(|s| s.as_str()).unwrap_or("file");
+        let granularity = matches
+            .get_one::<String>("granularity")
+            .map(|s| s.as_str())
+            .unwrap_or("file");
         let stdout_mode = matches.get_flag("stdout");
         return run_covering_set_mode(
             &repo_dir,
@@ -551,7 +556,12 @@ async fn run_standard_analysis(
                 metrics.files_selected, metrics.total_tokens_estimated
             );
         } else {
-            print_selection_summary(&metrics, eligible_file_count, token_target, unlimited_budget);
+            print_selection_summary(
+                &metrics,
+                eligible_file_count,
+                token_target,
+                unlimited_budget,
+            );
         }
     }
 

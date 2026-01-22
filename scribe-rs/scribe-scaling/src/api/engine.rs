@@ -13,14 +13,16 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::api::adaptive::AdaptiveConfig;
-use crate::api::caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
+use crate::api::caching::{
+    compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache,
+};
 use crate::core::error::{ScalingError, ScalingResult};
 use crate::core::signatures::SignatureConfig;
+use crate::core::utils::classify_file_type_string;
 use crate::io::memory::MemoryConfig;
 use crate::io::metrics::{BenchmarkResult, ScalingMetrics};
 use crate::io::parallel::ParallelConfig;
 use crate::io::streaming::{FileMetadata, StreamingConfig};
-use crate::core::utils::classify_file_type_string;
 use scribe_core::file;
 
 /// Complete scaling configuration combining all subsystems
@@ -537,7 +539,10 @@ mod tests {
         // Medium budget should use integrated
         let medium = ScalingConfig::with_token_budget(10000);
         assert_eq!(medium.token_budget, Some(10000));
-        assert_eq!(medium.selection_algorithm, Some("v5_integrated".to_string()));
+        assert_eq!(
+            medium.selection_algorithm,
+            Some("v5_integrated".to_string())
+        );
 
         // Large budget should also use integrated
         let large = ScalingConfig::with_token_budget(20000);
@@ -570,7 +575,10 @@ mod tests {
         assert!(config.parallel.enable_work_stealing);
         assert_eq!(config.token_budget, Some(15000));
         assert!(config.enable_intelligent_selection);
-        assert_eq!(config.selection_algorithm, Some("v5_integrated".to_string()));
+        assert_eq!(
+            config.selection_algorithm,
+            Some("v5_integrated".to_string())
+        );
     }
 
     #[test]
@@ -578,7 +586,10 @@ mod tests {
         let config = ScalingConfig::large_repository();
         let cloned = config.clone();
         assert_eq!(config.token_budget, cloned.token_budget);
-        assert_eq!(config.enable_intelligent_selection, cloned.enable_intelligent_selection);
+        assert_eq!(
+            config.enable_intelligent_selection,
+            cloned.enable_intelligent_selection
+        );
     }
 
     #[test]
@@ -632,7 +643,10 @@ mod tests {
         assert_eq!(classify_file_type(Path::new("test_spec.rb")), "Test");
         assert_eq!(classify_file_type(Path::new("tests/unit.py")), "Test");
         assert_eq!(classify_file_type(Path::new("app.test.js")), "Test");
-        assert_eq!(classify_file_type(Path::new("config.yaml")), "Configuration");
+        assert_eq!(
+            classify_file_type(Path::new("config.yaml")),
+            "Configuration"
+        );
         assert_eq!(classify_file_type(Path::new("Cargo.toml")), "Configuration");
     }
 

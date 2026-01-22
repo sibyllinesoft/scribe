@@ -357,8 +357,7 @@ mod tests {
     fn test_pagerank_analysis_compute_centrality() {
         let analysis = PageRankAnalysis::new().unwrap();
         let scan_results = vec![
-            TestScanResult::new("src/main.rs", "src/main.rs")
-                .with_imports(vec!["lib"]),
+            TestScanResult::new("src/main.rs", "src/main.rs").with_imports(vec!["lib"]),
             TestScanResult::new("src/lib.rs", "src/lib.rs"),
             TestScanResult::new("src/utils.rs", "src/utils.rs"),
         ];
@@ -367,7 +366,10 @@ mod tests {
         assert!(result.is_ok());
         let centrality = result.unwrap();
         // Either we have scores or the graph analysis was performed
-        assert!(!centrality.pagerank_scores.is_empty() || centrality.graph_analysis.basic_stats.total_nodes >= 0);
+        assert!(
+            !centrality.pagerank_scores.is_empty()
+                || centrality.graph_analysis.basic_stats.total_nodes >= 0
+        );
     }
 
     #[test]
@@ -415,8 +417,7 @@ mod tests {
     #[test]
     fn test_utils_get_top_important_files() {
         let scan_results = vec![
-            TestScanResult::new("main.rs", "main.rs")
-                .with_imports(vec!["lib", "utils"]),
+            TestScanResult::new("main.rs", "main.rs").with_imports(vec!["lib", "utils"]),
             TestScanResult::new("lib.rs", "lib.rs"),
             TestScanResult::new("utils.rs", "utils.rs"),
         ];
@@ -490,8 +491,8 @@ mod tests {
 
     #[test]
     fn test_test_scan_result_with_imports() {
-        let result = TestScanResult::new("main.rs", "main.rs")
-            .with_imports(vec!["lib", "utils", "config"]);
+        let result =
+            TestScanResult::new("main.rs", "main.rs").with_imports(vec!["lib", "utils", "config"]);
 
         let imports = result.imports();
         assert!(imports.is_some());

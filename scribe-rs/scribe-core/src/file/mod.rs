@@ -344,7 +344,9 @@ impl FileInfo {
     #[inline]
     fn is_textual_application_mime(mime: &str) -> bool {
         TEXTUAL_APPLICATION_MIME_TYPES.contains(&mime)
-            || TEXTUAL_APPLICATION_KEYWORDS.iter().any(|kw| mime.contains(kw))
+            || TEXTUAL_APPLICATION_KEYWORDS
+                .iter()
+                .any(|kw| mime.contains(kw))
     }
 
     #[inline]
@@ -535,11 +537,16 @@ fn is_language_test_file(ext: &str, file_name: &str, segments: &[&str]) -> bool 
         "rs" => file_name.ends_with("_test.rs") || segments.iter().any(|seg| *seg == "tests"),
         "py" => file_name.starts_with("test_") || file_name.ends_with("_test.py"),
         "go" => file_name.ends_with("_test.go"),
-        "java" | "kt" => matches_any_suffix(file_name, &["test.java", "tests.java", "test.kt", "tests.kt"]),
+        "java" | "kt" => matches_any_suffix(
+            file_name,
+            &["test.java", "tests.java", "test.kt", "tests.kt"],
+        ),
         "php" => file_name.ends_with("test.php"),
         "rb" => file_name.ends_with("_spec.rb") || file_name.ends_with("_test.rb"),
         "js" | "jsx" | "ts" | "tsx" => {
-            file_name.contains(".test.") || file_name.contains(".spec.") || file_name.ends_with("_test.ts")
+            file_name.contains(".test.")
+                || file_name.contains(".spec.")
+                || file_name.ends_with("_test.ts")
         }
         _ => false,
     }
@@ -863,24 +870,54 @@ mod tests {
     fn test_is_entrypoint_path_python() {
         assert!(is_entrypoint_path(Path::new("main.py"), &Language::Python));
         assert!(is_entrypoint_path(Path::new("app.py"), &Language::Python));
-        assert!(is_entrypoint_path(Path::new("__init__.py"), &Language::Python));
-        assert!(is_entrypoint_path(Path::new("src/__main__.py"), &Language::Python));
-        assert!(is_entrypoint_path(Path::new("project/manage.py"), &Language::Python));
-        assert!(!is_entrypoint_path(Path::new("utils.py"), &Language::Python));
+        assert!(is_entrypoint_path(
+            Path::new("__init__.py"),
+            &Language::Python
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("src/__main__.py"),
+            &Language::Python
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("project/manage.py"),
+            &Language::Python
+        ));
+        assert!(!is_entrypoint_path(
+            Path::new("utils.py"),
+            &Language::Python
+        ));
     }
 
     #[test]
     fn test_is_entrypoint_path_javascript() {
-        assert!(is_entrypoint_path(Path::new("index.js"), &Language::JavaScript));
-        assert!(is_entrypoint_path(Path::new("src/app.js"), &Language::JavaScript));
-        assert!(is_entrypoint_path(Path::new("src/server.js"), &Language::JavaScript));
-        assert!(!is_entrypoint_path(Path::new("utils.js"), &Language::JavaScript));
+        assert!(is_entrypoint_path(
+            Path::new("index.js"),
+            &Language::JavaScript
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("src/app.js"),
+            &Language::JavaScript
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("src/server.js"),
+            &Language::JavaScript
+        ));
+        assert!(!is_entrypoint_path(
+            Path::new("utils.js"),
+            &Language::JavaScript
+        ));
     }
 
     #[test]
     fn test_is_entrypoint_path_typescript() {
-        assert!(is_entrypoint_path(Path::new("index.ts"), &Language::TypeScript));
-        assert!(!is_entrypoint_path(Path::new("types.ts"), &Language::TypeScript));
+        assert!(is_entrypoint_path(
+            Path::new("index.ts"),
+            &Language::TypeScript
+        ));
+        assert!(!is_entrypoint_path(
+            Path::new("types.ts"),
+            &Language::TypeScript
+        ));
     }
 
     #[test]
@@ -891,20 +928,50 @@ mod tests {
 
     #[test]
     fn test_is_entrypoint_path_unknown() {
-        assert!(is_entrypoint_path(Path::new("main.xyz"), &Language::Unknown));
-        assert!(is_entrypoint_path(Path::new("index.abc"), &Language::Unknown));
-        assert!(!is_entrypoint_path(Path::new("helper.xyz"), &Language::Unknown));
+        assert!(is_entrypoint_path(
+            Path::new("main.xyz"),
+            &Language::Unknown
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("index.abc"),
+            &Language::Unknown
+        ));
+        assert!(!is_entrypoint_path(
+            Path::new("helper.xyz"),
+            &Language::Unknown
+        ));
     }
 
     #[test]
     fn test_detect_language_from_path() {
-        assert_eq!(detect_language_from_path(Path::new("test.rs")), Language::Rust);
-        assert_eq!(detect_language_from_path(Path::new("test.py")), Language::Python);
-        assert_eq!(detect_language_from_path(Path::new("test.js")), Language::JavaScript);
-        assert_eq!(detect_language_from_path(Path::new("test.ts")), Language::TypeScript);
-        assert_eq!(detect_language_from_path(Path::new("test.go")), Language::Go);
-        assert_eq!(detect_language_from_path(Path::new("test.java")), Language::Java);
-        assert_eq!(detect_language_from_path(Path::new("test")), Language::Unknown);
+        assert_eq!(
+            detect_language_from_path(Path::new("test.rs")),
+            Language::Rust
+        );
+        assert_eq!(
+            detect_language_from_path(Path::new("test.py")),
+            Language::Python
+        );
+        assert_eq!(
+            detect_language_from_path(Path::new("test.js")),
+            Language::JavaScript
+        );
+        assert_eq!(
+            detect_language_from_path(Path::new("test.ts")),
+            Language::TypeScript
+        );
+        assert_eq!(
+            detect_language_from_path(Path::new("test.go")),
+            Language::Go
+        );
+        assert_eq!(
+            detect_language_from_path(Path::new("test.java")),
+            Language::Java
+        );
+        assert_eq!(
+            detect_language_from_path(Path::new("test")),
+            Language::Unknown
+        );
     }
 
     #[test]
@@ -924,7 +991,12 @@ mod tests {
         let path = file.path().with_extension("rs");
         std::fs::rename(file.path(), &path).unwrap();
 
-        let info = FileInfo::new(&path, "test.rs".to_string(), RenderDecision::include("test")).unwrap();
+        let info = FileInfo::new(
+            &path,
+            "test.rs".to_string(),
+            RenderDecision::include("test"),
+        )
+        .unwrap();
 
         assert!(info.file_name().is_some());
         assert!(info.file_stem().is_some());
@@ -946,15 +1018,30 @@ mod tests {
     fn test_file_type_classification_config() {
         let json_lang = Language::JSON;
         let file_type = FileInfo::classify_file_type("config.json", &json_lang, "json");
-        assert!(matches!(file_type, FileType::Configuration { format: ConfigurationFormat::Json }));
+        assert!(matches!(
+            file_type,
+            FileType::Configuration {
+                format: ConfigurationFormat::Json
+            }
+        ));
 
         let yaml_lang = Language::YAML;
         let file_type = FileInfo::classify_file_type("config.yaml", &yaml_lang, "yaml");
-        assert!(matches!(file_type, FileType::Configuration { format: ConfigurationFormat::Yaml }));
+        assert!(matches!(
+            file_type,
+            FileType::Configuration {
+                format: ConfigurationFormat::Yaml
+            }
+        ));
 
         let toml_lang = Language::TOML;
         let file_type = FileInfo::classify_file_type("Cargo.toml", &toml_lang, "toml");
-        assert!(matches!(file_type, FileType::Configuration { format: ConfigurationFormat::Toml }));
+        assert!(matches!(
+            file_type,
+            FileType::Configuration {
+                format: ConfigurationFormat::Toml
+            }
+        ));
     }
 
     #[test]
@@ -991,10 +1078,16 @@ mod tests {
     fn test_is_textual_mime() {
         // Private function but testing via detect_binary_from_bytes
         let json_content = br#"{"key": "value"}"#;
-        assert!(!FileInfo::detect_binary_from_bytes(json_content, Some("json")));
+        assert!(!FileInfo::detect_binary_from_bytes(
+            json_content,
+            Some("json")
+        ));
 
         let xml_content = br#"<root><item>value</item></root>"#;
-        assert!(!FileInfo::detect_binary_from_bytes(xml_content, Some("xml")));
+        assert!(!FileInfo::detect_binary_from_bytes(
+            xml_content,
+            Some("xml")
+        ));
     }
 
     #[test]
@@ -1061,7 +1154,12 @@ mod tests {
         let path = file.path().with_extension("txt");
         std::fs::rename(file.path(), &path).unwrap();
 
-        let info = FileInfo::new(&path, "test.txt".to_string(), RenderDecision::include("test")).unwrap();
+        let info = FileInfo::new(
+            &path,
+            "test.txt".to_string(),
+            RenderDecision::include("test"),
+        )
+        .unwrap();
         let cloned = info.clone();
 
         assert_eq!(info.relative_path, cloned.relative_path);
@@ -1080,7 +1178,12 @@ mod tests {
         let path = file.path().with_extension("txt");
         std::fs::rename(file.path(), &path).unwrap();
 
-        let info = FileInfo::new(&path, "test.txt".to_string(), RenderDecision::include("test")).unwrap();
+        let info = FileInfo::new(
+            &path,
+            "test.txt".to_string(),
+            RenderDecision::include("test"),
+        )
+        .unwrap();
         let debug_str = format!("{:?}", info);
         assert!(debug_str.contains("FileInfo"));
 
@@ -1119,7 +1222,12 @@ mod tests {
         let path = file.path().with_extension("rs");
         std::fs::rename(file.path(), &path).unwrap();
 
-        let mut info = FileInfo::new(&path, "test.rs".to_string(), RenderDecision::include("test")).unwrap();
+        let mut info = FileInfo::new(
+            &path,
+            "test.rs".to_string(),
+            RenderDecision::include("test"),
+        )
+        .unwrap();
 
         // Content should be None before loading
         assert!(info.content.is_none());
@@ -1151,7 +1259,12 @@ mod tests {
         let path = file.path().with_extension("bin");
         std::fs::rename(file.path(), &path).unwrap();
 
-        let mut info = FileInfo::new(&path, "test.bin".to_string(), RenderDecision::include("test")).unwrap();
+        let mut info = FileInfo::new(
+            &path,
+            "test.bin".to_string(),
+            RenderDecision::include("test"),
+        )
+        .unwrap();
 
         // Binary files should skip content loading
         let result = info.load_content();
@@ -1171,7 +1284,12 @@ mod tests {
         let path = file.path().with_extension("rs");
         std::fs::rename(file.path(), &path).unwrap();
 
-        let mut info = FileInfo::new(&path, "test.rs".to_string(), RenderDecision::exclude("excluded")).unwrap();
+        let mut info = FileInfo::new(
+            &path,
+            "test.rs".to_string(),
+            RenderDecision::exclude("excluded"),
+        )
+        .unwrap();
 
         // Excluded files should skip content loading
         let result = info.load_content();
@@ -1186,11 +1304,13 @@ mod tests {
         let rust_lang = Language::Rust;
 
         // Test non-binary file
-        let file_type = FileInfo::classify_file_type_with_binary("src/main.rs", &rust_lang, "rs", false);
+        let file_type =
+            FileInfo::classify_file_type_with_binary("src/main.rs", &rust_lang, "rs", false);
         assert!(matches!(file_type, FileType::Source { .. }));
 
         // Test binary file - should return Binary regardless of extension
-        let file_type = FileInfo::classify_file_type_with_binary("src/main.rs", &rust_lang, "rs", true);
+        let file_type =
+            FileInfo::classify_file_type_with_binary("src/main.rs", &rust_lang, "rs", true);
         assert!(matches!(file_type, FileType::Binary));
     }
 
@@ -1199,7 +1319,12 @@ mod tests {
         // Test XML configuration
         let xml_lang = Language::XML;
         let file_type = FileInfo::classify_file_type("config.xml", &xml_lang, "xml");
-        assert!(matches!(file_type, FileType::Configuration { format: ConfigurationFormat::Xml }));
+        assert!(matches!(
+            file_type,
+            FileType::Configuration {
+                format: ConfigurationFormat::Xml
+            }
+        ));
 
         // Test dotenv configuration - note that .env files don't have a Language variant
         // so we just test the extension matching
@@ -1222,19 +1347,37 @@ mod tests {
     #[test]
     fn test_is_entrypoint_path_java() {
         // Test Java entrypoint - exercises line 597
-        assert!(is_entrypoint_path(Path::new("src/main/java/Main.java"), &Language::Java));
+        assert!(is_entrypoint_path(
+            Path::new("src/main/java/Main.java"),
+            &Language::Java
+        ));
         assert!(is_entrypoint_path(Path::new("Main.java"), &Language::Java));
-        assert!(!is_entrypoint_path(Path::new("Helper.java"), &Language::Java));
+        assert!(!is_entrypoint_path(
+            Path::new("Helper.java"),
+            &Language::Java
+        ));
     }
 
     #[test]
     fn test_entrypoint_patterns_js_ts() {
         // Test JavaScript entrypoint patterns - exercises line 607
-        assert!(is_entrypoint_path(Path::new("src/app.js"), &Language::JavaScript));
-        assert!(is_entrypoint_path(Path::new("src/server.js"), &Language::JavaScript));
+        assert!(is_entrypoint_path(
+            Path::new("src/app.js"),
+            &Language::JavaScript
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("src/server.js"),
+            &Language::JavaScript
+        ));
         // TypeScript shares patterns with JavaScript
-        assert!(is_entrypoint_path(Path::new("index.ts"), &Language::TypeScript));
-        assert!(is_entrypoint_path(Path::new("server/app.js"), &Language::JavaScript));
+        assert!(is_entrypoint_path(
+            Path::new("index.ts"),
+            &Language::TypeScript
+        ));
+        assert!(is_entrypoint_path(
+            Path::new("server/app.js"),
+            &Language::JavaScript
+        ));
     }
 
     #[test]

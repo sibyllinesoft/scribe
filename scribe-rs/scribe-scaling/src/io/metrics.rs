@@ -216,7 +216,7 @@ mod tests {
     fn test_performance_tracker_record_memory() {
         let mut tracker = PerformanceTracker::new();
         tracker.record_memory_peak(1000);
-        tracker.record_memory_peak(500);  // Should not update
+        tracker.record_memory_peak(500); // Should not update
         tracker.record_memory_peak(2000); // Should update
         let metrics = tracker.finish();
         assert_eq!(metrics.memory_peak, 2000);

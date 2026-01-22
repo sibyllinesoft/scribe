@@ -380,7 +380,10 @@ async fn try_scaling_analysis(
     let mut scaling_engine = match create_scaling_engine(path).await {
         Ok(engine) => engine,
         Err(e) => {
-            debug_log(&format!("Failed to create scaling engine: {}, falling back", e));
+            debug_log(&format!(
+                "Failed to create scaling engine: {}, falling back",
+                e
+            ));
             return None;
         }
     };
@@ -396,7 +399,10 @@ async fn try_scaling_analysis(
             Some(convert_scaling_result_to_analysis(result, optimized_config.clone(), path).await)
         }
         Err(e) => {
-            debug_log(&format!("Scaling engine processing failed: {}, falling back", e));
+            debug_log(&format!(
+                "Scaling engine processing failed: {}, falling back",
+                e
+            ));
             None
         }
     }
@@ -436,7 +442,14 @@ async fn fallback_scan<P: AsRef<std::path::Path>>(
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("🎯 Applying token budget: {} tokens", token_budget);
         }
-        files = apply_token_budget_selection(files, token_budget, config, None, &SelectionConfig::default()).await?;
+        files = apply_token_budget_selection(
+            files,
+            token_budget,
+            config,
+            None,
+            &SelectionConfig::default(),
+        )
+        .await?;
         if std::env::var("SCRIBE_DEBUG").is_ok() {
             eprintln!("✅ Token budget applied: {} files selected", files.len());
         }
@@ -639,7 +652,8 @@ async fn convert_scaling_result_to_analysis(
             .and_then(|ext| ext.to_str())
             .unwrap_or("");
 
-        let language = analysis_helpers::language_from_identifier(&file_meta.language, &absolute_path);
+        let language =
+            analysis_helpers::language_from_identifier(&file_meta.language, &absolute_path);
         let file_type = FileInfo::classify_file_type(&relative_path, &language, extension);
 
         files.push(FileInfo {

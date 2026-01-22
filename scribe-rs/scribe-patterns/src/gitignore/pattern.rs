@@ -177,7 +177,9 @@ impl GitignorePattern {
     fn matches_suffix_anywhere(&self, suffix: &str, path: &str, case_sensitive: bool) -> bool {
         if suffix.contains('*') {
             let path_parts: Vec<&str> = path.split('/').collect();
-            path_parts.iter().any(|part| self.wildcard_match(suffix, part, case_sensitive))
+            path_parts
+                .iter()
+                .any(|part| self.wildcard_match(suffix, part, case_sensitive))
         } else {
             path.ends_with(suffix) || path.contains(&format!("/{}", suffix))
         }
@@ -215,7 +217,9 @@ impl GitignorePattern {
             path == pattern || path.ends_with(&component_pattern)
         } else {
             path.to_ascii_lowercase() == pattern.to_ascii_lowercase()
-                || path.to_ascii_lowercase().ends_with(&component_pattern.to_ascii_lowercase())
+                || path
+                    .to_ascii_lowercase()
+                    .ends_with(&component_pattern.to_ascii_lowercase())
         }
     }
 
@@ -270,10 +274,15 @@ impl GitignorePattern {
 
         match pattern[p] {
             '*' => self.match_star_wildcard(pattern, text, p, t, case_sensitive),
-            '?' => t < text.len() && self.wildcard_match_recursive(pattern, text, p + 1, t + 1, case_sensitive),
-            c => t < text.len()
-                && Self::chars_match(c, text[t], case_sensitive)
-                && self.wildcard_match_recursive(pattern, text, p + 1, t + 1, case_sensitive),
+            '?' => {
+                t < text.len()
+                    && self.wildcard_match_recursive(pattern, text, p + 1, t + 1, case_sensitive)
+            }
+            c => {
+                t < text.len()
+                    && Self::chars_match(c, text[t], case_sensitive)
+                    && self.wildcard_match_recursive(pattern, text, p + 1, t + 1, case_sensitive)
+            }
         }
     }
 
@@ -544,8 +553,14 @@ mod tests {
     fn test_pattern_matches_recursive_with_prefix_and_suffix() {
         let pattern = GitignorePattern::new("src/**/test*.rs").unwrap();
         // This tests the case where prefix and suffix are both non-empty
-        assert!(pattern.matches("src/test.rs", false, true) || !pattern.matches("src/test.rs", false, true));
-        assert!(pattern.matches("src/module/test_utils.rs", false, true) || !pattern.matches("src/module/test_utils.rs", false, true));
+        assert!(
+            pattern.matches("src/test.rs", false, true)
+                || !pattern.matches("src/test.rs", false, true)
+        );
+        assert!(
+            pattern.matches("src/module/test_utils.rs", false, true)
+                || !pattern.matches("src/module/test_utils.rs", false, true)
+        );
     }
 
     #[test]

@@ -542,7 +542,9 @@ mod tests {
         // Valid gitignore patterns
         assert!(validator.validate_gitignore_pattern("# comment").is_ok());
         assert!(validator.validate_gitignore_pattern("*.log").is_ok());
-        assert!(validator.validate_gitignore_pattern("!important.log").is_ok());
+        assert!(validator
+            .validate_gitignore_pattern("!important.log")
+            .is_ok());
         assert!(validator.validate_gitignore_pattern("build/").is_ok());
 
         // Invalid gitignore patterns
@@ -582,9 +584,7 @@ mod tests {
         let validator = create_validator();
 
         // Low risk pattern
-        let risk = validator
-            .validate_pattern_performance("*.rs")
-            .unwrap();
+        let risk = validator.validate_pattern_performance("*.rs").unwrap();
         assert_eq!(risk.level, PerformanceRiskLevel::Low);
 
         // Medium risk pattern (4 recursive wildcards = risk score 4)
@@ -797,7 +797,9 @@ mod tests {
         let validator = create_validator();
 
         // Known dangerous pattern
-        assert!(validator.validate_glob_pattern("**/*/**/*/**/*/**/*/**").is_err());
+        assert!(validator
+            .validate_glob_pattern("**/*/**/*/**/*/**/*/**")
+            .is_err());
     }
 
     #[test]
@@ -823,7 +825,9 @@ mod tests {
         let validator = create_validator();
 
         // Negation patterns should work
-        assert!(validator.validate_gitignore_pattern("!important.log").is_ok());
+        assert!(validator
+            .validate_gitignore_pattern("!important.log")
+            .is_ok());
     }
 
     #[test]

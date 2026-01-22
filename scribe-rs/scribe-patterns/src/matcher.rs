@@ -704,9 +704,15 @@ mod tests {
 
     #[test]
     fn test_is_excluded_hidden_file() {
-        assert!(PatternMatcher::is_excluded_hidden_file(Path::new(".hidden")));
-        assert!(PatternMatcher::is_excluded_hidden_file(Path::new(".gitignore")));
-        assert!(!PatternMatcher::is_excluded_hidden_file(Path::new("normal.txt")));
+        assert!(PatternMatcher::is_excluded_hidden_file(Path::new(
+            ".hidden"
+        )));
+        assert!(PatternMatcher::is_excluded_hidden_file(Path::new(
+            ".gitignore"
+        )));
+        assert!(!PatternMatcher::is_excluded_hidden_file(Path::new(
+            "normal.txt"
+        )));
         assert!(!PatternMatcher::is_excluded_hidden_file(Path::new(".."))); // Parent dir
         assert!(!PatternMatcher::is_excluded_hidden_file(Path::new("."))); // Current dir
     }

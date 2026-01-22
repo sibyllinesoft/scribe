@@ -925,7 +925,10 @@ mod tests {
         assert_eq!(reset_metrics.tasks_completed, 0);
         assert_eq!(reset_metrics.tasks_queued, 0);
         // Current concurrency should still be set
-        assert_eq!(reset_metrics.current_concurrency, config.initial_concurrency);
+        assert_eq!(
+            reset_metrics.current_concurrency,
+            config.initial_concurrency
+        );
     }
 
     #[tokio::test]

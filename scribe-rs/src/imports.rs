@@ -44,7 +44,10 @@ pub fn extract_rust_imports(content: &str, imports: &mut HashSet<String>) {
                 imports.insert(module_path.to_string());
             }
         } else if trimmed.starts_with("mod ") {
-            let module = trimmed.trim_start_matches("mod ").trim_end_matches(';').trim();
+            let module = trimmed
+                .trim_start_matches("mod ")
+                .trim_end_matches(';')
+                .trim();
             if !module.is_empty() {
                 imports.insert(module.to_string());
             }

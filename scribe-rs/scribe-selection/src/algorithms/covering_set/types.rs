@@ -307,7 +307,10 @@ mod tests {
         let options = CoveringSetOptions::default();
         let json = serde_json::to_string(&options).unwrap();
         let deserialized: CoveringSetOptions = serde_json::from_str(&json).unwrap();
-        assert_eq!(options.include_dependencies, deserialized.include_dependencies);
+        assert_eq!(
+            options.include_dependencies,
+            deserialized.include_dependencies
+        );
     }
 
     #[test]
@@ -350,9 +353,18 @@ mod tests {
 
     #[test]
     fn test_line_range_equality() {
-        let range1 = LineRange { start_line: 1, end_line: 10 };
-        let range2 = LineRange { start_line: 1, end_line: 10 };
-        let range3 = LineRange { start_line: 5, end_line: 15 };
+        let range1 = LineRange {
+            start_line: 1,
+            end_line: 10,
+        };
+        let range2 = LineRange {
+            start_line: 1,
+            end_line: 10,
+        };
+        let range3 = LineRange {
+            start_line: 5,
+            end_line: 15,
+        };
 
         assert_eq!(range1, range2);
         assert_ne!(range1, range3);
@@ -360,7 +372,10 @@ mod tests {
 
     #[test]
     fn test_line_range_clone() {
-        let range = LineRange { start_line: 100, end_line: 200 };
+        let range = LineRange {
+            start_line: 100,
+            end_line: 200,
+        };
         let cloned = range.clone();
         assert_eq!(range.start_line, cloned.start_line);
         assert_eq!(range.end_line, cloned.end_line);
@@ -368,7 +383,10 @@ mod tests {
 
     #[test]
     fn test_line_range_serialize() {
-        let range = LineRange { start_line: 42, end_line: 84 };
+        let range = LineRange {
+            start_line: 42,
+            end_line: 84,
+        };
         let json = serde_json::to_string(&range).unwrap();
         assert!(json.contains("42"));
         assert!(json.contains("84"));
@@ -383,7 +401,10 @@ mod tests {
             reason: InclusionReason::TargetFile,
             distance: 0,
             importance: Some(0.95),
-            line_ranges: vec![LineRange { start_line: 1, end_line: 100 }],
+            line_ranges: vec![LineRange {
+                start_line: 1,
+                end_line: 100,
+            }],
         };
 
         assert_eq!(file.path, "src/main.rs");
@@ -487,15 +508,13 @@ mod tests {
     fn test_covering_set_result_creation() {
         let result = CoveringSetResult {
             target_entity: None,
-            files: vec![
-                CoveringSetFile {
-                    path: "main.rs".to_string(),
-                    reason: InclusionReason::TargetFile,
-                    distance: 0,
-                    importance: Some(1.0),
-                    line_ranges: vec![],
-                }
-            ],
+            files: vec![CoveringSetFile {
+                path: "main.rs".to_string(),
+                reason: InclusionReason::TargetFile,
+                distance: 0,
+                importance: Some(1.0),
+                line_ranges: vec![],
+            }],
             entities: vec![],
             statistics: CoveringSetStatistics {
                 files_examined: 10,

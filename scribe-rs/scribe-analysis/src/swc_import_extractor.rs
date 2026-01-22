@@ -51,12 +51,7 @@ pub fn extract_imports(source: &str, is_typescript: bool) -> Vec<SimpleImport> {
         })
     };
 
-    let lexer = Lexer::new(
-        syntax,
-        EsVersion::latest(),
-        StringInput::from(&*file),
-        None,
-    );
+    let lexer = Lexer::new(syntax, EsVersion::latest(), StringInput::from(&*file), None);
 
     let mut parser = Parser::new_from(lexer);
 
@@ -162,11 +157,7 @@ fn calculate_line_number(source: &str, byte_offset: usize) -> usize {
     let offset = byte_offset.saturating_sub(1);
     let offset = offset.min(source.len());
 
-    source[..offset]
-        .chars()
-        .filter(|&c| c == '\n')
-        .count()
-        + 1
+    source[..offset].chars().filter(|&c| c == '\n').count() + 1
 }
 
 #[cfg(test)]

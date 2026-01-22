@@ -736,15 +736,13 @@ mod tests {
 
     #[test]
     fn test_file_chunk_clone() {
-        let files = vec![
-            FileMetadata {
-                path: PathBuf::from("test.rs"),
-                size: 50,
-                modified: SystemTime::now(),
-                language: "Rust".to_string(),
-                file_type: "Source".to_string(),
-            },
-        ];
+        let files = vec![FileMetadata {
+            path: PathBuf::from("test.rs"),
+            size: 50,
+            modified: SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        }];
 
         let chunk = FileChunk::new(files, 2, 10);
         let cloned = chunk.clone();
@@ -906,14 +904,12 @@ mod tests {
 
         // Create test files - one large, one small
         fs::create_dir_all(repo_path.join("src")).unwrap();
-        fs::write(
-            repo_path.join("src").join("small.rs"),
-            "fn main() {}",
-        ).unwrap();
+        fs::write(repo_path.join("src").join("small.rs"), "fn main() {}").unwrap();
         fs::write(
             repo_path.join("src").join("large.rs"),
             "x".repeat(10000), // Large file
-        ).unwrap();
+        )
+        .unwrap();
 
         let selector = StreamingSelector::with_defaults();
 
@@ -946,7 +942,8 @@ mod tests {
             fs::write(
                 repo_path.join("src").join(format!("file_{:02}.rs", i)),
                 content,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let selector = StreamingSelector::with_defaults();
@@ -986,8 +983,16 @@ mod tests {
         };
         let m2 = m1.clone();
 
-        let s1 = ScoredFile { metadata: m1, score: 1.0, tokens: 10 };
-        let s2 = ScoredFile { metadata: m2, score: 1.0, tokens: 10 };
+        let s1 = ScoredFile {
+            metadata: m1,
+            score: 1.0,
+            tokens: 10,
+        };
+        let s2 = ScoredFile {
+            metadata: m2,
+            score: 1.0,
+            tokens: 10,
+        };
 
         // Test Eq trait
         assert!(s1 == s2);

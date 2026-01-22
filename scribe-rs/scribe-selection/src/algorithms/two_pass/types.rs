@@ -383,7 +383,10 @@ mod tests {
         assert!(json.contains("1000"));
 
         let deserialized: SelectionMetrics = serde_json::from_str(&json).unwrap();
-        assert_eq!(metrics.speculation_time_ms, deserialized.speculation_time_ms);
+        assert_eq!(
+            metrics.speculation_time_ms,
+            deserialized.speculation_time_ms
+        );
     }
 
     #[test]

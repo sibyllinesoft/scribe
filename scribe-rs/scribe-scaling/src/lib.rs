@@ -47,7 +47,9 @@ pub use core::signatures::{SignatureConfig, SignatureLevel};
 
 // Re-export API types
 pub use api::adaptive::AdaptiveConfig;
-pub use api::caching::{compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache};
+pub use api::caching::{
+    compute_config_hash, compute_repository_hash, CacheConfig, ProcessingCache,
+};
 pub use api::engine::{ProcessingResult, ScalingConfig, ScalingEngine};
 pub use api::profiling::{RepositoryProfile, RepositoryProfiler, RepositoryType};
 

@@ -21,9 +21,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "bm25")]
-use std::sync::Arc;
-#[cfg(feature = "bm25")]
 use parking_lot::RwLock;
+#[cfg(feature = "bm25")]
+use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
@@ -104,7 +104,9 @@ impl ScalingSelector {
         // Phase 2: Apply BM25 re-ranking if enabled and query_hint provided
         #[cfg(feature = "bm25")]
         if let Some(query) = query_hint {
-            selected_files = self.apply_bm25_reranking(repo_path, selected_files, query).await?;
+            selected_files = self
+                .apply_bm25_reranking(repo_path, selected_files, query)
+                .await?;
         }
 
         info!(
@@ -269,9 +271,7 @@ impl ScalingSelector {
             .collect();
 
         // Sort by combined score (descending)
-        scored_files.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal)
-        });
+        scored_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
 
         // Log top boosted files
         let top_files: Vec<_> = scored_files.iter().take(5).collect();
@@ -287,7 +287,10 @@ impl ScalingSelector {
 
         info!(
             "BM25 re-ranking complete: top file is {} with score {:.2}",
-            scored_files.first().map(|(f, _)| f.path.display().to_string()).unwrap_or_default(),
+            scored_files
+                .first()
+                .map(|(f, _)| f.path.display().to_string())
+                .unwrap_or_default(),
             scored_files.first().map(|(_, s)| *s).unwrap_or(0.0)
         );
 
@@ -954,7 +957,10 @@ mod tests {
             language: "Rust".to_string(),
             file_type: "Source".to_string(),
         };
-        assert_eq!(selector.classify_file(&example_file), FileCategory::Examples);
+        assert_eq!(
+            selector.classify_file(&example_file),
+            FileCategory::Examples
+        );
 
         let test_file = FileMetadata {
             path: std::path::PathBuf::from("tests/unit_test.rs"),
@@ -1240,7 +1246,10 @@ mod tests {
         let main_score = selector.calculate_file_score(&main_file);
         let utils_score = selector.calculate_file_score(&utils_file);
 
-        assert!(main_score > utils_score, "main.rs should score higher than utils");
+        assert!(
+            main_score > utils_score,
+            "main.rs should score higher than utils"
+        );
     }
 
     #[test]
@@ -1267,7 +1276,10 @@ mod tests {
         let lib_score = selector.calculate_file_score(&lib_file);
         let deep_score = selector.calculate_file_score(&deep_file);
 
-        assert!(lib_score > deep_score, "lib.rs should score higher than deeply nested files");
+        assert!(
+            lib_score > deep_score,
+            "lib.rs should score higher than deeply nested files"
+        );
     }
 
     #[test]
@@ -1275,9 +1287,18 @@ mod tests {
         let selector = ScalingSelector::with_defaults();
 
         // Test header file detection (lines 224-225)
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.h")), "Header");
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.hpp")), "Header");
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.hxx")), "Header");
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("test.h")),
+            "Header"
+        );
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("test.hpp")),
+            "Header"
+        );
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("test.hxx")),
+            "Header"
+        );
     }
 
     #[test]
@@ -1285,9 +1306,18 @@ mod tests {
         let selector = ScalingSelector::with_defaults();
 
         // Test Dockerfile detection (lines 228-234)
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("Dockerfile")), "Dockerfile");
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("dockerfile")), "Dockerfile");
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("DOCKERFILE")), "Dockerfile");
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("Dockerfile")),
+            "Dockerfile"
+        );
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("dockerfile")),
+            "Dockerfile"
+        );
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("DOCKERFILE")),
+            "Dockerfile"
+        );
     }
 
     #[test]
@@ -1295,9 +1325,18 @@ mod tests {
         let selector = ScalingSelector::with_defaults();
 
         // Test common languages (lines 237-238)
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.rs")), "Rust");
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.py")), "Python");
-        assert_eq!(selector.detect_language(&std::path::PathBuf::from("test.js")), "JavaScript");
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("test.rs")),
+            "Rust"
+        );
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("test.py")),
+            "Python"
+        );
+        assert_eq!(
+            selector.detect_language(&std::path::PathBuf::from("test.js")),
+            "JavaScript"
+        );
     }
 
     #[test]
@@ -1379,8 +1418,13 @@ mod tests {
         assert!(!result.is_empty());
 
         // Entry points should be selected first (main.rs, lib.rs)
-        let selected_paths: Vec<_> = result.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
-        let has_entry = selected_paths.iter().any(|p| p.contains("main.rs") || p.contains("lib.rs"));
+        let selected_paths: Vec<_> = result
+            .iter()
+            .map(|f| f.path.to_string_lossy().to_string())
+            .collect();
+        let has_entry = selected_paths
+            .iter()
+            .any(|p| p.contains("main.rs") || p.contains("lib.rs"));
         assert!(has_entry, "Entry points should be prioritized");
     }
 
@@ -1408,10 +1452,11 @@ mod tests {
         let result = selector.apply_integrated_selection(&files).unwrap();
 
         // Should respect budget constraints
-        let total_tokens: usize = result.iter()
-            .map(|f| selector.estimate_tokens(f))
-            .sum();
-        assert!(total_tokens <= 100 * 4, "Should respect budget (with some tolerance for file count)");
+        let total_tokens: usize = result.iter().map(|f| selector.estimate_tokens(f)).sum();
+        assert!(
+            total_tokens <= 100 * 4,
+            "Should respect budget (with some tolerance for file count)"
+        );
     }
 
     #[tokio::test]
@@ -1465,7 +1510,8 @@ mod tests {
         assert!(tokens > 0);
 
         // Should sum tokens from both files
-        let single_tokens = selector.estimate_tokens(&files[0]) + selector.estimate_tokens(&files[1]);
+        let single_tokens =
+            selector.estimate_tokens(&files[0]) + selector.estimate_tokens(&files[1]);
         assert_eq!(tokens, single_tokens);
     }
 
@@ -1473,15 +1519,13 @@ mod tests {
     async fn test_apply_scaling_optimizations() {
         let selector = ScalingSelector::with_defaults();
 
-        let files = vec![
-            FileMetadata {
-                path: std::path::PathBuf::from("test.rs"),
-                size: 500,
-                modified: std::time::SystemTime::now(),
-                language: "Rust".to_string(),
-                file_type: "Source".to_string(),
-            },
-        ];
+        let files = vec![FileMetadata {
+            path: std::path::PathBuf::from("test.rs"),
+            size: 500,
+            modified: std::time::SystemTime::now(),
+            language: "Rust".to_string(),
+            file_type: "Source".to_string(),
+        }];
 
         // Test apply_scaling_optimizations path (lines 346-372)
         let result = selector.apply_scaling_optimizations(&files).await.unwrap();

@@ -510,7 +510,11 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "Access denied");
         let err = ScribeError::path_with_source("Cannot read", Path::new("/root/secret"), io_err);
         match err {
-            ScribeError::Path { message, path, source } => {
+            ScribeError::Path {
+                message,
+                path,
+                source,
+            } => {
                 assert_eq!(message, "Cannot read");
                 assert_eq!(path, PathBuf::from("/root/secret"));
                 assert!(source.is_some());
@@ -565,7 +569,11 @@ mod tests {
         let source_err: Box<dyn std::error::Error + Send + Sync> = "test error".into();
         let err = ScribeError::parse_with_source("Parse failed", source_err);
         match err {
-            ScribeError::Parse { message, file, source } => {
+            ScribeError::Parse {
+                message,
+                file,
+                source,
+            } => {
                 assert_eq!(message, "Parse failed");
                 assert!(file.is_none());
                 assert!(source.is_some());
@@ -595,7 +603,11 @@ mod tests {
         let glob_err = result.unwrap_err();
         let scribe_err = ScribeError::from(glob_err);
         match scribe_err {
-            ScribeError::Pattern { message, pattern, source } => {
+            ScribeError::Pattern {
+                message,
+                pattern,
+                source,
+            } => {
                 assert_eq!(message, "Glob pattern compilation failed");
                 assert_eq!(pattern, "unknown");
                 assert!(source.is_some());
@@ -614,7 +626,11 @@ mod tests {
         let err = ignore::Error::InvalidDefinition;
         let scribe_err = ScribeError::from(err);
         match scribe_err {
-            ScribeError::Pattern { message, pattern, source } => {
+            ScribeError::Pattern {
+                message,
+                pattern,
+                source,
+            } => {
                 assert_eq!(message, "Ignore pattern error");
                 assert_eq!(pattern, "unknown");
                 assert!(source.is_some());

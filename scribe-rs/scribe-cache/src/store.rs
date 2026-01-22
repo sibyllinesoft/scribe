@@ -5,7 +5,7 @@ use crate::invalidation::{compute_file_diff, ChangedFile, FileDiff};
 use crate::keys::{repo_identifier, ContentHash};
 use crate::tables::{self, FILE_DATA, GRAPH_DATA, METADATA, PATH_HASHES, PATH_MTIMES};
 use crate::version::CACHE_VERSION;
-use crate::{CachedFileData, CachedGraphData, CacheMetadata};
+use crate::{CacheMetadata, CachedFileData, CachedGraphData};
 
 use dashmap::DashMap;
 use parking_lot::RwLock;
@@ -40,7 +40,11 @@ impl ScribeCache {
         let repo_id = repo_identifier(repo_path);
         let cache_dir = Self::cache_dir_for_repo(&repo_id)?;
 
-        info!("Opening cache at {} for repo {}", cache_dir.display(), repo_id);
+        info!(
+            "Opening cache at {} for repo {}",
+            cache_dir.display(),
+            repo_id
+        );
 
         let db_path = cache_dir.join("cache.redb");
         let db = Database::create(&db_path)?;
@@ -208,9 +212,7 @@ impl ScribeCache {
 
     /// Compute diff between current files and cache
     pub fn diff_files(&self, current_files: &[PathBuf]) -> FileDiff {
-        compute_file_diff(current_files, |path| {
-            self.path_hashes.get(path).map(|h| *h)
-        })
+        compute_file_diff(current_files, |path| self.path_hashes.get(path).map(|h| *h))
     }
 
     /// Get cached file data by content hash

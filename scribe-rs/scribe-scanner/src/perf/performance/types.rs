@@ -364,7 +364,10 @@ mod tests {
         assert!(json.contains("total_files_processed"));
 
         let deserialized: AggregatedStats = serde_json::from_str(&json).unwrap();
-        assert_eq!(stats.total_files_processed, deserialized.total_files_processed);
+        assert_eq!(
+            stats.total_files_processed,
+            deserialized.total_files_processed
+        );
     }
 
     #[test]

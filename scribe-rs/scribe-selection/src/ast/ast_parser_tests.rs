@@ -229,7 +229,9 @@ from collections import OrderedDict
 from typing import Optional, List
 "#;
 
-    let imports = parser.extract_imports(content, AstLanguage::Python).unwrap();
+    let imports = parser
+        .extract_imports(content, AstLanguage::Python)
+        .unwrap();
     assert!(!imports.is_empty());
 }
 
@@ -242,7 +244,9 @@ import { useState, useEffect } from 'react';
 const fs = require('fs');
 "#;
 
-    let imports = parser.extract_imports(content, AstLanguage::JavaScript).unwrap();
+    let imports = parser
+        .extract_imports(content, AstLanguage::JavaScript)
+        .unwrap();
     assert!(!imports.is_empty());
 }
 
@@ -482,11 +486,26 @@ fn test_ast_language_equality() {
 #[test]
 fn test_ast_language_from_extension_variants() {
     // Test known supported extensions
-    assert_eq!(AstLanguage::from_extension("mjs"), Some(AstLanguage::JavaScript));
-    assert_eq!(AstLanguage::from_extension("cjs"), Some(AstLanguage::JavaScript));
-    assert_eq!(AstLanguage::from_extension("mts"), Some(AstLanguage::TypeScript));
-    assert_eq!(AstLanguage::from_extension("pyi"), Some(AstLanguage::Python));
-    assert_eq!(AstLanguage::from_extension("pyw"), Some(AstLanguage::Python));
+    assert_eq!(
+        AstLanguage::from_extension("mjs"),
+        Some(AstLanguage::JavaScript)
+    );
+    assert_eq!(
+        AstLanguage::from_extension("cjs"),
+        Some(AstLanguage::JavaScript)
+    );
+    assert_eq!(
+        AstLanguage::from_extension("mts"),
+        Some(AstLanguage::TypeScript)
+    );
+    assert_eq!(
+        AstLanguage::from_extension("pyi"),
+        Some(AstLanguage::Python)
+    );
+    assert_eq!(
+        AstLanguage::from_extension("pyw"),
+        Some(AstLanguage::Python)
+    );
 }
 
 #[test]
@@ -586,7 +605,11 @@ class MyClass:
     let entities = parser.find_entities(content, "test.py", &query).unwrap();
     // Should find classes
     for entity in &entities {
-        assert!(entity.entity_type == "class" || entity.entity_type == "struct_item" || entity.entity_type == "trait_item");
+        assert!(
+            entity.entity_type == "class"
+                || entity.entity_type == "struct_item"
+                || entity.entity_type == "trait_item"
+        );
     }
 }
 
@@ -826,7 +849,12 @@ fn test_find_entities_no_match() {
     let query = EntityQuery::by_name("nonexistent_function");
     let entities = parser.find_entities(content, "test.py", &query).unwrap();
     // Should not find the entity
-    assert!(entities.is_empty() || !entities.iter().any(|e| e.entity_name == "nonexistent_function"));
+    assert!(
+        entities.is_empty()
+            || !entities
+                .iter()
+                .any(|e| e.entity_name == "nonexistent_function")
+    );
 }
 
 #[test]
@@ -859,7 +887,9 @@ def main():
     assert!(!chunks.is_empty());
 
     // Check that imports are parsed
-    let has_imports = chunks.iter().any(|c| c.chunk_type == "import" || c.chunk_type == "import_from");
+    let has_imports = chunks
+        .iter()
+        .any(|c| c.chunk_type == "import" || c.chunk_type == "import_from");
     assert!(has_imports);
 }
 
@@ -932,7 +962,9 @@ import type { Observable } from 'rxjs';
 import * as utils from './utils';
 "#;
 
-    let imports = parser.extract_imports(content, AstLanguage::TypeScript).unwrap();
+    let imports = parser
+        .extract_imports(content, AstLanguage::TypeScript)
+        .unwrap();
     assert!(!imports.is_empty());
 }
 
@@ -981,7 +1013,10 @@ struct PrivateStruct {
 
     // The code path for visibility detection is exercised
     // Check that we got some chunks with the expected types
-    let fn_chunks: Vec<_> = chunks.iter().filter(|c| c.chunk_type == "function").collect();
+    let fn_chunks: Vec<_> = chunks
+        .iter()
+        .filter(|c| c.chunk_type == "function")
+        .collect();
     let struct_chunks: Vec<_> = chunks.iter().filter(|c| c.chunk_type == "struct").collect();
 
     // We should have parsed some functions and structs
@@ -1008,7 +1043,9 @@ pub fn undocumented_function() {
     assert!(!chunks.is_empty());
 
     // Documented functions should have has_documentation = true
-    let documented = chunks.iter().find(|c| c.name.as_deref() == Some("documented_function"));
+    let documented = chunks
+        .iter()
+        .find(|c| c.name.as_deref() == Some("documented_function"));
     if let Some(doc_chunk) = documented {
         assert!(doc_chunk.has_documentation);
     }
@@ -1040,8 +1077,12 @@ class ClassWithDocstring:
     assert!(!chunks.is_empty());
 
     // Verify we found the function and class
-    let func = chunks.iter().find(|c| c.name.as_deref() == Some("function_with_docstring"));
-    let class = chunks.iter().find(|c| c.name.as_deref() == Some("ClassWithDocstring"));
+    let func = chunks
+        .iter()
+        .find(|c| c.name.as_deref() == Some("function_with_docstring"));
+    let class = chunks
+        .iter()
+        .find(|c| c.name.as_deref() == Some("ClassWithDocstring"));
 
     // At least one should be found - the docstring detection code path is exercised
     // even if has_documentation isn't always set correctly
@@ -1073,8 +1114,8 @@ pub mod another_module;
     for entity in &entities {
         assert!(
             entity.entity_type == "mod"
-            || entity.entity_type == "module"
-            || entity.entity_type == "package"
+                || entity.entity_type == "module"
+                || entity.entity_type == "package"
         );
     }
 }
@@ -1106,8 +1147,8 @@ trait AnotherTrait: Clone {
     for entity in &entities {
         assert!(
             entity.entity_type == "interface"
-            || entity.entity_type == "trait_item"
-            || entity.entity_type == "trait"
+                || entity.entity_type == "trait_item"
+                || entity.entity_type == "trait"
         );
     }
 }
@@ -1135,10 +1176,10 @@ const PI: f64 = 3.14159;
     for entity in &entities {
         assert!(
             entity.entity_type == "const"
-            || entity.entity_type == "constant"
-            || entity.entity_type == "static"
-            || entity.entity_type == "const_item"
-            || entity.entity_type == "static_item"
+                || entity.entity_type == "constant"
+                || entity.entity_type == "static"
+                || entity.entity_type == "const_item"
+                || entity.entity_type == "static_item"
         );
     }
 }
@@ -1170,8 +1211,8 @@ func main() {
     for entity in &entities {
         assert!(
             entity.entity_type == "package"
-            || entity.entity_type == "mod"
-            || entity.entity_type == "module"
+                || entity.entity_type == "mod"
+                || entity.entity_type == "module"
         );
     }
 }
@@ -1274,6 +1315,10 @@ struct PrivateStruct {}
     let entities = parser.find_entities(content, "test.rs", &query).unwrap();
     // All returned entities should be public
     for entity in &entities {
-        assert!(entity.is_public, "Entity {} should be public", entity.entity_name);
+        assert!(
+            entity.is_public,
+            "Entity {} should be public",
+            entity.entity_name
+        );
     }
 }

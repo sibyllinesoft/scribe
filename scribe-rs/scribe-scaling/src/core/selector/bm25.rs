@@ -71,7 +71,11 @@ impl Bm25Scorer {
     }
 
     /// Search for top relevant files
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>, scribe_index::IndexError> {
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, f32)>, scribe_index::IndexError> {
         self.index.search(query, limit)
     }
 }
@@ -90,10 +94,7 @@ fn extract_symbols(content: &str, language: &str) -> Vec<String> {
             r"trait\s+(\w+)",
             r"impl\s+(\w+)",
         ],
-        "python" => vec![
-            r"def\s+(\w+)",
-            r"class\s+(\w+)",
-        ],
+        "python" => vec![r"def\s+(\w+)", r"class\s+(\w+)"],
         "go" => vec![
             r"func\s+(\w+)",
             r"func\s+\([^)]+\)\s+(\w+)",

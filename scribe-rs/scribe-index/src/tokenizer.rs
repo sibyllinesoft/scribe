@@ -7,8 +7,8 @@
 //! - Handles common programming constructs
 
 use tantivy::tokenizer::{
-    BoxTokenStream, Token, TokenStream, Tokenizer, TextAnalyzer, LowerCaser,
-    SimpleTokenizer, RemoveLongFilter,
+    BoxTokenStream, LowerCaser, RemoveLongFilter, SimpleTokenizer, TextAnalyzer, Token,
+    TokenStream, Tokenizer,
 };
 
 /// Code-aware tokenizer that splits identifiers
@@ -70,7 +70,10 @@ fn tokenize_code(text: &str) -> Vec<Token> {
             continue;
         }
 
-        let word_start = text[offset..].find(word).map(|i| offset + i).unwrap_or(offset);
+        let word_start = text[offset..]
+            .find(word)
+            .map(|i| offset + i)
+            .unwrap_or(offset);
         let word_end = word_start + word.len();
 
         // Add the original token

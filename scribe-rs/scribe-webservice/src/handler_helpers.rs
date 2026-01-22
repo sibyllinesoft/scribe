@@ -1,6 +1,8 @@
 //! Helper functions for HTTP handlers
 
-use crate::{AnalysisOutput, BundleState, Result, WebReportFile, WebSelectionMetrics, WebServiceError};
+use crate::{
+    AnalysisOutput, BundleState, Result, WebReportFile, WebSelectionMetrics, WebServiceError,
+};
 use scribe_core::FileInfo;
 use scribe_selection::SelectionResult;
 use serde::Serialize;
@@ -119,7 +121,10 @@ pub fn file_size_to_usize(value: u64) -> usize {
     }
 }
 
-pub fn build_selection_result(analysis: &AnalysisOutput, included_files: &[String]) -> SelectionResult {
+pub fn build_selection_result(
+    analysis: &AnalysisOutput,
+    included_files: &[String],
+) -> SelectionResult {
     let included_set: HashSet<&str> = included_files.iter().map(|path| path.as_str()).collect();
 
     let mut selected_infos = Vec::new();
@@ -258,13 +263,11 @@ pub fn get_file_icon(extension: &str) -> String {
 
 pub fn format_modified(time: Option<SystemTime>) -> String {
     time.and_then(|t| {
-        t.duration_since(std::time::UNIX_EPOCH)
-            .ok()
-            .map(|d| {
-                chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    .unwrap_or_default()
-            })
+        t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| {
+            chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default()
+        })
     })
     .unwrap_or_default()
 }
@@ -305,16 +308,15 @@ pub fn prepare_template_data(
         .to_string();
 
     let total_size: u64 = selected_files.iter().map(|file| file.size).sum();
-    let total_tokens: usize = selected_files.iter().map(|file| file.estimated_tokens).sum();
+    let total_tokens: usize = selected_files
+        .iter()
+        .map(|file| file.estimated_tokens)
+        .sum();
 
     let files: Vec<TemplateFile> = selected_files
         .iter()
         .map(|file| {
-            let extension = file
-                .relative_path
-                .rsplit('.')
-                .next()
-                .unwrap_or("");
+            let extension = file.relative_path.rsplit('.').next().unwrap_or("");
 
             TemplateFile {
                 relative_path: file.relative_path.clone(),
@@ -336,7 +338,9 @@ pub fn prepare_template_data(
     TemplateData {
         repository_name: repo_name,
         algorithm: metrics.algorithm_used.clone(),
-        generated_time: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        generated_time: chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string(),
         selection_time_ms: metrics.selection_time_ms as u64,
         total_files: selected_files.len(),
         total_tokens: format!("{}", total_tokens),
@@ -713,9 +717,14 @@ mod tests {
         assert_eq!(result.unused_tokens, 500);
     }
 
-    fn create_test_file_info(path: &str, relative: &str, size: u64, tokens: Option<usize>) -> FileInfo {
-        use scribe_core::{Language, RenderDecision, FileWeight};
+    fn create_test_file_info(
+        path: &str,
+        relative: &str,
+        size: u64,
+        tokens: Option<usize>,
+    ) -> FileInfo {
         use scribe_core::file::FileType;
+        use scribe_core::{FileWeight, Language, RenderDecision};
 
         FileInfo {
             path: PathBuf::from(path),
@@ -729,7 +738,9 @@ mod tests {
             centrality_score: None,
             git_status: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             line_count: None,
             char_count: None,
             weight: FileWeight::default(),

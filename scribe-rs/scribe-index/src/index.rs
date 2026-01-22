@@ -81,7 +81,11 @@ impl CodeIndex {
             .join(&repo_id)
             .join("index");
 
-        info!("Opening index at {} for repo {}", cache_dir.display(), repo_id);
+        info!(
+            "Opening index at {} for repo {}",
+            cache_dir.display(),
+            repo_id
+        );
         Self::open(&cache_dir)
     }
 
@@ -151,7 +155,11 @@ impl CodeIndex {
         // Boost symbols field for better identifier matching
         let mut query_parser = QueryParser::for_index(
             &self.index,
-            vec![self.fields.content, self.fields.symbols, self.fields.imports],
+            vec![
+                self.fields.content,
+                self.fields.symbols,
+                self.fields.imports,
+            ],
         );
 
         // Boost symbols field
@@ -323,9 +331,21 @@ mod tests {
         let scores = index.score_files("Config parse", &files).unwrap();
 
         // relevant.go should have highest score
-        let relevant_score = scores.iter().find(|(p, _)| p.to_str() == Some("relevant.go")).unwrap().1;
-        let irrelevant_score = scores.iter().find(|(p, _)| p.to_str() == Some("irrelevant.go")).unwrap().1;
-        let nonexistent_score = scores.iter().find(|(p, _)| p.to_str() == Some("nonexistent.go")).unwrap().1;
+        let relevant_score = scores
+            .iter()
+            .find(|(p, _)| p.to_str() == Some("relevant.go"))
+            .unwrap()
+            .1;
+        let irrelevant_score = scores
+            .iter()
+            .find(|(p, _)| p.to_str() == Some("irrelevant.go"))
+            .unwrap()
+            .1;
+        let nonexistent_score = scores
+            .iter()
+            .find(|(p, _)| p.to_str() == Some("nonexistent.go"))
+            .unwrap()
+            .1;
 
         assert!(relevant_score > irrelevant_score);
         assert_eq!(nonexistent_score, 0.0);

@@ -321,7 +321,10 @@ mod tests {
         assert_eq!(PerformanceRiskLevel::Low, PerformanceRiskLevel::Low);
         assert_eq!(PerformanceRiskLevel::Medium, PerformanceRiskLevel::Medium);
         assert_eq!(PerformanceRiskLevel::High, PerformanceRiskLevel::High);
-        assert_eq!(PerformanceRiskLevel::Critical, PerformanceRiskLevel::Critical);
+        assert_eq!(
+            PerformanceRiskLevel::Critical,
+            PerformanceRiskLevel::Critical
+        );
 
         assert_ne!(PerformanceRiskLevel::Low, PerformanceRiskLevel::High);
         assert_ne!(PerformanceRiskLevel::Medium, PerformanceRiskLevel::Critical);

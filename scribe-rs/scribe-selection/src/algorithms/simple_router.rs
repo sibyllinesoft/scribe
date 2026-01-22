@@ -122,7 +122,8 @@ impl SimpleRouter {
             // Otherwise use the fastest simple strategy
             return RoutingDecision {
                 strategy: SelectionStrategy::ImportanceGreedy,
-                reason: "Tight time constraint requires fast importance-based selection".to_string(),
+                reason: "Tight time constraint requires fast importance-based selection"
+                    .to_string(),
             };
         }
 
@@ -162,7 +163,8 @@ impl SimpleRouter {
         // Default: Use coverage-optimized for balanced results
         RoutingDecision {
             strategy: SelectionStrategy::CoverageOptimized,
-            reason: "Standard context: using coverage-optimized selection for balanced results".to_string(),
+            reason: "Standard context: using coverage-optimized selection for balanced results"
+                .to_string(),
         }
     }
 }
@@ -289,11 +291,23 @@ mod tests {
 
     #[test]
     fn test_selection_strategy_names() {
-        assert_eq!(SelectionStrategy::ImportanceGreedy.name(), "importance_greedy");
-        assert_eq!(SelectionStrategy::DependencyAware.name(), "dependency_aware");
-        assert_eq!(SelectionStrategy::CoverageOptimized.name(), "coverage_optimized");
+        assert_eq!(
+            SelectionStrategy::ImportanceGreedy.name(),
+            "importance_greedy"
+        );
+        assert_eq!(
+            SelectionStrategy::DependencyAware.name(),
+            "dependency_aware"
+        );
+        assert_eq!(
+            SelectionStrategy::CoverageOptimized.name(),
+            "coverage_optimized"
+        );
         assert_eq!(SelectionStrategy::Random.name(), "random");
-        assert_eq!(SelectionStrategy::TwoPassSpeculative.name(), "two_pass_speculative");
+        assert_eq!(
+            SelectionStrategy::TwoPassSpeculative.name(),
+            "two_pass_speculative"
+        );
         assert_eq!(SelectionStrategy::QuotaManaged.name(), "quota_managed");
     }
 

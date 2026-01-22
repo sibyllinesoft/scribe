@@ -99,14 +99,35 @@ pub use crate::reexport;
         let imports = extract_imports(content, &Language::Rust);
         println!("Rust imports: {:?}", imports);
 
-        assert!(imports.contains(&"crate::module".to_string()), "Should extract simple crate import");
-        assert!(imports.contains(&"super::parent_module".to_string()), "Should extract super import");
-        assert!(imports.contains(&"self::sibling".to_string()), "Should extract self import");
-        assert!(imports.contains(&"std::collections::HashMap".to_string()), "Should extract std import");
-        assert!(imports.contains(&"std::io".to_string()), "Should extract grouped std import");
-        assert!(imports.contains(&"my_module".to_string()), "Should extract mod declaration");
+        assert!(
+            imports.contains(&"crate::module".to_string()),
+            "Should extract simple crate import"
+        );
+        assert!(
+            imports.contains(&"super::parent_module".to_string()),
+            "Should extract super import"
+        );
+        assert!(
+            imports.contains(&"self::sibling".to_string()),
+            "Should extract self import"
+        );
+        assert!(
+            imports.contains(&"std::collections::HashMap".to_string()),
+            "Should extract std import"
+        );
+        assert!(
+            imports.contains(&"std::io".to_string()),
+            "Should extract grouped std import"
+        );
+        assert!(
+            imports.contains(&"my_module".to_string()),
+            "Should extract mod declaration"
+        );
         // pub use should NOT be extracted (doesn't start with "use ")
-        assert!(!imports.iter().any(|i| i.contains("reexport")), "Should NOT extract pub use");
+        assert!(
+            !imports.iter().any(|i| i.contains("reexport")),
+            "Should NOT extract pub use"
+        );
     }
 
     #[test]
@@ -124,13 +145,34 @@ from typing import List, Dict
         let imports = extract_imports(content, &Language::Python);
         println!("Python imports: {:?}", imports);
 
-        assert!(imports.contains(&"os".to_string()), "Should extract simple import");
-        assert!(imports.contains(&"sys".to_string()), "Should extract comma-separated import");
-        assert!(imports.contains(&"numpy".to_string()), "Should extract aliased import");
-        assert!(imports.contains(&".".to_string()), "Should extract relative import");
-        assert!(imports.contains(&"..".to_string()), "Should extract parent relative import");
-        assert!(imports.contains(&"..package".to_string()), "Should extract parent package import");
-        assert!(imports.contains(&"typing".to_string()), "Should extract from import");
+        assert!(
+            imports.contains(&"os".to_string()),
+            "Should extract simple import"
+        );
+        assert!(
+            imports.contains(&"sys".to_string()),
+            "Should extract comma-separated import"
+        );
+        assert!(
+            imports.contains(&"numpy".to_string()),
+            "Should extract aliased import"
+        );
+        assert!(
+            imports.contains(&".".to_string()),
+            "Should extract relative import"
+        );
+        assert!(
+            imports.contains(&"..".to_string()),
+            "Should extract parent relative import"
+        );
+        assert!(
+            imports.contains(&"..package".to_string()),
+            "Should extract parent package import"
+        );
+        assert!(
+            imports.contains(&"typing".to_string()),
+            "Should extract from import"
+        );
     }
 
     #[test]
@@ -148,14 +190,38 @@ import { x } from './relative'
         let imports = extract_imports(content, &Language::JavaScript);
         println!("JavaScript imports: {:?}", imports);
 
-        assert!(imports.contains(&"module".to_string()), "Should extract single-quote import");
-        assert!(imports.contains(&"double-quotes".to_string()), "Should extract double-quote import");
-        assert!(imports.contains(&"destructure".to_string()), "Should extract destructured import");
-        assert!(imports.contains(&"star-import".to_string()), "Should extract star import");
-        assert!(imports.contains(&"side-effect".to_string()), "Should extract side-effect import");
-        assert!(imports.contains(&"commonjs".to_string()), "Should extract require single");
-        assert!(imports.contains(&"cjs-double".to_string()), "Should extract require double");
-        assert!(imports.contains(&"./relative".to_string()), "Should extract relative import");
+        assert!(
+            imports.contains(&"module".to_string()),
+            "Should extract single-quote import"
+        );
+        assert!(
+            imports.contains(&"double-quotes".to_string()),
+            "Should extract double-quote import"
+        );
+        assert!(
+            imports.contains(&"destructure".to_string()),
+            "Should extract destructured import"
+        );
+        assert!(
+            imports.contains(&"star-import".to_string()),
+            "Should extract star import"
+        );
+        assert!(
+            imports.contains(&"side-effect".to_string()),
+            "Should extract side-effect import"
+        );
+        assert!(
+            imports.contains(&"commonjs".to_string()),
+            "Should extract require single"
+        );
+        assert!(
+            imports.contains(&"cjs-double".to_string()),
+            "Should extract require double"
+        );
+        assert!(
+            imports.contains(&"./relative".to_string()),
+            "Should extract relative import"
+        );
     }
 
     #[test]
@@ -172,9 +238,18 @@ import (
         let imports = extract_imports(content, &Language::Go);
         println!("Go imports: {:?}", imports);
 
-        assert!(imports.contains(&"fmt".to_string()), "Should extract single import");
-        assert!(imports.contains(&"os".to_string()), "Should extract block import");
-        assert!(imports.contains(&"path/filepath".to_string()), "Should extract block import with path");
+        assert!(
+            imports.contains(&"fmt".to_string()),
+            "Should extract single import"
+        );
+        assert!(
+            imports.contains(&"os".to_string()),
+            "Should extract block import"
+        );
+        assert!(
+            imports.contains(&"path/filepath".to_string()),
+            "Should extract block import with path"
+        );
     }
 
     #[test]
@@ -191,14 +266,32 @@ import (
         println!("Go aliased imports: {:?}", imports);
 
         // These should extract the package path, not the alias
-        assert!(imports.contains(&"fmt".to_string()), "Should extract aliased fmt");
-        assert!(imports.contains(&"os".to_string()), "Should extract dot-imported os");
-        assert!(imports.contains(&"init/pkg".to_string()), "Should extract blank-imported init/pkg");
-        assert!(imports.contains(&"github.com/pkg/errors".to_string()), "Should extract aliased github package");
+        assert!(
+            imports.contains(&"fmt".to_string()),
+            "Should extract aliased fmt"
+        );
+        assert!(
+            imports.contains(&"os".to_string()),
+            "Should extract dot-imported os"
+        );
+        assert!(
+            imports.contains(&"init/pkg".to_string()),
+            "Should extract blank-imported init/pkg"
+        );
+        assert!(
+            imports.contains(&"github.com/pkg/errors".to_string()),
+            "Should extract aliased github package"
+        );
 
         // Should NOT contain the aliases themselves
-        assert!(!imports.iter().any(|i| i.starts_with("f ")), "Should not include alias 'f'");
-        assert!(!imports.iter().any(|i| i.starts_with(". ")), "Should not include dot alias");
+        assert!(
+            !imports.iter().any(|i| i.starts_with("f ")),
+            "Should not include alias 'f'"
+        );
+        assert!(
+            !imports.iter().any(|i| i.starts_with(". ")),
+            "Should not include dot alias"
+        );
     }
 }
 
@@ -235,8 +328,14 @@ import { Component } from '@angular/core'
 "#;
         let imports = extract_imports(content, &Language::TypeScript);
         println!("TypeScript imports: {:?}", imports);
-        assert!(imports.contains(&"type-module".to_string()), "Should extract type import");
-        assert!(imports.contains(&"@angular/core".to_string()), "Should extract scoped package");
+        assert!(
+            imports.contains(&"type-module".to_string()),
+            "Should extract type import"
+        );
+        assert!(
+            imports.contains(&"@angular/core".to_string()),
+            "Should extract scoped package"
+        );
     }
 
     #[test]
@@ -257,7 +356,10 @@ from module import (
     fn test_go_backtick_imports() {
         let content = "import `fmt`";
         let imports = extract_imports(content, &Language::Go);
-        assert!(imports.contains(&"fmt".to_string()), "Should handle backtick imports");
+        assert!(
+            imports.contains(&"fmt".to_string()),
+            "Should handle backtick imports"
+        );
     }
 
     #[test]

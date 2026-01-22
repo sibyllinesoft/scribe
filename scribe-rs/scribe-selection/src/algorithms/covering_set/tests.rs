@@ -44,12 +44,7 @@ fn test_covering_set_for_changed_files() {
 
     let changed = vec!["src/lib.rs".to_string(), "src/main.rs".to_string()];
     let result = computer
-        .compute_covering_set_for_files(
-            &changed,
-            &graph,
-            None,
-            &CoveringSetOptions::default(),
-        )
+        .compute_covering_set_for_files(&changed, &graph, None, &CoveringSetOptions::default())
         .unwrap();
 
     assert!(result.target_entity.is_none());
@@ -74,7 +69,10 @@ fn test_entity_level_options() {
 
 #[test]
 fn test_granularity_default() {
-    assert_eq!(CoveringSetGranularity::default(), CoveringSetGranularity::File);
+    assert_eq!(
+        CoveringSetGranularity::default(),
+        CoveringSetGranularity::File
+    );
 
     let opts = CoveringSetOptions::default();
     assert_eq!(opts.granularity, CoveringSetGranularity::File);
@@ -96,7 +94,8 @@ def main():
 
 def helper_func(x):
     return x * 2
-"#.to_string(),
+"#
+        .to_string(),
     );
 
     // Use file:entity format
@@ -133,10 +132,7 @@ fn test_file_only_covering_set() {
     let graph = DependencyGraph::new();
 
     let mut file_contents = HashMap::new();
-    file_contents.insert(
-        "src/lib.py".to_string(),
-        "def main(): pass".to_string(),
-    );
+    file_contents.insert("src/lib.py".to_string(), "def main(): pass".to_string());
 
     // Use file-only format (no entity)
     let query = EntityQuery::for_file("src/lib.py");
@@ -218,7 +214,10 @@ fn test_covering_set_file_fields() {
         reason: InclusionReason::DirectDependency,
         distance: 1,
         importance: Some(0.8),
-        line_ranges: vec![LineRange { start_line: 10, end_line: 50 }],
+        line_ranges: vec![LineRange {
+            start_line: 10,
+            end_line: 50,
+        }],
     };
 
     assert_eq!(file.path, "src/lib.rs");
@@ -265,7 +264,10 @@ fn test_inclusion_reason_equality() {
     assert_eq!(InclusionReason::TargetFile, InclusionReason::TargetFile);
     assert_eq!(InclusionReason::ChangedFile, InclusionReason::ChangedFile);
     assert_ne!(InclusionReason::TargetFile, InclusionReason::ChangedFile);
-    assert_ne!(InclusionReason::DirectDependency, InclusionReason::TransitiveDependency);
+    assert_ne!(
+        InclusionReason::DirectDependency,
+        InclusionReason::TransitiveDependency
+    );
 }
 
 #[test]
@@ -305,12 +307,7 @@ fn test_covering_set_for_empty_changed_files() {
     let graph = DependencyGraph::new();
 
     let result = computer
-        .compute_covering_set_for_files(
-            &[],
-            &graph,
-            None,
-            &CoveringSetOptions::default(),
-        )
+        .compute_covering_set_for_files(&[], &graph, None, &CoveringSetOptions::default())
         .unwrap();
 
     assert!(result.files.is_empty());
@@ -325,7 +322,10 @@ fn test_covering_set_with_line_map() {
     let mut line_map = HashMap::new();
     line_map.insert(
         "src/main.rs".to_string(),
-        vec![LineRange { start_line: 10, end_line: 20 }],
+        vec![LineRange {
+            start_line: 10,
+            end_line: 20,
+        }],
     );
 
     let changed = vec!["src/main.rs".to_string()];
@@ -386,7 +386,8 @@ fn test_extract_regex_matches() {
         r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
         super::is_common_keyword,
         &mut references,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Should extract function names
     assert!(references.contains(&"foo".to_string()) || references.contains(&"bar".to_string()));
@@ -433,13 +434,27 @@ fn test_default_implementation() {
 #[test]
 fn test_is_path_suffix_match() {
     // Exact suffix match at path boundary
-    assert!(CoveringSetComputer::is_path_suffix_match("src/lib.rs", "lib.rs"));
-    assert!(CoveringSetComputer::is_path_suffix_match("src/utils/lib.rs", "utils/lib.rs"));
-    assert!(CoveringSetComputer::is_path_suffix_match("lib.rs", "lib.rs"));
+    assert!(CoveringSetComputer::is_path_suffix_match(
+        "src/lib.rs",
+        "lib.rs"
+    ));
+    assert!(CoveringSetComputer::is_path_suffix_match(
+        "src/utils/lib.rs",
+        "utils/lib.rs"
+    ));
+    assert!(CoveringSetComputer::is_path_suffix_match(
+        "lib.rs", "lib.rs"
+    ));
 
     // Non-match cases
-    assert!(!CoveringSetComputer::is_path_suffix_match("src/mylib.rs", "lib.rs"));
-    assert!(!CoveringSetComputer::is_path_suffix_match("src/lib.rs", "main.rs"));
+    assert!(!CoveringSetComputer::is_path_suffix_match(
+        "src/mylib.rs",
+        "lib.rs"
+    ));
+    assert!(!CoveringSetComputer::is_path_suffix_match(
+        "src/lib.rs",
+        "main.rs"
+    ));
 }
 
 #[test]
@@ -530,7 +545,9 @@ fn test_compute_inclusion_info_direct_dependency() {
     let computer = CoveringSetComputer::new().unwrap();
     let mut graph = DependencyGraph::new();
 
-    graph.add_edge("target.rs".to_string(), "dep.rs".to_string()).unwrap();
+    graph
+        .add_edge("target.rs".to_string(), "dep.rs".to_string())
+        .unwrap();
 
     let (reason, distance) = computer.compute_inclusion_info(
         "dep.rs",
@@ -548,7 +565,9 @@ fn test_compute_inclusion_info_direct_dependent() {
     let computer = CoveringSetComputer::new().unwrap();
     let mut graph = DependencyGraph::new();
 
-    graph.add_edge("dep.rs".to_string(), "target.rs".to_string()).unwrap();
+    graph
+        .add_edge("dep.rs".to_string(), "target.rs".to_string())
+        .unwrap();
 
     let (reason, distance) = computer.compute_inclusion_info(
         "dep.rs",
@@ -625,21 +644,21 @@ fn test_apply_limits_min_importance() {
             path: "target.rs".to_string(),
             reason: InclusionReason::TargetFile,
             distance: 0,
-            importance: Some(0.3),  // Below threshold but target
+            importance: Some(0.3), // Below threshold but target
             line_ranges: vec![],
         },
         CoveringSetFile {
             path: "high.rs".to_string(),
             reason: InclusionReason::DirectDependency,
             distance: 1,
-            importance: Some(0.8),  // Above threshold
+            importance: Some(0.8), // Above threshold
             line_ranges: vec![],
         },
         CoveringSetFile {
             path: "low.rs".to_string(),
             reason: InclusionReason::TransitiveDependency,
             distance: 2,
-            importance: Some(0.2),  // Below threshold
+            importance: Some(0.2), // Below threshold
             line_ranges: vec![],
         },
     ];
@@ -728,7 +747,9 @@ fn test_extract_symbol_references_unknown_language() {
     let computer = CoveringSetComputer::new().unwrap();
 
     // Unknown extension should return empty
-    let refs = computer.extract_symbol_references("some code", "file.unknown").unwrap();
+    let refs = computer
+        .extract_symbol_references("some code", "file.unknown")
+        .unwrap();
     assert!(refs.is_empty());
 }
 
@@ -743,7 +764,9 @@ def main():
     value: CustomType = None
 "#;
 
-    let refs = computer.extract_symbol_references(content, "test.py").unwrap();
+    let refs = computer
+        .extract_symbol_references(content, "test.py")
+        .unwrap();
 
     // Should extract function calls and type annotations
     assert!(refs.contains(&"main".to_string()) || refs.contains(&"helper_func".to_string()));
@@ -755,8 +778,12 @@ fn test_covering_set_with_graph_dependencies() {
     let mut graph = DependencyGraph::new();
 
     // Create dependency: main.py -> utils.py -> helpers.py
-    graph.add_edge("main.py".to_string(), "utils.py".to_string()).unwrap();
-    graph.add_edge("utils.py".to_string(), "helpers.py".to_string()).unwrap();
+    graph
+        .add_edge("main.py".to_string(), "utils.py".to_string())
+        .unwrap();
+    graph
+        .add_edge("utils.py".to_string(), "helpers.py".to_string())
+        .unwrap();
 
     let mut file_contents = HashMap::new();
     file_contents.insert("main.py".to_string(), "def main(): pass".to_string());
@@ -764,12 +791,14 @@ fn test_covering_set_with_graph_dependencies() {
     file_contents.insert("helpers.py".to_string(), "def helper(): pass".to_string());
 
     let query = EntityQuery::for_file("main.py");
-    let result = computer.compute_covering_set(
-        &query,
-        &file_contents,
-        &graph,
-        &CoveringSetOptions::default(),
-    ).unwrap();
+    let result = computer
+        .compute_covering_set(
+            &query,
+            &file_contents,
+            &graph,
+            &CoveringSetOptions::default(),
+        )
+        .unwrap();
 
     // Should include main.py and its dependencies
     assert!(!result.files.is_empty());

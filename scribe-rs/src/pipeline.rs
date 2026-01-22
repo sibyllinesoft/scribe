@@ -44,7 +44,10 @@ fn apply_bm25_reranking(
     let docs: Vec<CodeDocument> = files
         .iter()
         .filter_map(|file| {
-            let content = file.content.clone().or_else(|| fs::read_to_string(&file.path).ok())?;
+            let content = file
+                .content
+                .clone()
+                .or_else(|| fs::read_to_string(&file.path).ok())?;
             let content_hash = scribe_cache::ContentHash::from_content(content.as_bytes());
 
             // Extract symbols from content
@@ -79,13 +82,14 @@ fn apply_bm25_reranking(
 
     // Get BM25 scores
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-    let bm25_scores: std::collections::HashMap<PathBuf, f32> = match index.score_files(query, &file_paths) {
-        Ok(scores) => scores.into_iter().collect(),
-        Err(e) => {
-            warn!("Failed to get BM25 scores: {}", e);
-            return FileWeights::new();
-        }
-    };
+    let bm25_scores: std::collections::HashMap<PathBuf, f32> =
+        match index.score_files(query, &file_paths) {
+            Ok(scores) => scores.into_iter().collect(),
+            Err(e) => {
+                warn!("Failed to get BM25 scores: {}", e);
+                return FileWeights::new();
+            }
+        };
 
     // Build FileWeights with strong BM25 boost for matching files.
     // Use a high multiplier (10x) so query-matched files are strongly prioritized.
@@ -100,7 +104,7 @@ fn apply_bm25_reranking(
         // Files with any BM25 match get at least 2.0 boost
         let normalized = if max_bm25 > 0.0 { bm25 / max_bm25 } else { 0.0 };
         let boost = if bm25 > 0.0 {
-            2.0 + 8.0 * normalized as f64  // Range: 2.0 to 10.0
+            2.0 + 8.0 * normalized as f64 // Range: 2.0 to 10.0
         } else {
             0.0
         };
@@ -125,12 +129,17 @@ fn apply_bm25_reranking(
         let a_combined = a_base + 2.0 * (a_bm25 / 10.0).min(3.0);
         let b_combined = b_base + 2.0 * (b_bm25 / 10.0).min(3.0);
 
-        b_combined.partial_cmp(&a_combined).unwrap_or(Ordering::Equal)
+        b_combined
+            .partial_cmp(&a_combined)
+            .unwrap_or(Ordering::Equal)
     });
 
     // Log top results
     let matched_count = weights.len();
-    info!("BM25 reranking complete: {} files matched query", matched_count);
+    info!(
+        "BM25 reranking complete: {} files matched query",
+        matched_count
+    );
     for (i, file) in files.iter().take(5).enumerate() {
         let bm25 = bm25_scores.get(&file.path).copied().unwrap_or(0.0);
         let boost = weights.get_path(&file.path);
@@ -152,7 +161,12 @@ fn extract_symbols_simple(content: &str, language: &str) -> Vec<String> {
     let mut symbols = Vec::new();
 
     let patterns: &[&str] = match language.to_lowercase().as_str() {
-        "rust" => &[r"fn\s+(\w+)", r"struct\s+(\w+)", r"enum\s+(\w+)", r"trait\s+(\w+)"],
+        "rust" => &[
+            r"fn\s+(\w+)",
+            r"struct\s+(\w+)",
+            r"enum\s+(\w+)",
+            r"trait\s+(\w+)",
+        ],
         "python" => &[r"def\s+(\w+)", r"class\s+(\w+)"],
         "go" => &[r"func\s+(\w+)", r"type\s+(\w+)\s+struct"],
         "javascript" | "typescript" => &[r"function\s+(\w+)", r"class\s+(\w+)"],
@@ -269,7 +283,12 @@ pub async fn select_from_analysis(
     // Apply BM25 reranking if query_hint is provided
     #[cfg(feature = "scaling")]
     let bm25_weights: Option<FileWeights> = if let Some(ref query) = options.query_hint {
-        Some(apply_bm25_reranking(repo_path, &mut filtered_infos, query, &analysis.final_scores))
+        Some(apply_bm25_reranking(
+            repo_path,
+            &mut filtered_infos,
+            query,
+            &analysis.final_scores,
+        ))
     } else {
         None
     };
@@ -288,7 +307,8 @@ pub async fn select_from_analysis(
             config,
             bm25_weights.as_ref(),
             &SelectionConfig::default(),
-        ).await?
+        )
+        .await?
     };
 
     selected_infos.sort_by(|a, b| {
@@ -906,8 +926,8 @@ mod tests {
     }
 
     fn create_test_analysis() -> RepositoryAnalysis {
-        use std::collections::HashMap;
         use scribe_core::AnalysisMetadata;
+        use std::collections::HashMap;
 
         RepositoryAnalysis {
             files: vec![],
@@ -945,7 +965,10 @@ mod tests {
             },
         };
         let cloned = outcome.clone();
-        assert_eq!(outcome.selection.unlimited_budget, cloned.selection.unlimited_budget);
+        assert_eq!(
+            outcome.selection.unlimited_budget,
+            cloned.selection.unlimited_budget
+        );
     }
 
     #[test]
@@ -995,9 +1018,15 @@ mod tests {
     fn test_build_directory_map_top_level_dirs() {
         // Top-level directories should each appear on their own line
         let entries = vec![
-            InventoryEntry { path: "z_dir".to_string() },
-            InventoryEntry { path: "a_dir".to_string() },
-            InventoryEntry { path: "m_dir".to_string() },
+            InventoryEntry {
+                path: "z_dir".to_string(),
+            },
+            InventoryEntry {
+                path: "a_dir".to_string(),
+            },
+            InventoryEntry {
+                path: "m_dir".to_string(),
+            },
         ];
         let result = build_directory_map(&entries);
         assert!(result.is_some());
@@ -1025,11 +1054,21 @@ mod tests {
     #[test]
     fn test_build_directory_map_with_nested_paths() {
         let entries = vec![
-            InventoryEntry { path: String::new() },
-            InventoryEntry { path: "src".to_string() },
-            InventoryEntry { path: "src/lib".to_string() },
-            InventoryEntry { path: "src/lib/utils".to_string() },
-            InventoryEntry { path: "src/bin".to_string() },
+            InventoryEntry {
+                path: String::new(),
+            },
+            InventoryEntry {
+                path: "src".to_string(),
+            },
+            InventoryEntry {
+                path: "src/lib".to_string(),
+            },
+            InventoryEntry {
+                path: "src/lib/utils".to_string(),
+            },
+            InventoryEntry {
+                path: "src/bin".to_string(),
+            },
         ];
         let result = build_directory_map(&entries);
         assert!(result.is_some());
@@ -1042,12 +1081,24 @@ mod tests {
     fn test_build_directory_map_brace_notation() {
         // Test full brace notation rendering
         let entries = vec![
-            InventoryEntry { path: "packages".to_string() },
-            InventoryEntry { path: "packages/core".to_string() },
-            InventoryEntry { path: "packages/core/src".to_string() },
-            InventoryEntry { path: "packages/core/tests".to_string() },
-            InventoryEntry { path: "packages/cli".to_string() },
-            InventoryEntry { path: "packages/cli/src".to_string() },
+            InventoryEntry {
+                path: "packages".to_string(),
+            },
+            InventoryEntry {
+                path: "packages/core".to_string(),
+            },
+            InventoryEntry {
+                path: "packages/core/src".to_string(),
+            },
+            InventoryEntry {
+                path: "packages/core/tests".to_string(),
+            },
+            InventoryEntry {
+                path: "packages/cli".to_string(),
+            },
+            InventoryEntry {
+                path: "packages/cli/src".to_string(),
+            },
         ];
         let result = build_directory_map(&entries);
         assert!(result.is_some());

@@ -230,7 +230,8 @@ impl SignatureExtractor {
         Ok(signatures
             .into_iter()
             .map(|sig| {
-                let mut rendered = format!("{}:{} // {}", sig.name, sig.signature_type, sig.signature);
+                let mut rendered =
+                    format!("{}:{} // {}", sig.name, sig.signature_type, sig.signature);
                 if let Some(doc) = sig.documentation {
                     rendered = format!("{doc}\n{rendered}");
                 }
@@ -566,9 +567,20 @@ fn extract_module_doc(content: &str, file_path: &str) -> Option<String> {
         }
 
         let parsed = if trimmed.starts_with("//!") || trimmed.starts_with("///") {
-            Some(trimmed.trim_start_matches('/').trim_start_matches('!').trim().to_string())
+            Some(
+                trimmed
+                    .trim_start_matches('/')
+                    .trim_start_matches('!')
+                    .trim()
+                    .to_string(),
+            )
         } else if trimmed.starts_with("//") || trimmed.starts_with("#!") {
-            Some(trimmed.trim_start_matches(&['/', '#'][..]).trim().to_string())
+            Some(
+                trimmed
+                    .trim_start_matches(&['/', '#'][..])
+                    .trim()
+                    .to_string(),
+            )
         } else if trimmed.starts_with("/**") || trimmed.starts_with("/*") {
             Some(
                 trimmed
@@ -1075,7 +1087,9 @@ def function_two():
     fn test_signature_extractor_unknown_language() {
         let mut extractor = SignatureExtractor::default();
         let content = "function test() {}\ndef other(): pass\n";
-        let sigs = extractor.extract_signatures(content, "test.unknown").unwrap();
+        let sigs = extractor
+            .extract_signatures(content, "test.unknown")
+            .unwrap();
         // Should fall back to generic extraction
         assert!(!sigs.is_empty() || sigs.is_empty()); // May or may not extract depending on heuristics
     }
@@ -1107,7 +1121,10 @@ pub struct MyStruct {
     #[test]
     fn test_chunker_generic_chunking() {
         let chunker = CodeChunker::default();
-        let content = (0..50).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..50)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         let chunks = chunker.chunk_generic(&content, "test.unknown");
 
         // Should produce chunks of ~20 lines each

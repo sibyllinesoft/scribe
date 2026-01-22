@@ -438,7 +438,11 @@ impl GraphStatisticsAnalyzer {
     }
 
     /// BFS to compute distances from a source node
-    pub fn bfs_distances(&self, graph: &DependencyGraph, source: &NodeId) -> HashMap<NodeId, usize> {
+    pub fn bfs_distances(
+        &self,
+        graph: &DependencyGraph,
+        source: &NodeId,
+    ) -> HashMap<NodeId, usize> {
         let mut distances = HashMap::new();
         let mut queue = VecDeque::new();
 

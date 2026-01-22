@@ -266,11 +266,7 @@ fn test_compute_closure_dependencies() {
     graph.add_edge("C".to_string(), "D".to_string()).unwrap();
 
     // Closure of A should include A, B, C, D
-    let closure = graph.compute_closure(
-        &["A".to_string()],
-        TraversalDirection::Dependencies,
-        None,
-    );
+    let closure = graph.compute_closure(&["A".to_string()], TraversalDirection::Dependencies, None);
     assert_eq!(closure.len(), 4);
     assert!(closure.contains(&"A".to_string()));
     assert!(closure.contains(&"B".to_string()));
@@ -287,8 +283,7 @@ fn test_compute_closure_both_directions() {
     graph.add_edge("B".to_string(), "C".to_string()).unwrap();
 
     // Closure of B in both directions should include A, B, C
-    let closure =
-        graph.compute_closure(&["B".to_string()], TraversalDirection::Both, None);
+    let closure = graph.compute_closure(&["B".to_string()], TraversalDirection::Both, None);
     assert_eq!(closure.len(), 3);
     assert!(closure.contains(&"A".to_string()));
     assert!(closure.contains(&"B".to_string()));
@@ -349,7 +344,9 @@ fn test_remove_edge() {
 
     assert!(graph.contains_edge(&"A".to_string(), &"B".to_string()));
 
-    let removed = graph.remove_edge(&"A".to_string(), &"B".to_string()).unwrap();
+    let removed = graph
+        .remove_edge(&"A".to_string(), &"B".to_string())
+        .unwrap();
     assert!(removed);
     assert!(!graph.contains_edge(&"A".to_string(), &"B".to_string()));
 
@@ -365,11 +362,15 @@ fn test_remove_edge_nonexistent() {
     graph.add_node("B".to_string()).unwrap();
 
     // No edge between A and B
-    let removed = graph.remove_edge(&"A".to_string(), &"B".to_string()).unwrap();
+    let removed = graph
+        .remove_edge(&"A".to_string(), &"B".to_string())
+        .unwrap();
     assert!(!removed);
 
     // Nonexistent nodes
-    let removed = graph.remove_edge(&"X".to_string(), &"Y".to_string()).unwrap();
+    let removed = graph
+        .remove_edge(&"X".to_string(), &"Y".to_string())
+        .unwrap();
     assert!(!removed);
 }
 
@@ -472,7 +473,9 @@ fn test_set_node_metadata() {
     let mut new_meta = NodeMetadata::new("main.py".to_string()).with_size(2048);
     new_meta.is_test = true;
 
-    graph.set_node_metadata("main.py".to_string(), new_meta).unwrap();
+    graph
+        .set_node_metadata("main.py".to_string(), new_meta)
+        .unwrap();
 
     let retrieved = graph.node_metadata(&"main.py".to_string()).unwrap();
     assert_eq!(retrieved.size_bytes, 2048);
@@ -508,7 +511,9 @@ fn test_test_nodes() {
     // Add a test file - test_main.py auto-detects as test file due to "test_" prefix
     let mut meta = NodeMetadata::new("test_main.py".to_string());
     meta.is_test = true;
-    graph.add_node_with_metadata("test_main.py".to_string(), meta).unwrap();
+    graph
+        .add_node_with_metadata("test_main.py".to_string(), meta)
+        .unwrap();
 
     // Add a normal file
     graph.add_node("main.py".to_string()).unwrap();
@@ -624,11 +629,7 @@ fn test_compute_closure_dependents() {
     graph.add_edge("B".to_string(), "C".to_string()).unwrap();
 
     // Closure of C in dependents direction should include B and A
-    let closure = graph.compute_closure(
-        &["C".to_string()],
-        TraversalDirection::Dependents,
-        None,
-    );
+    let closure = graph.compute_closure(&["C".to_string()], TraversalDirection::Dependents, None);
     assert_eq!(closure.len(), 3);
     assert!(closure.contains(&"A".to_string()));
     assert!(closure.contains(&"B".to_string()));
@@ -682,7 +683,9 @@ fn test_remove_edge_to_nonexistent() {
     graph.add_node("A".to_string()).unwrap();
 
     // Try to remove edge where to_node doesn't exist - exercises line 191
-    let removed = graph.remove_edge(&"A".to_string(), &"nonexistent".to_string()).unwrap();
+    let removed = graph
+        .remove_edge(&"A".to_string(), &"nonexistent".to_string())
+        .unwrap();
     assert!(!removed);
 }
 

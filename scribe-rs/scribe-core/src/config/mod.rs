@@ -955,8 +955,12 @@ mod tests {
     #[test]
     fn test_analysis_config_hash() {
         let mut config = AnalysisConfig::default();
-        config.language_overrides.insert("rs".to_string(), Language::Rust);
-        config.custom_extensions.insert("jsx".to_string(), Language::JavaScript);
+        config
+            .language_overrides
+            .insert("rs".to_string(), Language::Rust);
+        config
+            .custom_extensions
+            .insert("jsx".to_string(), Language::JavaScript);
 
         // Test hashing works
         use std::collections::hash_map::DefaultHasher;

@@ -22,7 +22,12 @@ pub fn root_level_score(path_str: &str, path_components: usize) -> f64 {
     }
     let mut score = 1.0;
     const ROOT_FILE_PATTERNS: &[&str] = &[
-        "readme", "license", "cargo.toml", "package.json", "pyproject.toml", "setup.py",
+        "readme",
+        "license",
+        "cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "setup.py",
     ];
     if ROOT_FILE_PATTERNS.iter().any(|p| path_str.contains(p)) {
         score += 1.5;
@@ -240,7 +245,13 @@ mod tests {
         assert!(score >= 0.0 && score <= 5.0);
 
         // Even with negative factors
-        let score = calculate_combined_score("very/deep/path/to/file.unknown", 10, "Unknown", "Unknown", 200_000);
+        let score = calculate_combined_score(
+            "very/deep/path/to/file.unknown",
+            10,
+            "Unknown",
+            "Unknown",
+            200_000,
+        );
         assert!(score >= 0.0);
     }
 }

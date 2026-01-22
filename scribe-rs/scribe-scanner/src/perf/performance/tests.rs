@@ -632,7 +632,10 @@ fn test_performance_report_recommendations() {
     let report = monitor.generate_report();
 
     // Should have recommendation for high memory
-    assert!(report.recommendations.iter().any(|r| r.contains("memory") || r.contains("batch")));
+    assert!(report
+        .recommendations
+        .iter()
+        .any(|r| r.contains("memory") || r.contains("batch")));
 }
 
 #[test]
@@ -674,7 +677,7 @@ fn test_operation_profile_avg_time_calculation() {
     assert_eq!(profile.avg_time_us, 10000);
 
     profile.record(Duration::from_millis(30), 0, true); // 30000us
-    // Total: 40000us, count: 2, avg: 20000us
+                                                        // Total: 40000us, count: 2, avg: 20000us
     assert_eq!(profile.avg_time_us, 20000);
 }
 

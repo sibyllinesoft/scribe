@@ -151,33 +151,63 @@ pub async fn apply_token_budget_selection(
     if debug {
         eprintln!(
             "📊 File categories: {} mandatory, {} source, {} docs, {} other",
-            mandatory_files.len(), source_files.len(), doc_files.len(), other_files.len()
+            mandatory_files.len(),
+            source_files.len(),
+            doc_files.len(),
+            other_files.len()
         );
     }
 
     // Tier 1: Mandatory files
-    select_mandatory_files(mandatory_files, &counter, &mut budget_tracker, &mut selected_files).await?;
+    select_mandatory_files(
+        mandatory_files,
+        &counter,
+        &mut budget_tracker,
+        &mut selected_files,
+    )
+    .await?;
 
     // Tier 2: Source files with optimization
     if !source_files.is_empty() && budget_tracker.available() > 0 {
         select_source_files_optimized(
-            source_files, weights, selection_config, &counter,
-            &mut budget_tracker, &mut selected_files, debug,
-        ).await?;
+            source_files,
+            weights,
+            selection_config,
+            &counter,
+            &mut budget_tracker,
+            &mut selected_files,
+            debug,
+        )
+        .await?;
     }
 
     // Tier 3: Documentation files
-    select_documentation_files(doc_files, &counter, &mut budget_tracker, &mut selected_files).await?;
+    select_documentation_files(
+        doc_files,
+        &counter,
+        &mut budget_tracker,
+        &mut selected_files,
+    )
+    .await?;
 
     // Tier 4: Other files
-    select_remaining_files(other_files, &counter, &mut budget_tracker, &mut selected_files).await?;
+    select_remaining_files(
+        other_files,
+        &counter,
+        &mut budget_tracker,
+        &mut selected_files,
+    )
+    .await?;
 
     if debug {
         let tokens_used = token_budget - budget_tracker.available();
         let utilization = (tokens_used as f64 / token_budget as f64) * 100.0;
         eprintln!(
             "✅ Total: {} files ({} tokens / {} budget, {:.1}% utilized)",
-            selected_files.len(), tokens_used, token_budget, utilization
+            selected_files.len(),
+            tokens_used,
+            token_budget,
+            utilization
         );
     }
 
@@ -195,7 +225,9 @@ async fn select_mandatory_files(
         if budget_tracker.available() < 1 {
             break;
         }
-        if let Some(selected_file) = try_include_file_with_budget(file, counter, budget_tracker).await? {
+        if let Some(selected_file) =
+            try_include_file_with_budget(file, counter, budget_tracker).await?
+        {
             selected_files.push(selected_file);
         }
     }
@@ -213,13 +245,20 @@ async fn select_source_files_optimized(
     debug: bool,
 ) -> Result<()> {
     let calculator = CentralityCalculator::new()?;
-    let mock_scan_results: Vec<_> = source_files.iter().map(MockScanResult::from_file_info).collect();
+    let mock_scan_results: Vec<_> = source_files
+        .iter()
+        .map(MockScanResult::from_file_info)
+        .collect();
     let centrality_results = calculator.calculate_centrality(&mock_scan_results)?;
 
     let source_with_priority: Vec<_> = source_files
         .into_iter()
         .map(|mut file| {
-            let centrality_score = centrality_results.pagerank_scores.get(&file.relative_path).copied().unwrap_or(0.0);
+            let centrality_score = centrality_results
+                .pagerank_scores
+                .get(&file.relative_path)
+                .copied()
+                .unwrap_or(0.0);
             file.centrality_score = Some(centrality_score);
             let priority = compute_file_priority(centrality_score, &file.relative_path, weights);
             (file, priority)
@@ -229,7 +268,10 @@ async fn select_source_files_optimized(
     let fidelity_options = precompute_fidelity_options(source_with_priority, counter)?;
 
     if debug {
-        eprintln!("📦 Pre-computed fidelity options for {} source files", fidelity_options.len());
+        eprintln!(
+            "📦 Pre-computed fidelity options for {} source files",
+            fidelity_options.len()
+        );
     }
 
     let mut candidates = generate_fidelity_candidates(&fidelity_options, selection_config);
@@ -239,13 +281,24 @@ async fn select_source_files_optimized(
     }
 
     let selected_indices = optimize_selection(&mut candidates, budget_tracker.available());
-    apply_selected_candidates(&selected_indices, &candidates, &fidelity_options, budget_tracker, selected_files, debug);
+    apply_selected_candidates(
+        &selected_indices,
+        &candidates,
+        &fidelity_options,
+        budget_tracker,
+        selected_files,
+        debug,
+    );
 
     Ok(())
 }
 
 /// Compute file priority from centrality and external weights
-fn compute_file_priority(centrality_score: f64, relative_path: &str, weights: Option<&FileWeights>) -> f64 {
+fn compute_file_priority(
+    centrality_score: f64,
+    relative_path: &str,
+    weights: Option<&FileWeights>,
+) -> f64 {
     if let Some(w) = weights {
         let external_weight = w.get(relative_path);
         if external_weight > 0.0 {
@@ -295,7 +348,11 @@ fn apply_selected_candidates(
     if debug {
         eprintln!(
             "✅ Selected {} source files: {} full, {} chunk, {} signature ({} tokens)",
-            full_count + chunk_count + signature_count, full_count, chunk_count, signature_count, total_tokens
+            full_count + chunk_count + signature_count,
+            full_count,
+            chunk_count,
+            signature_count,
+            total_tokens
         );
     }
 }
@@ -308,7 +365,9 @@ const CRITICAL_DOC_FILES: &[&str] = &["changelog.md", "contributing.md"];
 
 /// Check if a documentation file is critical
 fn is_critical_doc(path_lower: &str) -> bool {
-    CRITICAL_DOC_KEYWORDS.iter().any(|kw| path_lower.contains(kw))
+    CRITICAL_DOC_KEYWORDS
+        .iter()
+        .any(|kw| path_lower.contains(kw))
         || CRITICAL_DOC_FILES.iter().any(|f| path_lower.ends_with(f))
 }
 
@@ -331,7 +390,9 @@ async fn select_documentation_files(
         if budget_tracker.available() < 1 {
             break;
         }
-        if let Some(selected_file) = try_include_file_with_budget(file, counter, budget_tracker).await? {
+        if let Some(selected_file) =
+            try_include_file_with_budget(file, counter, budget_tracker).await?
+        {
             selected_files.push(selected_file);
         }
     }
@@ -353,7 +414,9 @@ async fn select_remaining_files(
         if budget_tracker.available() < 1 {
             break;
         }
-        if let Some(selected_file) = try_include_file_with_budget(file, counter, budget_tracker).await? {
+        if let Some(selected_file) =
+            try_include_file_with_budget(file, counter, budget_tracker).await?
+        {
             selected_files.push(selected_file);
         }
     }
@@ -481,13 +544,19 @@ async fn try_include_file_with_budget(
     let token_count = match counter.estimate_file_tokens(&content, &file.path) {
         Ok(count) => count,
         Err(e) => {
-            debug_warn(&format!("Failed to estimate tokens for {}: {}", file.relative_path, e));
+            debug_warn(&format!(
+                "Failed to estimate tokens for {}: {}",
+                file.relative_path, e
+            ));
             return Ok(None);
         }
     };
 
     if !budget_tracker.can_allocate(token_count) {
-        debug_warn(&format!("Skipping {} ({} tokens) - would exceed budget", file.relative_path, token_count));
+        debug_warn(&format!(
+            "Skipping {} ({} tokens) - would exceed budget",
+            file.relative_path, token_count
+        ));
         return Ok(None);
     }
 
@@ -680,7 +749,9 @@ fn generate_fidelity_candidates(
         });
 
         // Chunk candidate (if available and smaller than full)
-        if let (Some(ref chunk_content), Some(chunk_tokens)) = (&opt.chunk_content, opt.chunk_tokens) {
+        if let (Some(ref chunk_content), Some(chunk_tokens)) =
+            (&opt.chunk_content, opt.chunk_tokens)
+        {
             let chunk_score = opt.priority * config.chunk_boost;
             let chunk_density = if chunk_tokens > 0 {
                 chunk_score / chunk_tokens as f64
@@ -724,10 +795,7 @@ fn generate_fidelity_candidates(
 /// Solve the multiple-choice knapsack problem using greedy approximation.
 ///
 /// Returns the indices of selected candidates.
-fn optimize_selection(
-    candidates: &mut [FidelityCandidate],
-    budget: usize,
-) -> Vec<usize> {
+fn optimize_selection(candidates: &mut [FidelityCandidate], budget: usize) -> Vec<usize> {
     // Sort by density (value per token) descending
     candidates.sort_by(|a, b| {
         b.density
@@ -1108,11 +1176,17 @@ mod tests {
         // Should have 2 candidates: Full and Signature (no chunk)
         assert_eq!(candidates.len(), 2);
 
-        let full = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Full)).unwrap();
+        let full = candidates
+            .iter()
+            .find(|c| matches!(c.mode, FidelityMode::Full))
+            .unwrap();
         assert_eq!(full.tokens, 10);
         assert_eq!(full.score, 1.0);
 
-        let sig = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Signature)).unwrap();
+        let sig = candidates
+            .iter()
+            .find(|c| matches!(c.mode, FidelityMode::Signature))
+            .unwrap();
         assert_eq!(sig.tokens, 50);
         assert_eq!(sig.score, 1.0 * 1.5); // priority * signature_boost
     }
@@ -1136,7 +1210,10 @@ mod tests {
         // Should have 3 candidates: Full, Chunk, and Signature
         assert_eq!(candidates.len(), 3);
 
-        let chunk = candidates.iter().find(|c| matches!(c.mode, FidelityMode::Chunk)).unwrap();
+        let chunk = candidates
+            .iter()
+            .find(|c| matches!(c.mode, FidelityMode::Chunk))
+            .unwrap();
         assert_eq!(chunk.tokens, 10);
         assert_eq!(chunk.score, 2.0 * 1.2); // priority * chunk_boost
     }
@@ -1248,16 +1325,14 @@ mod tests {
 
     #[test]
     fn test_optimize_selection_exact_budget() {
-        let mut candidates = vec![
-            FidelityCandidate {
-                file_index: 0,
-                mode: FidelityMode::Full,
-                score: 100.0,
-                tokens: 100,
-                density: 1.0,
-                content: "content".to_string(),
-            },
-        ];
+        let mut candidates = vec![FidelityCandidate {
+            file_index: 0,
+            mode: FidelityMode::Full,
+            score: 100.0,
+            tokens: 100,
+            density: 1.0,
+            content: "content".to_string(),
+        }];
 
         // Exact budget fit
         let selected = optimize_selection(&mut candidates, 100);
@@ -1266,16 +1341,14 @@ mod tests {
 
     #[test]
     fn test_optimize_selection_just_over_budget() {
-        let mut candidates = vec![
-            FidelityCandidate {
-                file_index: 0,
-                mode: FidelityMode::Full,
-                score: 100.0,
-                tokens: 101,
-                density: 0.99,
-                content: "content".to_string(),
-            },
-        ];
+        let mut candidates = vec![FidelityCandidate {
+            file_index: 0,
+            mode: FidelityMode::Full,
+            score: 100.0,
+            tokens: 101,
+            density: 0.99,
+            content: "content".to_string(),
+        }];
 
         // Just over budget
         let selected = optimize_selection(&mut candidates, 100);
@@ -1285,7 +1358,11 @@ mod tests {
     #[test]
     fn test_fidelity_candidate_mode_coverage() {
         // Test all fidelity modes
-        let modes = vec![FidelityMode::Full, FidelityMode::Chunk, FidelityMode::Signature];
+        let modes = vec![
+            FidelityMode::Full,
+            FidelityMode::Chunk,
+            FidelityMode::Signature,
+        ];
         for mode in modes {
             let candidate = FidelityCandidate {
                 file_index: 0,
@@ -1346,7 +1423,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: scribe_core::file::Language::Rust },
+            file_type: FileType::Source {
+                language: scribe_core::file::Language::Rust,
+            },
             language: scribe_core::file::Language::Rust,
             content: None,
             token_estimate: None,

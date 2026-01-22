@@ -935,7 +935,9 @@ mod tests {
         let dependencies = create_test_dependencies();
 
         // Budget smaller than any single file
-        let result = selector.speculative_pass(&files, &dependencies, 50).unwrap();
+        let result = selector
+            .speculative_pass(&files, &dependencies, 50)
+            .unwrap();
 
         // Should handle small budget gracefully
         let _ = result; // May or may not select files
@@ -969,7 +971,9 @@ mod tests {
         selected.insert("src/main.rs".to_string());
         selected.insert("src/lib.rs".to_string());
 
-        let score = selector.calculate_selection_score(&selected, &files).unwrap();
+        let score = selector
+            .calculate_selection_score(&selected, &files)
+            .unwrap();
 
         // Score should be based on importance of selected files
         assert!(score > 0.0);
@@ -982,7 +986,9 @@ mod tests {
         let files = create_test_files();
         let selected = HashSet::new();
 
-        let score = selector.calculate_selection_score(&selected, &files).unwrap();
+        let score = selector
+            .calculate_selection_score(&selected, &files)
+            .unwrap();
         assert_eq!(score, 0.0);
     }
 
@@ -1064,7 +1070,10 @@ mod tests {
 
         // Create interfaces with no implementations selected
         let mut interfaces = HashMap::new();
-        interfaces.insert("UnimplementedAPI".to_string(), vec!["src/lib.rs".to_string()]);
+        interfaces.insert(
+            "UnimplementedAPI".to_string(),
+            vec!["src/lib.rs".to_string()],
+        );
 
         let selected = HashSet::new(); // Nothing selected
 
@@ -1073,7 +1082,9 @@ mod tests {
             .unwrap();
 
         // Should detect missing interface implementation
-        assert!(gaps.iter().any(|gap| gap.gap_type == "missing_interface_implementation"));
+        assert!(gaps
+            .iter()
+            .any(|gap| gap.gap_type == "missing_interface_implementation"));
     }
 
     #[test]

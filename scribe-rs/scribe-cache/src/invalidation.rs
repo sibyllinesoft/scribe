@@ -42,10 +42,7 @@ impl FileDiff {
 /// Compute file diff between current state and cached state
 ///
 /// This is parallelized for performance on large repositories.
-pub fn compute_file_diff<F>(
-    current_files: &[PathBuf],
-    get_cached_hash: F,
-) -> FileDiff
+pub fn compute_file_diff<F>(current_files: &[PathBuf], get_cached_hash: F) -> FileDiff
 where
     F: Fn(&PathBuf) -> Option<ContentHash> + Sync,
 {
@@ -80,10 +77,18 @@ where
                 diff.unchanged.push(path);
             }
             Some(_) => {
-                diff.changed.push(ChangedFile { path, content, hash });
+                diff.changed.push(ChangedFile {
+                    path,
+                    content,
+                    hash,
+                });
             }
             None => {
-                diff.new_files.push(ChangedFile { path, content, hash });
+                diff.new_files.push(ChangedFile {
+                    path,
+                    content,
+                    hash,
+                });
             }
         }
     }
@@ -100,10 +105,7 @@ where
 
 /// Fast check using mtime before computing hash
 /// Returns files that might have changed (mtime differs or unknown)
-pub fn quick_mtime_filter<F>(
-    files: &[PathBuf],
-    get_cached_mtime: F,
-) -> Vec<PathBuf>
+pub fn quick_mtime_filter<F>(files: &[PathBuf], get_cached_mtime: F) -> Vec<PathBuf>
 where
     F: Fn(&PathBuf) -> Option<u64> + Sync,
 {

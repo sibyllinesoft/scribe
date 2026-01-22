@@ -158,7 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Overall assessment
         println!("\n🏆 Overall Performance Assessment:");
-        println!("{}", get_overall_assessment(avg_time, avg_memory, consistency));
+        println!(
+            "{}",
+            get_overall_assessment(avg_time, avg_memory, consistency)
+        );
     }
 
     println!("\n✅ Scaling Performance Test Complete!");

@@ -27,11 +27,18 @@ fn try_load_config_file(path: &Path) -> Option<Config> {
     }
     match Config::load_from_file(path) {
         Ok(config) => {
-            info!("📋 Loaded repository configuration from: {}", path.display());
+            info!(
+                "📋 Loaded repository configuration from: {}",
+                path.display()
+            );
             Some(config)
         }
         Err(err) => {
-            warn!("Failed to load configuration from {}: {}", path.display(), err);
+            warn!(
+                "Failed to load configuration from {}: {}",
+                path.display(),
+                err
+            );
             None
         }
     }

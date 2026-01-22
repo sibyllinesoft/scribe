@@ -1,4 +1,4 @@
-use scribe_scaling::{ScalingConfig, ScalingEngine, FileMetadata};
+use scribe_scaling::{FileMetadata, ScalingConfig, ScalingEngine};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -39,10 +39,19 @@ fn estimate_file_tokens(file: &FileMetadata, token_budget: usize) -> usize {
 }
 
 /// Print budget comparison result
-fn print_budget_comparison(token_budget: usize, total_files: usize, total_tokens: usize, expected_files: &str, expected_tokens: &str) {
+fn print_budget_comparison(
+    token_budget: usize,
+    total_files: usize,
+    total_tokens: usize,
+    expected_files: &str,
+    expected_tokens: &str,
+) {
     println!("\n   🔍 Comparison to Original Scribe:");
     println!("      Original: {}", expected_files);
-    println!("      Current:  {} files, {} tokens", total_files, total_tokens);
+    println!(
+        "      Current:  {} files, {} tokens",
+        total_files, total_tokens
+    );
 
     let good_file_count = match token_budget {
         1000 => total_files >= 2 && total_files <= 6,
@@ -55,7 +64,10 @@ fn print_budget_comparison(token_budget: usize, total_files: usize, total_tokens
     } else if total_tokens <= (token_budget as f64 * 1.2) as usize {
         println!("      ✅ GOOD: Close to budget with {} files", total_files);
     } else {
-        println!("      ⚠️  OVER BUDGET: {} tokens > {} budget", total_tokens, token_budget);
+        println!(
+            "      ⚠️  OVER BUDGET: {} tokens > {} budget",
+            total_tokens, token_budget
+        );
     }
 }
 
@@ -114,7 +126,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             total_estimated_tokens += tokens;
 
             if file_details.len() < 5 {
-                let filename = file.path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let filename = file
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 file_details.push((filename, file.size, tokens));
             }
         }
@@ -137,13 +154,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Compare to original scribe expectations
         match token_budget {
-            1000 => print_budget_comparison(token_budget, result.total_files, total_estimated_tokens, "~2 files, ~791 tokens", ""),
-            10000 => print_budget_comparison(token_budget, result.total_files, total_estimated_tokens, "~11 files, ~7,630 tokens", ""),
+            1000 => print_budget_comparison(
+                token_budget,
+                result.total_files,
+                total_estimated_tokens,
+                "~2 files, ~791 tokens",
+                "",
+            ),
+            10000 => print_budget_comparison(
+                token_budget,
+                result.total_files,
+                total_estimated_tokens,
+                "~11 files, ~7,630 tokens",
+                "",
+            ),
             50000 => {
                 if total_estimated_tokens <= 50000 {
                     println!("      ✅ Within budget: {} tokens", total_estimated_tokens);
                 } else {
-                    println!("      ⚠️  Over budget: {} tokens > {} budget", total_estimated_tokens, token_budget);
+                    println!(
+                        "      ⚠️  Over budget: {} tokens > {} budget",
+                        total_estimated_tokens, token_budget
+                    );
                 }
             }
             _ => {}

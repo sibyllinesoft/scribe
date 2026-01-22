@@ -62,7 +62,6 @@ pub async fn bundle_editor(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-
 /// Scan repository and return file information
 pub async fn scan_repository(State(state): State<AppState>) -> impl IntoResponse {
     let repo_path = {
@@ -621,7 +620,7 @@ pub async fn compute_covering_set(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AnalysisProvider, AppState, BundleState, WebServiceConfig, WebSelectionMetrics};
+    use crate::{AnalysisProvider, AppState, BundleState, WebSelectionMetrics, WebServiceConfig};
     use async_trait::async_trait;
     use std::sync::Arc;
     use tempfile::TempDir;

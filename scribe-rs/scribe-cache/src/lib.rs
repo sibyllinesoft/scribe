@@ -31,16 +31,16 @@
 //! ```
 
 pub mod error;
+pub mod invalidation;
 pub mod keys;
 pub mod store;
 pub mod tables;
-pub mod invalidation;
 pub mod version;
 
 pub use error::{CacheError, CacheResult};
+pub use invalidation::{ChangedFile, FileDiff};
 pub use keys::ContentHash;
 pub use store::ScribeCache;
-pub use invalidation::{ChangedFile, FileDiff};
 pub use version::CACHE_VERSION;
 
 use serde::{Deserialize, Serialize};

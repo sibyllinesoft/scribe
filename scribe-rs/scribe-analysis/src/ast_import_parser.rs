@@ -165,7 +165,10 @@ impl SimpleAstParser {
             // Use SWC for TypeScript/JavaScript (faster, handles edge cases better)
             ImportLanguage::TypeScript | ImportLanguage::JavaScript => {
                 let is_typescript = matches!(language, ImportLanguage::TypeScript);
-                Ok(crate::swc_import_extractor::extract_imports(content, is_typescript))
+                Ok(crate::swc_import_extractor::extract_imports(
+                    content,
+                    is_typescript,
+                ))
             }
             // Use tree-sitter for other languages
             _ => self.extract_imports_treesitter(content, language),
@@ -471,7 +474,9 @@ from collections import defaultdict
 from typing import List, Dict
 "#;
 
-        let imports = parser.extract_imports(code, ImportLanguage::Python).unwrap();
+        let imports = parser
+            .extract_imports(code, ImportLanguage::Python)
+            .unwrap();
 
         assert!(!imports.is_empty());
         assert!(imports.iter().any(|i| i.module.contains("os")));
@@ -489,7 +494,9 @@ const fs = require('fs');
 const path = require('path');
 "#;
 
-        let imports = parser.extract_imports(code, ImportLanguage::JavaScript).unwrap();
+        let imports = parser
+            .extract_imports(code, ImportLanguage::JavaScript)
+            .unwrap();
 
         assert!(!imports.is_empty());
         assert!(imports.iter().any(|i| i.module.contains("react")));
@@ -504,7 +511,9 @@ import type { Config } from './config';
 import * as utils from './utils';
 "#;
 
-        let imports = parser.extract_imports(code, ImportLanguage::TypeScript).unwrap();
+        let imports = parser
+            .extract_imports(code, ImportLanguage::TypeScript)
+            .unwrap();
 
         assert!(!imports.is_empty());
     }
@@ -563,7 +572,9 @@ if __name__ == "__main__":
     main()
 "#;
 
-        let imports = parser.extract_imports(code, ImportLanguage::Python).unwrap();
+        let imports = parser
+            .extract_imports(code, ImportLanguage::Python)
+            .unwrap();
         assert!(imports.is_empty());
     }
 
@@ -638,9 +649,21 @@ if __name__ == "__main__":
         let parser = SimpleAstParser::new().unwrap();
 
         let files = vec![
-            ("file1.py".to_string(), "import os\nimport sys".to_string(), ImportLanguage::Python),
-            ("file2.py".to_string(), "from pathlib import Path".to_string(), ImportLanguage::Python),
-            ("file3.rs".to_string(), "use std::collections::HashMap;".to_string(), ImportLanguage::Rust),
+            (
+                "file1.py".to_string(),
+                "import os\nimport sys".to_string(),
+                ImportLanguage::Python,
+            ),
+            (
+                "file2.py".to_string(),
+                "from pathlib import Path".to_string(),
+                ImportLanguage::Python,
+            ),
+            (
+                "file3.rs".to_string(),
+                "use std::collections::HashMap;".to_string(),
+                ImportLanguage::Rust,
+            ),
         ];
 
         let results = parser.extract_imports_parallel(&files).unwrap();
@@ -663,7 +686,9 @@ if __name__ == "__main__":
             "from collections import Counter",
         ];
 
-        let results = parser.extract_imports_batch(&contents, ImportLanguage::Python).unwrap();
+        let results = parser
+            .extract_imports_batch(&contents, ImportLanguage::Python)
+            .unwrap();
 
         assert_eq!(results.len(), 3);
         assert!(!results[0].is_empty());
@@ -679,7 +704,9 @@ import os
 import sys
 "#;
 
-        let imports = parser.extract_imports(code, ImportLanguage::Python).unwrap();
+        let imports = parser
+            .extract_imports(code, ImportLanguage::Python)
+            .unwrap();
 
         // Line numbers should be 1-indexed
         assert!(imports.iter().any(|i| i.line_number >= 2));

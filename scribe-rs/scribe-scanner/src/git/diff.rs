@@ -284,9 +284,13 @@ mod tests {
         assert!(config.ignore_patterns.contains(&"*.log".to_string()));
         assert!(config.ignore_patterns.contains(&"*.tmp".to_string()));
         assert!(config.ignore_patterns.contains(&"*.cache".to_string()));
-        assert!(config.ignore_patterns.contains(&"node_modules/*".to_string()));
+        assert!(config
+            .ignore_patterns
+            .contains(&"node_modules/*".to_string()));
         assert!(config.ignore_patterns.contains(&".git/*".to_string()));
-        assert!(config.ignore_patterns.contains(&"__pycache__/*".to_string()));
+        assert!(config
+            .ignore_patterns
+            .contains(&"__pycache__/*".to_string()));
         assert!(config.ignore_patterns.contains(&"*.min.js".to_string()));
         assert!(config.ignore_patterns.contains(&"*.min.css".to_string()));
         assert!(config.ignore_patterns.contains(&"build/*".to_string()));
@@ -441,7 +445,10 @@ mod tests {
 
         let deserialized: DiffAnalysisResult = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.total_files_changed, result.total_files_changed);
-        assert_eq!(deserialized.commit_range_analyzed, result.commit_range_analyzed);
+        assert_eq!(
+            deserialized.commit_range_analyzed,
+            result.commit_range_analyzed
+        );
     }
 
     #[test]

@@ -253,7 +253,11 @@ mod tests {
         let err = ScalingError::path("Invalid path", "/some/path");
 
         match &err {
-            ScalingError::Path { message, path, source } => {
+            ScalingError::Path {
+                message,
+                path,
+                source,
+            } => {
                 assert_eq!(message, "Invalid path");
                 assert_eq!(*path, PathBuf::from("/some/path"));
                 assert!(source.is_none());
@@ -365,7 +369,10 @@ mod tests {
         let err = ScalingError::timeout("Operation timed out", 5000);
 
         match &err {
-            ScalingError::Timeout { message, timeout_ms } => {
+            ScalingError::Timeout {
+                message,
+                timeout_ms,
+            } => {
                 assert_eq!(message, "Operation timed out");
                 assert_eq!(*timeout_ms, 5000);
             }
@@ -381,7 +388,11 @@ mod tests {
         let err = ScalingError::resource_limit("Memory limit exceeded", 1024, 2048);
 
         match &err {
-            ScalingError::ResourceLimit { message, limit, actual } => {
+            ScalingError::ResourceLimit {
+                message,
+                limit,
+                actual,
+            } => {
                 assert_eq!(message, "Memory limit exceeded");
                 assert_eq!(*limit, 1024);
                 assert_eq!(*actual, 2048);

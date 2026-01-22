@@ -532,7 +532,8 @@ mod tests {
         let two_hours_ago = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() - 7200;
+            .as_secs()
+            - 7200;
 
         let cached = CachedProcessingResult {
             repo_hash: 123,
@@ -626,7 +627,10 @@ mod tests {
         cache.insert(123, "test", result);
 
         // Directly verify the entry is there initially
-        assert!(cache.entries.peek(&ProcessingCache::make_key(123, "test")).is_some());
+        assert!(cache
+            .entries
+            .peek(&ProcessingCache::make_key(123, "test"))
+            .is_some());
 
         // Note: This test verifies cache insertion works, but real TTL expiration
         // would require waiting or mocking time
@@ -648,7 +652,8 @@ mod tests {
         let future_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() + 3600;
+            .as_secs()
+            + 3600;
 
         let cached = CachedProcessingResult {
             repo_hash: 123,

@@ -13,7 +13,9 @@ fn test_full_workflow() {
     let repo_path = repo.path();
 
     // Create some test files
-    std::fs::write(repo_path.join("router.go"), r#"
+    std::fs::write(
+        repo_path.join("router.go"),
+        r#"
 package gin
 
 // RedirectTrailingSlash enables automatic redirection
@@ -25,9 +27,13 @@ var RedirectFixedPath = true
 func handleRequest(ctx Context) error {
     return nil
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
-    std::fs::write(repo_path.join("context.go"), r#"
+    std::fs::write(
+        repo_path.join("context.go"),
+        r#"
 package gin
 
 type Context struct {
@@ -38,16 +44,22 @@ type Context struct {
 func (c *Context) JSON(code int, obj any) {
     c.Writer.WriteHeader(code)
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
-    std::fs::write(repo_path.join("utils.go"), r#"
+    std::fs::write(
+        repo_path.join("utils.go"),
+        r#"
 package gin
 
 func parseQueryParams(query string) map[string]string {
     result := make(map[string]string)
     return result
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Open cache and index
     let cache_dir = TempDir::new().unwrap();
@@ -81,9 +93,9 @@ func parseQueryParams(query string) map[string]string {
             .lines()
             .filter_map(|line| {
                 if line.starts_with("func ") || line.starts_with("var ") {
-                    line.split_whitespace().nth(1).map(|s| {
-                        s.trim_matches(|c: char| !c.is_alphanumeric()).to_string()
-                    })
+                    line.split_whitespace()
+                        .nth(1)
+                        .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
                 } else {
                     None
                 }
@@ -119,7 +131,16 @@ func parseQueryParams(query string) map[string]string {
 
     // Store in cache
     cache.store_file_data_batch(&cache_entries).unwrap();
-    cache.update_path_mappings(&diff.new_files.iter().chain(diff.changed.iter()).cloned().collect::<Vec<_>>()).unwrap();
+    cache
+        .update_path_mappings(
+            &diff
+                .new_files
+                .iter()
+                .chain(diff.changed.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
 
     // Test searching for specific symbols
     let results = index.search("RedirectTrailingSlash", 10).unwrap();
@@ -138,17 +159,22 @@ func parseQueryParams(query string) map[string]string {
     let scored = index.score_files("Context JSON", &files).unwrap();
 
     // context.go should score highest for "Context JSON"
-    let context_score = scored.iter()
+    let context_score = scored
+        .iter()
         .find(|(p, _)| p.to_string_lossy().contains("context.go"))
         .map(|(_, s)| *s)
         .unwrap_or(0.0);
 
-    let utils_score = scored.iter()
+    let utils_score = scored
+        .iter()
         .find(|(p, _)| p.to_string_lossy().contains("utils.go"))
         .map(|(_, s)| *s)
         .unwrap_or(0.0);
 
-    assert!(context_score > utils_score, "context.go should score higher than utils.go for 'Context JSON'");
+    assert!(
+        context_score > utils_score,
+        "context.go should score higher than utils.go for 'Context JSON'"
+    );
 
     // Now check cache - files should be unchanged on second check
     let diff2 = cache.diff_files(&files);
@@ -156,7 +182,9 @@ func parseQueryParams(query string) map[string]string {
     assert!(diff2.is_up_to_date());
 
     // Modify a file
-    std::fs::write(repo_path.join("router.go"), r#"
+    std::fs::write(
+        repo_path.join("router.go"),
+        r#"
 package gin
 
 // RedirectTrailingSlash - modified!
@@ -165,7 +193,9 @@ var RedirectTrailingSlash = false
 func handleRequest(ctx Context) error {
     return nil
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Check changes - should detect modification
     let diff3 = cache.diff_files(&files);

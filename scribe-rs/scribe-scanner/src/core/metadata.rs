@@ -830,7 +830,9 @@ mod tests {
     #[tokio::test]
     async fn test_extract_metadata_nonexistent_file() {
         let extractor = MetadataExtractor::new();
-        let result = extractor.extract_metadata(Path::new("/nonexistent/path/file.txt")).await;
+        let result = extractor
+            .extract_metadata(Path::new("/nonexistent/path/file.txt"))
+            .await;
         assert!(result.is_err());
     }
 

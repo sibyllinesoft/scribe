@@ -6,7 +6,9 @@
 //! - Node.js module resolution algorithm
 //! - Re-export resolution
 
-use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery, TsconfigOptions, TsconfigReferences};
+use oxc_resolver::{
+    ResolveOptions, Resolver, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,10 +57,12 @@ impl TsResolver {
             // Support directory imports with index files
             main_files: vec!["index".into()],
             // Enable tsconfig paths if tsconfig exists
-            tsconfig: tsconfig_path.map(|path| TsconfigDiscovery::Manual(TsconfigOptions {
-                config_file: path,
-                references: TsconfigReferences::Auto,
-            })),
+            tsconfig: tsconfig_path.map(|path| {
+                TsconfigDiscovery::Manual(TsconfigOptions {
+                    config_file: path,
+                    references: TsconfigReferences::Auto,
+                })
+            }),
             // Resolve symlinks for node_modules
             symlinks: true,
             ..Default::default()
@@ -201,7 +205,11 @@ mod tests {
         let components_dir = src_dir.join("components");
         fs::create_dir_all(&components_dir).unwrap();
         fs::write(components_dir.join("index.ts"), "export * from './Button';").unwrap();
-        fs::write(components_dir.join("Button.ts"), "export const Button = {};").unwrap();
+        fs::write(
+            components_dir.join("Button.ts"),
+            "export const Button = {};",
+        )
+        .unwrap();
 
         let resolver = TsResolver::new(dir.path());
         let main_file = src_dir.join("main.ts");
@@ -221,7 +229,11 @@ mod tests {
         let nested_dir = src_dir.join("nested");
         fs::create_dir_all(&nested_dir).unwrap();
         fs::write(src_dir.join("utils.ts"), "export const util = 1;").unwrap();
-        fs::write(nested_dir.join("deep.ts"), "import { util } from '../utils';").unwrap();
+        fs::write(
+            nested_dir.join("deep.ts"),
+            "import { util } from '../utils';",
+        )
+        .unwrap();
 
         let resolver = TsResolver::new(dir.path());
         let deep_file = nested_dir.join("deep.ts");
@@ -312,8 +324,16 @@ mod tests {
 
         let src_dir = dir.path().join("src");
         fs::create_dir_all(&src_dir).unwrap();
-        fs::write(src_dir.join("Button.tsx"), "export const Button = () => <div/>;").unwrap();
-        fs::write(src_dir.join("Icon.jsx"), "export const Icon = () => <span/>;").unwrap();
+        fs::write(
+            src_dir.join("Button.tsx"),
+            "export const Button = () => <div/>;",
+        )
+        .unwrap();
+        fs::write(
+            src_dir.join("Icon.jsx"),
+            "export const Icon = () => <span/>;",
+        )
+        .unwrap();
 
         let resolver = TsResolver::new(dir.path());
         let main_file = src_dir.join("App.tsx");

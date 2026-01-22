@@ -8,7 +8,12 @@ use scribe_core::{FileInfo, Language};
 /// Priority boost patterns: (pattern_list, boost_value)
 const README_BOOST: (&[&str], f64) = (&["readme.md", "readme"], 0.4);
 const PACKAGE_MANAGER_BOOST: (&[&str], f64) = (
-    &["cargo.toml", "package.json", "requirements.txt", "pyproject.toml"],
+    &[
+        "cargo.toml",
+        "package.json",
+        "requirements.txt",
+        "pyproject.toml",
+    ],
     0.25,
 );
 const ENTRYPOINT_BOOST: (&[&str], f64) = (
@@ -32,7 +37,11 @@ pub fn compute_priority_boost(file: &FileInfo) -> f64 {
     let path_lower = file.relative_path.to_lowercase();
 
     let boost = apply_boost(&path_lower, README_BOOST.0, README_BOOST.1)
-        + apply_boost(&path_lower, PACKAGE_MANAGER_BOOST.0, PACKAGE_MANAGER_BOOST.1)
+        + apply_boost(
+            &path_lower,
+            PACKAGE_MANAGER_BOOST.0,
+            PACKAGE_MANAGER_BOOST.1,
+        )
         + apply_boost(&path_lower, ENTRYPOINT_BOOST.0, ENTRYPOINT_BOOST.1)
         + apply_boost(&path_lower, LIB_BOOST.0, LIB_BOOST.1)
         + apply_boost(&path_lower, BUILD_BOOST.0, BUILD_BOOST.1);
@@ -54,7 +63,6 @@ pub fn detect_entrypoint_from_content(content: &str, language: &Language) -> boo
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,7 +75,9 @@ mod tests {
             relative_path: relative_path.to_string(),
             size: 100,
             language: Language::Unknown,
-            file_type: scribe_core::FileType::Source { language: Language::Unknown },
+            file_type: scribe_core::FileType::Source {
+                language: Language::Unknown,
+            },
             modified: None,
             decision: RenderDecision::include("test"),
             token_estimate: None,
@@ -133,19 +143,28 @@ mod tests {
     #[test]
     fn test_detect_javascript_entrypoint_module_exports() {
         let content = "module.exports = myFunction;";
-        assert!(detect_entrypoint_from_content(content, &Language::JavaScript));
+        assert!(detect_entrypoint_from_content(
+            content,
+            &Language::JavaScript
+        ));
     }
 
     #[test]
     fn test_detect_javascript_entrypoint_export_default() {
         let content = "export default function App() {}";
-        assert!(detect_entrypoint_from_content(content, &Language::JavaScript));
+        assert!(detect_entrypoint_from_content(
+            content,
+            &Language::JavaScript
+        ));
     }
 
     #[test]
     fn test_detect_typescript_entrypoint() {
         let content = "export default class MyComponent {}";
-        assert!(detect_entrypoint_from_content(content, &Language::TypeScript));
+        assert!(detect_entrypoint_from_content(
+            content,
+            &Language::TypeScript
+        ));
     }
 
     #[test]

@@ -226,7 +226,10 @@ mod tests {
         };
 
         let cloned = rules.clone();
-        assert_eq!(rules.priority_languages.len(), cloned.priority_languages.len());
+        assert_eq!(
+            rules.priority_languages.len(),
+            cloned.priority_languages.len()
+        );
     }
 
     #[test]

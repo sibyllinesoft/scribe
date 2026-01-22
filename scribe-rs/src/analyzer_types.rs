@@ -46,8 +46,7 @@ impl AnalyzerFile {
         let depth = normalized_path.matches('/').count();
         let is_docs = matches!(file.file_type, FileType::Documentation { .. });
         let is_readme = normalized_path.to_lowercase().contains("readme");
-        let is_test =
-            matches!(file.file_type, FileType::Test { .. }) || is_test_path(&file.path);
+        let is_test = matches!(file.file_type, FileType::Test { .. }) || is_test_path(&file.path);
 
         Self {
             path: path_string,
@@ -485,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_modified() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -494,7 +493,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -515,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_added() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -524,7 +525,9 @@ mod tests {
             size: 50,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -545,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_deleted() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -554,7 +557,9 @@ mod tests {
             size: 0,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -575,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_renamed() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -584,7 +589,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -605,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_copied() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -614,7 +621,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -635,7 +644,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_unmerged() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -644,7 +653,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -665,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_untracked() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -674,7 +685,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -695,7 +708,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_unmodified() {
-        use scribe_core::{GitStatus, FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, GitStatus, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -704,7 +717,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,
@@ -725,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_compute_churn_score_no_status() {
-        use scribe_core::{FileType, RenderDecision, file::FileWeight, Language};
+        use scribe_core::{file::FileWeight, FileType, Language, RenderDecision};
         use std::path::PathBuf;
 
         let file_info = FileInfo {
@@ -734,7 +749,9 @@ mod tests {
             size: 100,
             modified: None,
             decision: RenderDecision::include("test"),
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             language: Language::Rust,
             content: None,
             token_estimate: None,

@@ -371,11 +371,7 @@ mod tests {
     #[test]
     fn test_circular_dependency_creation() {
         let dep = CircularDependency {
-            nodes: vec![
-                "a.rs".to_string(),
-                "b.rs".to_string(),
-                "a.rs".to_string(),
-            ],
+            nodes: vec!["a.rs".to_string(), "b.rs".to_string(), "a.rs".to_string()],
             cycle_length: 2,
             strength: 1.0,
         };
@@ -441,7 +437,10 @@ mod tests {
         };
 
         assert_eq!(profile.pagerank_memory_estimate_mb, 50.0);
-        assert_eq!(profile.traversal_complexity.time_complexity_class, "O(V + E)");
+        assert_eq!(
+            profile.traversal_complexity.time_complexity_class,
+            "O(V + E)"
+        );
     }
 
     #[test]

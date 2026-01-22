@@ -826,10 +826,22 @@ mod tests {
 
     #[test]
     fn test_template_detection_method_equality() {
-        assert_eq!(TemplateDetectionMethod::Extension, TemplateDetectionMethod::Extension);
-        assert_ne!(TemplateDetectionMethod::Extension, TemplateDetectionMethod::ContentPattern);
-        assert_ne!(TemplateDetectionMethod::ContentPattern, TemplateDetectionMethod::DirectoryContext);
-        assert_ne!(TemplateDetectionMethod::DirectoryContext, TemplateDetectionMethod::LanguageHeuristic);
+        assert_eq!(
+            TemplateDetectionMethod::Extension,
+            TemplateDetectionMethod::Extension
+        );
+        assert_ne!(
+            TemplateDetectionMethod::Extension,
+            TemplateDetectionMethod::ContentPattern
+        );
+        assert_ne!(
+            TemplateDetectionMethod::ContentPattern,
+            TemplateDetectionMethod::DirectoryContext
+        );
+        assert_ne!(
+            TemplateDetectionMethod::DirectoryContext,
+            TemplateDetectionMethod::LanguageHeuristic
+        );
     }
 
     #[test]
@@ -935,16 +947,28 @@ mod tests {
 
         // Test Jinja-style patterns
         let jinja_content = "{% for item in items %} {{ item }} {% endfor %}";
-        assert_eq!(detector.count_pattern_occurrences(jinja_content, "{%", "%}"), 2);
-        assert_eq!(detector.count_pattern_occurrences(jinja_content, "{{", "}}"), 1);
+        assert_eq!(
+            detector.count_pattern_occurrences(jinja_content, "{%", "%}"),
+            2
+        );
+        assert_eq!(
+            detector.count_pattern_occurrences(jinja_content, "{{", "}}"),
+            1
+        );
 
         // Test EJS-style patterns
         let ejs_content = "<%= title %> <%- description %> <% if (show) { %>";
-        assert_eq!(detector.count_pattern_occurrences(ejs_content, "<%", "%>"), 3);
+        assert_eq!(
+            detector.count_pattern_occurrences(ejs_content, "<%", "%>"),
+            3
+        );
 
         // Test no patterns
         let plain_content = "Hello, world!";
-        assert_eq!(detector.count_pattern_occurrences(plain_content, "{{", "}}"), 0);
+        assert_eq!(
+            detector.count_pattern_occurrences(plain_content, "{{", "}}"),
+            0
+        );
     }
 
     #[test]
@@ -1039,7 +1063,10 @@ mod tests {
         let result = result.unwrap();
         assert!(result.is_template);
         assert_eq!(result.engine, Some(TemplateEngine::Generic));
-        assert_eq!(result.detection_method, TemplateDetectionMethod::DirectoryContext);
+        assert_eq!(
+            result.detection_method,
+            TemplateDetectionMethod::DirectoryContext
+        );
         assert_eq!(result.confidence, 0.7);
 
         // HTML file NOT in template directory
@@ -1080,7 +1107,10 @@ mod tests {
         let result = result.unwrap();
         assert!(result.is_template);
         assert_eq!(result.engine, Some(TemplateEngine::React));
-        assert_eq!(result.detection_method, TemplateDetectionMethod::LanguageHeuristic);
+        assert_eq!(
+            result.detection_method,
+            TemplateDetectionMethod::LanguageHeuristic
+        );
         assert_eq!(result.confidence, 0.9);
     }
 
@@ -1123,7 +1153,10 @@ mod tests {
         // Template directory but no extension match
         let result = detector.detect_template("templates/layout.html").unwrap();
         assert!(result.is_template);
-        assert_eq!(result.detection_method, TemplateDetectionMethod::DirectoryContext);
+        assert_eq!(
+            result.detection_method,
+            TemplateDetectionMethod::DirectoryContext
+        );
     }
 
     #[test]
@@ -1297,7 +1330,9 @@ mod tests {
 
         let mut parser = Parser::new();
         parser.set_language(tree_sitter_html::language()).unwrap();
-        let tree = parser.parse("<html><body>Hello</body></html>", None).unwrap();
+        let tree = parser
+            .parse("<html><body>Hello</body></html>", None)
+            .unwrap();
         let root = tree.root_node();
 
         // For a simple HTML file, it will match Vue patterns due to the broad matching
@@ -1305,7 +1340,10 @@ mod tests {
         // due to the recursive pattern matching that returns true for text/attribute_value nodes
         let engine = detector.detect_template_engine_from_ast(&root, Path::new("file.html"));
         // This will actually match Vue because has_vue_patterns returns true for any HTML with text nodes
-        assert!(matches!(engine, TemplateEngine::Vue | TemplateEngine::Generic));
+        assert!(matches!(
+            engine,
+            TemplateEngine::Vue | TemplateEngine::Generic
+        ));
     }
 
     #[test]
@@ -1365,7 +1403,9 @@ mod tests {
         let mut parser = Parser::new();
         parser.set_language(tree_sitter_html::language()).unwrap();
 
-        let tree = parser.parse("<div *ngFor=\"let item of items\"></div>", None).unwrap();
+        let tree = parser
+            .parse("<div *ngFor=\"let item of items\"></div>", None)
+            .unwrap();
         let root = tree.root_node();
 
         let result = detector.has_angular_patterns(&root);
@@ -1379,7 +1419,9 @@ mod tests {
         let mut parser = Parser::new();
         parser.set_language(tree_sitter_html::language()).unwrap();
 
-        let tree = parser.parse("<div className=\"test\"></div>", None).unwrap();
+        let tree = parser
+            .parse("<div className=\"test\"></div>", None)
+            .unwrap();
         let root = tree.root_node();
 
         let result = detector.has_react_patterns(&root);
@@ -1505,7 +1547,9 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "fn main() {{ println!(\"hello\"); }}").unwrap();
 
-        let result = detector.detect_by_content_patterns(temp_file.path()).unwrap();
+        let result = detector
+            .detect_by_content_patterns(temp_file.path())
+            .unwrap();
         // Rust code shouldn't be detected as template
         assert!(result.is_none());
     }
@@ -1597,7 +1641,10 @@ mod tests {
 
         // EJS patterns
         let ejs_content = "<% let x = 1; %><%= x %>";
-        assert_eq!(detector.count_pattern_occurrences(ejs_content, "<%", "%>"), 2);
+        assert_eq!(
+            detector.count_pattern_occurrences(ejs_content, "<%", "%>"),
+            2
+        );
 
         // FreeMarker patterns
         let freemarker = "<# list items></#list>";

@@ -451,7 +451,10 @@ impl CentralityCalculator {
         let range = max_centrality - min_centrality;
 
         if range.abs() < f64::EPSILON {
-            return Ok(Self::normalize_uniform_scores(centrality_scores, max_heuristic * 0.5));
+            return Ok(Self::normalize_uniform_scores(
+                centrality_scores,
+                max_heuristic * 0.5,
+            ));
         }
 
         let threshold = self.config.integration.min_centrality_threshold;
@@ -469,7 +472,8 @@ impl CentralityCalculator {
     /// Compute mean and standard deviation from a slice of values
     fn compute_mean_std(values: &[f64]) -> (f64, f64) {
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance = values.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        let variance =
+            values.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
         (mean, variance.sqrt())
     }
 
@@ -901,7 +905,8 @@ mod tests {
                 "components".to_string(),
             ]),
             MockScanResult::new("utils.ts").with_imports(vec!["types".to_string()]),
-            MockScanResult::new("api.ts").with_imports(vec!["utils".to_string(), "types".to_string()]),
+            MockScanResult::new("api.ts")
+                .with_imports(vec!["utils".to_string(), "types".to_string()]),
             MockScanResult::new("components.ts").with_imports(vec!["utils".to_string()]),
             MockScanResult::new("types.ts"),
         ];
@@ -962,7 +967,7 @@ mod tests {
         // Files with imports that may or may not resolve
         let scan_results = vec![
             MockScanResult::new("main.py").with_imports(vec![
-                "utils".to_string(),      // Should try to resolve
+                "utils".to_string(),       // Should try to resolve
                 "nonexistent".to_string(), // Won't resolve
             ]),
             MockScanResult::new("utils.py"),
@@ -1004,7 +1009,10 @@ mod tests {
         let config = CentralityConfig::default();
         let cloned = config.clone();
 
-        assert_eq!(config.analyze_graph_structure, cloned.analyze_graph_structure);
+        assert_eq!(
+            config.analyze_graph_structure,
+            cloned.analyze_graph_structure
+        );
         assert_eq!(
             config.integration.centrality_weight,
             cloned.integration.centrality_weight
@@ -1128,10 +1136,7 @@ mod tests {
 
         let calculator = CentralityCalculator::with_config(config).unwrap();
 
-        let scan_results = vec![
-            MockScanResult::new("a.py"),
-            MockScanResult::new("b.py"),
-        ];
+        let scan_results = vec![MockScanResult::new("a.py"), MockScanResult::new("b.py")];
 
         let centrality_results = calculator.calculate_centrality(&scan_results).unwrap();
 
@@ -1264,7 +1269,8 @@ mod tests {
 
         // Create files with varying import relationships
         let scan_results = vec![
-            MockScanResult::new("main.py").with_imports(vec!["utils".to_string(), "config".to_string()]),
+            MockScanResult::new("main.py")
+                .with_imports(vec!["utils".to_string(), "config".to_string()]),
             MockScanResult::new("utils.py").with_imports(vec!["config".to_string()]),
             MockScanResult::new("config.py"),
             MockScanResult::new("isolated.py"), // Low centrality, might be filtered
@@ -1301,7 +1307,8 @@ mod tests {
         let calculator = CentralityCalculator::with_config(config).unwrap();
 
         let scan_results = vec![
-            MockScanResult::new("main.py").with_imports(vec!["utils".to_string(), "config".to_string()]),
+            MockScanResult::new("main.py")
+                .with_imports(vec!["utils".to_string(), "config".to_string()]),
             MockScanResult::new("utils.py").with_imports(vec!["config".to_string()]),
             MockScanResult::new("config.py"),
         ];

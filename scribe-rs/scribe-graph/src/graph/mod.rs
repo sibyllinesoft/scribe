@@ -626,8 +626,15 @@ impl DependencyGraph {
 impl ConcurrentDependencyGraph {
     /// Convert back to single-threaded graph
     pub fn into_sequential(self) -> DependencyGraph {
-        let (forward_dashmap, reverse_dashmap, path_to_id, id_to_path, node_metadata, stats_cache, next_id) =
-            self.into_components();
+        let (
+            forward_dashmap,
+            reverse_dashmap,
+            path_to_id,
+            id_to_path,
+            node_metadata,
+            stats_cache,
+            next_id,
+        ) = self.into_components();
 
         // Convert DashMap back to Vec
         let mut forward_edges = vec![HashSet::new(); next_id];

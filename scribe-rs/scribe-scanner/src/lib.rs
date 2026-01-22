@@ -45,7 +45,9 @@ pub use core::scanner::{ScanOptions, ScanProgress, ScanResult, Scanner};
 pub use git::{GitCommitInfo, GitFileInfo, GitIntegrator};
 
 // Re-export analysis types
-pub use analysis::aho_corasick_reference_index::{AhoCorasickReferenceIndex, IndexConfig, IndexMetrics};
+pub use analysis::aho_corasick_reference_index::{
+    AhoCorasickReferenceIndex, IndexConfig, IndexMetrics,
+};
 pub use analysis::language_detection::{DetectionStrategy, LanguageDetector, LanguageHints};
 
 // Re-export performance types
@@ -261,7 +263,8 @@ mod tests {
     fn test_with_git_integration_nonexistent() {
         let scanner = FileScanner::new();
         // Non-existent directory should fail
-        let result = scanner.with_git_integration(Path::new("/nonexistent/path/that/does/not/exist"));
+        let result =
+            scanner.with_git_integration(Path::new("/nonexistent/path/that/does/not/exist"));
         // GitIntegrator::new might succeed or fail depending on whether it tries to find .git
         // The important thing is it doesn't panic
         let _ = result;

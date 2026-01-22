@@ -95,14 +95,22 @@ impl PerformanceMonitor {
 
     /// Record file processing
     pub fn record_file_processed(&self, bytes: u64, duration: Duration) {
-        self.real_time.files_processed.fetch_add(1, Ordering::Relaxed);
-        self.real_time.bytes_processed.fetch_add(bytes, Ordering::Relaxed);
-        self.real_time.total_scan_time_us.fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        self.real_time
+            .files_processed
+            .fetch_add(1, Ordering::Relaxed);
+        self.real_time
+            .bytes_processed
+            .fetch_add(bytes, Ordering::Relaxed);
+        self.real_time
+            .total_scan_time_us
+            .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
     }
 
     /// Record file filtered
     pub fn record_file_filtered(&self) {
-        self.real_time.files_filtered.fetch_add(1, Ordering::Relaxed);
+        self.real_time
+            .files_filtered
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record file cached
@@ -118,13 +126,19 @@ impl PerformanceMonitor {
 
     /// Record I/O operation
     pub fn record_io_operation(&self, bytes: u64, duration: Duration) {
-        self.real_time.bytes_read.fetch_add(bytes, Ordering::Relaxed);
-        self.real_time.io_time_us.fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        self.real_time
+            .bytes_read
+            .fetch_add(bytes, Ordering::Relaxed);
+        self.real_time
+            .io_time_us
+            .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
     }
 
     /// Record git operation
     pub fn record_git_operation(&self, duration: Duration) {
-        self.real_time.git_time_us.fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        self.real_time
+            .git_time_us
+            .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
     }
 
     /// Record cache miss
@@ -137,24 +151,36 @@ impl PerformanceMonitor {
         match error_type {
             ErrorType::Io => self.real_time.io_errors.fetch_add(1, Ordering::Relaxed),
             ErrorType::Git => self.real_time.git_errors.fetch_add(1, Ordering::Relaxed),
-            ErrorType::Parsing => self.real_time.parsing_errors.fetch_add(1, Ordering::Relaxed),
+            ErrorType::Parsing => self
+                .real_time
+                .parsing_errors
+                .fetch_add(1, Ordering::Relaxed),
             ErrorType::Other => self.real_time.other_errors.fetch_add(1, Ordering::Relaxed),
         };
     }
 
     /// Update memory usage
     pub fn update_memory_usage(&self, bytes: u64) {
-        self.real_time.current_memory_bytes.store(bytes, Ordering::Relaxed);
-        self.real_time.peak_memory_bytes.fetch_max(bytes, Ordering::Relaxed);
+        self.real_time
+            .current_memory_bytes
+            .store(bytes, Ordering::Relaxed);
+        self.real_time
+            .peak_memory_bytes
+            .fetch_max(bytes, Ordering::Relaxed);
     }
 
     /// Update thread count
     pub fn update_thread_count(&self, count: usize) {
-        self.real_time.active_threads.store(count, Ordering::Relaxed);
+        self.real_time
+            .active_threads
+            .store(count, Ordering::Relaxed);
         let mut peak = self.real_time.peak_threads.load(Ordering::Relaxed);
         while peak < count {
             match self.real_time.peak_threads.compare_exchange_weak(
-                peak, count, Ordering::Relaxed, Ordering::Relaxed,
+                peak,
+                count,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(x) => peak = x,
@@ -168,7 +194,9 @@ impl PerformanceMonitor {
             return;
         }
         let mut profiles = self.profiles.write();
-        let profile = profiles.entry(name.to_string()).or_insert_with(|| OperationProfile::new(name));
+        let profile = profiles
+            .entry(name.to_string())
+            .or_insert_with(|| OperationProfile::new(name));
         profile.record(duration, bytes, success);
     }
 
@@ -200,7 +228,10 @@ impl PerformanceMonitor {
             top_operations: Self::get_top_operations(&profiles, 10),
             bottlenecks: self.identify_bottlenecks(),
             recommendations: self.generate_recommendations(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         }
     }
 
@@ -228,21 +259,31 @@ impl PerformanceMonitor {
 
         let files_per_second = if scan_time_us > 0 {
             files_processed as f64 / (scan_time_us as f64 / 1_000_000.0)
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         let bytes_per_second = if scan_time_us > 0 {
             bytes_processed as f64 / (scan_time_us as f64 / 1_000_000.0)
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         let cache_hit_rate = if cache_hits + cache_misses > 0 {
             cache_hits as f64 / (cache_hits + cache_misses) as f64
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         PerformanceSnapshot {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             files_per_second,
             bytes_per_second,
-            memory_usage_mb: real_time.current_memory_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            memory_usage_mb: real_time.current_memory_bytes.load(Ordering::Relaxed) as f64
+                / (1024.0 * 1024.0),
             cpu_utilization: tracker.get_cpu_utilization(),
             io_wait_percentage: tracker.get_io_wait_percentage(),
             cache_hit_rate,
@@ -257,10 +298,18 @@ impl PerformanceMonitor {
         let mut bottlenecks = Vec::new();
         let snapshot = self.get_current_snapshot();
 
-        if snapshot.cpu_utilization > 80.0 { bottlenecks.push("High CPU utilization".to_string()); }
-        if snapshot.io_wait_percentage > 20.0 { bottlenecks.push("High I/O wait time".to_string()); }
-        if snapshot.cache_hit_rate < 0.5 { bottlenecks.push("Low cache hit rate".to_string()); }
-        if snapshot.memory_usage_mb > 1000.0 { bottlenecks.push("High memory usage".to_string()); }
+        if snapshot.cpu_utilization > 80.0 {
+            bottlenecks.push("High CPU utilization".to_string());
+        }
+        if snapshot.io_wait_percentage > 20.0 {
+            bottlenecks.push("High I/O wait time".to_string());
+        }
+        if snapshot.cache_hit_rate < 0.5 {
+            bottlenecks.push("Low cache hit rate".to_string());
+        }
+        if snapshot.memory_usage_mb > 1000.0 {
+            bottlenecks.push("High memory usage".to_string());
+        }
 
         bottlenecks
     }
@@ -269,17 +318,28 @@ impl PerformanceMonitor {
         let mut recommendations = Vec::new();
         for bottleneck in &self.identify_bottlenecks() {
             match bottleneck.as_str() {
-                "High CPU utilization" => recommendations.push("Consider reducing parallelism or optimizing CPU-intensive operations".to_string()),
-                "High I/O wait time" => recommendations.push("Consider using faster storage or implementing better I/O batching".to_string()),
-                "Low cache hit rate" => recommendations.push("Increase cache size or improve cache warming strategies".to_string()),
-                "High memory usage" => recommendations.push("Consider reducing batch sizes or implementing memory streaming".to_string()),
+                "High CPU utilization" => recommendations.push(
+                    "Consider reducing parallelism or optimizing CPU-intensive operations"
+                        .to_string(),
+                ),
+                "High I/O wait time" => recommendations.push(
+                    "Consider using faster storage or implementing better I/O batching".to_string(),
+                ),
+                "Low cache hit rate" => recommendations
+                    .push("Increase cache size or improve cache warming strategies".to_string()),
+                "High memory usage" => recommendations.push(
+                    "Consider reducing batch sizes or implementing memory streaming".to_string(),
+                ),
                 _ => {}
             }
         }
         recommendations
     }
 
-    fn get_top_operations(profiles: &FxHashMap<String, OperationProfile>, limit: usize) -> Vec<OperationProfile> {
+    fn get_top_operations(
+        profiles: &FxHashMap<String, OperationProfile>,
+        limit: usize,
+    ) -> Vec<OperationProfile> {
         let mut ops: Vec<_> = profiles.values().cloned().collect();
         ops.sort_by(|a, b| b.total_time_us.cmp(&a.total_time_us));
         ops.into_iter().take(limit).collect()
@@ -365,12 +425,15 @@ impl PerformanceHistory {
     }
 
     fn update_aggregated_stats(&mut self) {
-        if self.snapshots.is_empty() { return; }
+        if self.snapshots.is_empty() {
+            return;
+        }
 
         let mut throughputs: Vec<f64> = self.snapshots.iter().map(|s| s.files_per_second).collect();
         throughputs.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        self.aggregated.avg_throughput_fps = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
+        self.aggregated.avg_throughput_fps =
+            throughputs.iter().sum::<f64>() / throughputs.len() as f64;
 
         if !throughputs.is_empty() {
             self.aggregated.p50_latency_ms = throughputs[throughputs.len() / 2];
@@ -378,8 +441,17 @@ impl PerformanceHistory {
             self.aggregated.p99_latency_ms = throughputs[(throughputs.len() * 99) / 100];
         }
 
-        self.aggregated.max_memory_mb = self.snapshots.iter().map(|s| s.memory_usage_mb).fold(0.0, f64::max);
-        self.aggregated.avg_memory_mb = self.snapshots.iter().map(|s| s.memory_usage_mb).sum::<f64>() / self.snapshots.len() as f64;
+        self.aggregated.max_memory_mb = self
+            .snapshots
+            .iter()
+            .map(|s| s.memory_usage_mb)
+            .fold(0.0, f64::max);
+        self.aggregated.avg_memory_mb = self
+            .snapshots
+            .iter()
+            .map(|s| s.memory_usage_mb)
+            .sum::<f64>()
+            / self.snapshots.len() as f64;
     }
 }
 
@@ -397,20 +469,28 @@ impl SystemResourceTracker {
         let now = Instant::now();
         if let Some(cpu_sample) = self.sample_cpu() {
             self.cpu_samples.push_back(cpu_sample);
-            if self.cpu_samples.len() > 60 { self.cpu_samples.pop_front(); }
+            if self.cpu_samples.len() > 60 {
+                self.cpu_samples.pop_front();
+            }
         }
         if let Some(memory_sample) = self.sample_memory() {
             self.memory_samples.push_back(memory_sample);
-            if self.memory_samples.len() > 60 { self.memory_samples.pop_front(); }
+            if self.memory_samples.len() > 60 {
+                self.memory_samples.pop_front();
+            }
         }
         self.last_sample_time = now;
     }
 
     fn sample_cpu(&self) -> Option<CpuSample> {
         #[cfg(unix)]
-        { self.sample_cpu_unix() }
+        {
+            self.sample_cpu_unix()
+        }
         #[cfg(not(unix))]
-        { None }
+        {
+            None
+        }
     }
 
     #[cfg(unix)]
@@ -436,9 +516,13 @@ impl SystemResourceTracker {
 
     fn sample_memory(&self) -> Option<MemorySample> {
         #[cfg(unix)]
-        { self.sample_memory_unix() }
+        {
+            self.sample_memory_unix()
+        }
         #[cfg(not(unix))]
-        { None }
+        {
+            None
+        }
     }
 
     #[cfg(unix)]
@@ -470,7 +554,9 @@ impl SystemResourceTracker {
     }
 
     pub fn get_cpu_utilization(&self) -> f64 {
-        if self.cpu_samples.len() < 2 { return 0.0; }
+        if self.cpu_samples.len() < 2 {
+            return 0.0;
+        }
         let recent = &self.cpu_samples[self.cpu_samples.len() - 1];
         let previous = &self.cpu_samples[self.cpu_samples.len() - 2];
         let total_time = recent.user_time + recent.system_time + recent.idle_time;
@@ -479,10 +565,14 @@ impl SystemResourceTracker {
         let delta_idle = recent.idle_time.saturating_sub(previous.idle_time);
         if delta_total.as_secs_f64() > 0.0 {
             100.0 * (1.0 - delta_idle.as_secs_f64() / delta_total.as_secs_f64())
-        } else { 0.0 }
+        } else {
+            0.0
+        }
     }
 
-    pub fn get_io_wait_percentage(&self) -> f64 { 10.0 }
+    pub fn get_io_wait_percentage(&self) -> f64 {
+        10.0
+    }
 }
 
 impl OperationProfile {
@@ -498,7 +588,10 @@ impl OperationProfile {
             success_count: 0,
             error_count: 0,
             bytes_processed: 0,
-            last_updated: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            last_updated: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         }
     }
 
@@ -510,18 +603,33 @@ impl OperationProfile {
         self.max_time_us = self.max_time_us.max(time_us);
         self.avg_time_us = self.total_time_us / self.call_count;
         self.bytes_processed += bytes;
-        if success { self.success_count += 1; } else { self.error_count += 1; }
-        self.last_updated = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        if success {
+            self.success_count += 1;
+        } else {
+            self.error_count += 1;
+        }
+        self.last_updated = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
     }
 }
 
 impl PerfTimer {
     pub fn start(operation_name: &str) -> Self {
-        Self { start_time: Instant::now(), operation_name: operation_name.to_string(), bytes_hint: None }
+        Self {
+            start_time: Instant::now(),
+            operation_name: operation_name.to_string(),
+            bytes_hint: None,
+        }
     }
 
     pub fn start_with_bytes(operation_name: &str, bytes: u64) -> Self {
-        Self { start_time: Instant::now(), operation_name: operation_name.to_string(), bytes_hint: Some(bytes) }
+        Self {
+            start_time: Instant::now(),
+            operation_name: operation_name.to_string(),
+            bytes_hint: Some(bytes),
+        }
     }
 
     pub fn finish_success(self) {

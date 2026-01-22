@@ -10,12 +10,12 @@ mod pattern;
 
 pub use pattern::{GitignorePattern, GitignoreRule, IgnoreFile, IgnoreMatchResult, IgnoreType};
 
+use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use scribe_core::{Result, ScribeError};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use ignore::{overrides::OverrideBuilder, WalkBuilder};
-use serde::{Deserialize, Serialize};
 
 /// Gitignore pattern matcher with full syntax support
 #[derive(Debug)]
@@ -109,10 +109,7 @@ impl GitignoreMatcher {
         let mut line_count = 0;
         for ignore_file in &self.ignore_files {
             if index < line_count + ignore_file.patterns.len() {
-                return (
-                    Some(ignore_file.path.clone()),
-                    Some(index - line_count + 1),
-                );
+                return (Some(ignore_file.path.clone()), Some(index - line_count + 1));
             }
             line_count += ignore_file.patterns.len();
         }
@@ -157,7 +154,10 @@ impl GitignoreMatcher {
             }
 
             // Skip comments and empty lines
-            if matches!(pattern.rule_type, GitignoreRule::Comment | GitignoreRule::Empty) {
+            if matches!(
+                pattern.rule_type,
+                GitignoreRule::Comment | GitignoreRule::Empty
+            ) {
                 continue;
             }
 
@@ -712,7 +712,9 @@ build/
     #[test]
     fn test_add_patterns_multiple() {
         let mut matcher = GitignoreMatcher::new();
-        matcher.add_patterns(vec!["*.tmp", "*.log", "build/"]).unwrap();
+        matcher
+            .add_patterns(vec!["*.tmp", "*.log", "build/"])
+            .unwrap();
 
         let stats = matcher.stats();
         assert_eq!(stats.exclude_patterns, 3);
@@ -732,10 +734,9 @@ build/
         fs::write(root.join(".gitignore2"), "*.log").unwrap();
 
         let mut matcher = GitignoreMatcher::new();
-        matcher.add_gitignore_files(vec![
-            root.join(".gitignore1"),
-            root.join(".gitignore2"),
-        ]).unwrap();
+        matcher
+            .add_gitignore_files(vec![root.join(".gitignore1"), root.join(".gitignore2")])
+            .unwrap();
 
         let stats = matcher.stats();
         assert_eq!(stats.ignore_files, 2);

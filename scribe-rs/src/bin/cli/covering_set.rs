@@ -22,21 +22,49 @@ pub struct CoveringScanFile {
 }
 
 impl scribe_analysis::heuristics::ScanResult for CoveringScanFile {
-    fn path(&self) -> &str { &self.path }
-    fn relative_path(&self) -> &str { &self.relative_path }
-    fn depth(&self) -> usize { self.relative_path.matches('/').count() }
-    fn is_docs(&self) -> bool { false }
-    fn is_readme(&self) -> bool { false }
-    fn is_test(&self) -> bool { false }
-    fn is_entrypoint(&self) -> bool { false }
-    fn has_examples(&self) -> bool { false }
-    fn priority_boost(&self) -> f64 { 0.0 }
-    fn churn_score(&self) -> f64 { 0.0 }
-    fn centrality_in(&self) -> f64 { 0.0 }
-    fn imports(&self) -> Option<&[String]> {
-        if self.imports.is_empty() { None } else { Some(&self.imports) }
+    fn path(&self) -> &str {
+        &self.path
     }
-    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> { None }
+    fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+    fn depth(&self) -> usize {
+        self.relative_path.matches('/').count()
+    }
+    fn is_docs(&self) -> bool {
+        false
+    }
+    fn is_readme(&self) -> bool {
+        false
+    }
+    fn is_test(&self) -> bool {
+        false
+    }
+    fn is_entrypoint(&self) -> bool {
+        false
+    }
+    fn has_examples(&self) -> bool {
+        false
+    }
+    fn priority_boost(&self) -> f64 {
+        0.0
+    }
+    fn churn_score(&self) -> f64 {
+        0.0
+    }
+    fn centrality_in(&self) -> f64 {
+        0.0
+    }
+    fn imports(&self) -> Option<&[String]> {
+        if self.imports.is_empty() {
+            None
+        } else {
+            Some(&self.imports)
+        }
+    }
+    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> {
+        None
+    }
 }
 
 /// File metadata for diff covering set analysis (implements ScanResult)
@@ -56,19 +84,45 @@ pub struct DiffScanFile {
 }
 
 impl scribe_analysis::heuristics::ScanResult for DiffScanFile {
-    fn path(&self) -> &str { &self.path }
-    fn relative_path(&self) -> &str { &self.relative_path }
-    fn depth(&self) -> usize { self.depth }
-    fn is_docs(&self) -> bool { self.is_docs }
-    fn is_readme(&self) -> bool { self.is_readme }
-    fn is_test(&self) -> bool { self.is_test }
-    fn is_entrypoint(&self) -> bool { self.is_entrypoint }
-    fn has_examples(&self) -> bool { self.has_examples }
-    fn priority_boost(&self) -> f64 { self.priority_boost }
-    fn churn_score(&self) -> f64 { self.churn_score }
-    fn centrality_in(&self) -> f64 { 0.0 }
-    fn imports(&self) -> Option<&[String]> { Some(&self.imports) }
-    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> { None }
+    fn path(&self) -> &str {
+        &self.path
+    }
+    fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+    fn depth(&self) -> usize {
+        self.depth
+    }
+    fn is_docs(&self) -> bool {
+        self.is_docs
+    }
+    fn is_readme(&self) -> bool {
+        self.is_readme
+    }
+    fn is_test(&self) -> bool {
+        self.is_test
+    }
+    fn is_entrypoint(&self) -> bool {
+        self.is_entrypoint
+    }
+    fn has_examples(&self) -> bool {
+        self.has_examples
+    }
+    fn priority_boost(&self) -> f64 {
+        self.priority_boost
+    }
+    fn churn_score(&self) -> f64 {
+        self.churn_score
+    }
+    fn centrality_in(&self) -> f64 {
+        0.0
+    }
+    fn imports(&self) -> Option<&[String]> {
+        Some(&self.imports)
+    }
+    fn doc_analysis(&self) -> Option<&scribe_analysis::heuristics::DocumentAnalysis> {
+        None
+    }
 }
 
 /// Log message conditionally based on mode and verbosity
@@ -169,9 +223,10 @@ pub fn display_covering_set_result(
 
 /// Display error when target not found
 fn display_not_found_error(entity_name: &str) {
-    let has_entity = entity_name.contains(':') &&
-        !(entity_name.len() > 1 && entity_name.chars().nth(1) == Some(':') &&
-          entity_name.chars().next().unwrap().is_ascii_alphabetic());
+    let has_entity = entity_name.contains(':')
+        && !(entity_name.len() > 1
+            && entity_name.chars().nth(1) == Some(':')
+            && entity_name.chars().next().unwrap().is_ascii_alphabetic());
 
     if has_entity {
         println!("\n❌ Target '{}' not found", entity_name);
@@ -190,7 +245,10 @@ fn display_target_info(result: &CoveringSetResult) {
         println!("  • Type     : {}", target.entity_type);
         println!("  • Name     : {}", target.entity_name);
         println!("  • Lines    : {}-{}", target.start_line, target.end_line);
-        println!("  • Public   : {}", if target.is_public { "yes" } else { "no" });
+        println!(
+            "  • Public   : {}",
+            if target.is_public { "yes" } else { "no" }
+        );
     } else if let Some(first_file) = result.files.first() {
         println!("\n✅ Found target file: {}", first_file.path);
     }
@@ -208,29 +266,70 @@ fn display_entity_results(result: &CoveringSetResult) {
 
         println!(
             "  {}. {}::{} ({}, distance: {}, reason: {})",
-            idx + 1, entity.file_path, entity.name, entity.entity_type, entity.distance, explanation
+            idx + 1,
+            entity.file_path,
+            entity.name,
+            entity.entity_type,
+            entity.distance,
+            explanation
         );
     }
     println!("\n📊 Statistics:");
-    println!("  • Files examined    : {}", result.statistics.files_examined);
-    println!("  • Entities selected : {}", result.statistics.entities_selected);
-    println!("  • Max depth         : {}", result.statistics.max_depth_reached);
-    println!("  • Limits reached    : {}", if result.statistics.limits_reached { "yes" } else { "no" });
+    println!(
+        "  • Files examined    : {}",
+        result.statistics.files_examined
+    );
+    println!(
+        "  • Entities selected : {}",
+        result.statistics.entities_selected
+    );
+    println!(
+        "  • Max depth         : {}",
+        result.statistics.max_depth_reached
+    );
+    println!(
+        "  • Limits reached    : {}",
+        if result.statistics.limits_reached {
+            "yes"
+        } else {
+            "no"
+        }
+    );
 }
 
 /// Display file-level covering set results
 fn display_file_results(result: &CoveringSetResult) {
     println!("\n📦 Covering set ({} files):", result.files.len());
     for (idx, file) in result.files.iter().enumerate() {
-        let explanation = result.inclusion_reasons.get(&file.path).map(|s| s.as_str()).unwrap_or("Included");
-        println!("  {}. {} (distance: {}, reason: {})", idx + 1, file.path, file.distance, explanation);
+        let explanation = result
+            .inclusion_reasons
+            .get(&file.path)
+            .map(|s| s.as_str())
+            .unwrap_or("Included");
+        println!(
+            "  {}. {} (distance: {}, reason: {})",
+            idx + 1,
+            file.path,
+            file.distance,
+            explanation
+        );
     }
     println!("\n📊 Statistics:");
     println!("  • Files examined  : {}", result.statistics.files_examined);
     println!("  • Files selected  : {}", result.statistics.files_selected);
     println!("  • Files excluded  : {}", result.statistics.files_excluded);
-    println!("  • Max depth       : {}", result.statistics.max_depth_reached);
-    println!("  • Limits reached  : {}", if result.statistics.limits_reached { "yes" } else { "no" });
+    println!(
+        "  • Max depth       : {}",
+        result.statistics.max_depth_reached
+    );
+    println!(
+        "  • Limits reached  : {}",
+        if result.statistics.limits_reached {
+            "yes"
+        } else {
+            "no"
+        }
+    );
 }
 
 pub async fn run_covering_set_mode(
@@ -245,7 +344,12 @@ pub async fn run_covering_set_mode(
     stdout_mode: bool,
     verbose_level: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log_covering_set_progress(&format!("🎯 Finding covering set for: {}", entity_name), stdout_mode, verbose_level, false);
+    log_covering_set_progress(
+        &format!("🎯 Finding covering set for: {}", entity_name),
+        stdout_mode,
+        verbose_level,
+        false,
+    );
 
     // Analyze repository
     let mut config = Config::default();
@@ -260,7 +364,12 @@ pub async fn run_covering_set_mode(
         query_hint: None,
     };
 
-    log_covering_set_progress("📊 Scanning repository...", stdout_mode, verbose_level, true);
+    log_covering_set_progress(
+        "📊 Scanning repository...",
+        stdout_mode,
+        verbose_level,
+        true,
+    );
     let analysis_outcome = analyze_and_select(repo_dir, &config, &selection_options).await?;
 
     // Collect file contents and build scan files
@@ -280,16 +389,30 @@ pub async fn run_covering_set_mode(
         }
     }
 
-    log_covering_set_progress(&format!("📁 Loaded {} files", file_contents.len()), stdout_mode, verbose_level, true);
+    log_covering_set_progress(
+        &format!("📁 Loaded {} files", file_contents.len()),
+        stdout_mode,
+        verbose_level,
+        true,
+    );
 
     // Build dependency graph
-    log_covering_set_progress("🔗 Building dependency graph...", stdout_mode, verbose_level, true);
+    log_covering_set_progress(
+        "🔗 Building dependency graph...",
+        stdout_mode,
+        verbose_level,
+        true,
+    );
     use scribe_graph::CentralityCalculator;
     let calculator = CentralityCalculator::new()?;
     let graph = calculator.build_graph_only(&scan_files)?;
 
     if !stdout_mode && verbose_level > 0 {
-        eprintln!("🔗 Graph built with {} nodes, {} edges", graph.node_count(), graph.edge_count());
+        eprintln!(
+            "🔗 Graph built with {} nodes, {} edges",
+            graph.node_count(),
+            graph.edge_count()
+        );
     }
 
     // Build query and options
@@ -311,9 +434,14 @@ pub async fn run_covering_set_mode(
             format!("{} files", file_contents.len())
         };
         log_covering_set_progress(
-            &format!("⚡ Limiting depth to {} for performance ({})",
-                effective_depth.unwrap(), reason),
-            stdout_mode, verbose_level, true
+            &format!(
+                "⚡ Limiting depth to {} for performance ({})",
+                effective_depth.unwrap(),
+                reason
+            ),
+            stdout_mode,
+            verbose_level,
+            true,
         );
     }
 
@@ -326,7 +454,12 @@ pub async fn run_covering_set_mode(
         granularity: granularity_option,
     };
 
-    log_covering_set_progress("🔍 Computing covering set...", stdout_mode, verbose_level, true);
+    log_covering_set_progress(
+        "🔍 Computing covering set...",
+        stdout_mode,
+        verbose_level,
+        true,
+    );
 
     // Compute covering set
     let mut computer = CoveringSetComputer::new()?;
@@ -352,7 +485,9 @@ fn collect_changed_files_from_diff(
     diff_against: Option<&str>,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut diff_opts = DiffOptions::new();
-    diff_opts.include_untracked(true).recurse_untracked_dirs(true);
+    diff_opts
+        .include_untracked(true)
+        .recurse_untracked_dirs(true);
 
     let mut changed_files = std::collections::HashSet::new();
 
@@ -383,7 +518,11 @@ fn build_diff_scan_file(file: &scribe::FileInfo) -> DiffScanFile {
     use scribe_core::file::{is_entrypoint_path, is_test_path, FileType};
     use scribe_core::Language;
 
-    let extension = file.path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    let extension = file
+        .path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
     let language = Language::from_extension(extension);
     let content = if file.is_binary {
         String::new()
@@ -491,7 +630,11 @@ pub async fn run_covering_set_diff_mode(
     verbose_level: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let verbose = verbose_level > 0;
-    log_covering_set_msg(verbose, "🎯 Covering set (diff) mode", "🎯 Computing covering set for git diff");
+    log_covering_set_msg(
+        verbose,
+        "🎯 Covering set (diff) mode",
+        "🎯 Computing covering set for git diff",
+    );
 
     let repo = Repository::open(repo_dir)?;
     let workdir = repo.workdir().unwrap_or(repo_dir);
@@ -531,7 +674,12 @@ pub async fn run_covering_set_diff_mode(
     let graph = build_dependency_graph(&diff_scan_files)?;
 
     // Compute and display covering set
-    let options = create_covering_set_options(include_dependents, max_depth, max_files, diff_scan_files.len());
+    let options = create_covering_set_options(
+        include_dependents,
+        max_depth,
+        max_files,
+        diff_scan_files.len(),
+    );
     let computer = CoveringSetComputer::new()?;
     let result = computer.compute_covering_set_for_files(&changed_files, &graph, None, &options)?;
     print_covering_set_results(&result, verbose_level);
@@ -604,17 +752,35 @@ mod tests {
     #[test]
     fn test_adaptive_max_depth_large_repo() {
         // Large repos (>1000 files) should be capped at default depth
-        assert_eq!(adaptive_max_depth(None, 1001, false), Some(LARGE_REPO_DEFAULT_DEPTH));
-        assert_eq!(adaptive_max_depth(None, 5000, false), Some(LARGE_REPO_DEFAULT_DEPTH));
-        assert_eq!(adaptive_max_depth(None, 12000, false), Some(LARGE_REPO_DEFAULT_DEPTH));
+        assert_eq!(
+            adaptive_max_depth(None, 1001, false),
+            Some(LARGE_REPO_DEFAULT_DEPTH)
+        );
+        assert_eq!(
+            adaptive_max_depth(None, 5000, false),
+            Some(LARGE_REPO_DEFAULT_DEPTH)
+        );
+        assert_eq!(
+            adaptive_max_depth(None, 12000, false),
+            Some(LARGE_REPO_DEFAULT_DEPTH)
+        );
     }
 
     #[test]
     fn test_adaptive_max_depth_entity_granularity() {
         // Entity granularity should always be capped regardless of repo size
-        assert_eq!(adaptive_max_depth(None, 100, true), Some(ENTITY_GRANULARITY_DEFAULT_DEPTH));
-        assert_eq!(adaptive_max_depth(None, 500, true), Some(ENTITY_GRANULARITY_DEFAULT_DEPTH));
-        assert_eq!(adaptive_max_depth(None, 2000, true), Some(ENTITY_GRANULARITY_DEFAULT_DEPTH));
+        assert_eq!(
+            adaptive_max_depth(None, 100, true),
+            Some(ENTITY_GRANULARITY_DEFAULT_DEPTH)
+        );
+        assert_eq!(
+            adaptive_max_depth(None, 500, true),
+            Some(ENTITY_GRANULARITY_DEFAULT_DEPTH)
+        );
+        assert_eq!(
+            adaptive_max_depth(None, 2000, true),
+            Some(ENTITY_GRANULARITY_DEFAULT_DEPTH)
+        );
     }
 
     #[test]

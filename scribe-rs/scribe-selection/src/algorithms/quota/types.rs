@@ -299,13 +299,7 @@ mod tests {
 
     #[test]
     fn test_category_quota_new() {
-        let quota = CategoryQuota::new(
-            FileCategory::Entry,
-            0.1,
-            0.3,
-            0.8,
-            1.5,
-        );
+        let quota = CategoryQuota::new(FileCategory::Entry, 0.1, 0.3, 0.8, 1.5);
 
         assert_eq!(quota.category, FileCategory::Entry);
         assert!((quota.min_budget_pct - 0.1).abs() < 0.001);

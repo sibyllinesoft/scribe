@@ -355,8 +355,8 @@ impl AstParser {
                     for j in 0..child.child_count() {
                         if let Some(grandchild) = child.child(j) {
                             if grandchild.kind() == "identifier" {
-                                let name_bytes =
-                                    &content.as_bytes()[grandchild.start_byte()..grandchild.end_byte()];
+                                let name_bytes = &content.as_bytes()
+                                    [grandchild.start_byte()..grandchild.end_byte()];
                                 if let Ok(name) = std::str::from_utf8(name_bytes) {
                                     return Some(name.to_string());
                                 }
@@ -421,7 +421,12 @@ impl AstParser {
             }
 
             let stripped = if trimmed.starts_with("///") || trimmed.starts_with("//!") {
-                Some(trimmed.trim_start_matches('/').trim_start_matches('!').trim())
+                Some(
+                    trimmed
+                        .trim_start_matches('/')
+                        .trim_start_matches('!')
+                        .trim(),
+                )
             } else if trimmed.starts_with("//") {
                 Some(trimmed.trim_start_matches('/').trim())
             } else if trimmed.starts_with('#') {
@@ -460,7 +465,8 @@ impl AstParser {
         if node.kind() == "function_definition" || node.kind() == "class_definition" {
             for i in 0..node.child_count() {
                 if let Some(child) = node.child(i) {
-                    if child.kind() == "block" || child.kind() == "suite" || child.kind() == "colon" {
+                    if child.kind() == "block" || child.kind() == "suite" || child.kind() == "colon"
+                    {
                         continue;
                     }
                     if child.kind() == "expression_statement" {
@@ -578,8 +584,9 @@ impl AstParser {
         language: AstLanguage,
     ) -> Result<Vec<AstSignature>> {
         let query_str = signature_query_for_language(language);
-        let query = Query::new(language.tree_sitter_language(), query_str)
-            .map_err(|e| ScribeError::parse(format!("Invalid {:?} signature query: {}", language, e)))?;
+        let query = Query::new(language.tree_sitter_language(), query_str).map_err(|e| {
+            ScribeError::parse(format!("Invalid {:?} signature query: {}", language, e))
+        })?;
 
         let root_node = tree.root_node();
         let mut cursor = QueryCursor::new();
@@ -587,7 +594,8 @@ impl AstParser {
 
         let mut signatures = Vec::new();
         for match_ in matches {
-            let signature = self.extract_signature_from_match(content, &match_, &query, language)?;
+            let signature =
+                self.extract_signature_from_match(content, &match_, &query, language)?;
             signatures.push(signature);
         }
 
@@ -615,27 +623,25 @@ impl AstParser {
 
             match capture_name.as_str() {
                 // Primary node captures - extract signature
-                "function" | "class" | "import" | "import_from" | "interface"
-                | "type_alias" | "enum" | "method" | "field" | "struct" | "trait"
-                | "impl" | "module" | "use" | "type" | "export" | "package"
-                | "arrow_const" | "arrow_var" => {
+                "function" | "class" | "import" | "import_from" | "interface" | "type_alias"
+                | "enum" | "method" | "field" | "struct" | "trait" | "impl" | "module" | "use"
+                | "type" | "export" | "package" | "arrow_const" | "arrow_var" => {
                     signature_text = Self::extract_signature_lines(node_text);
                     signature_type = capture_name.to_string();
                     line = node.start_position().row + 1;
                     primary_node = Some(node);
                 }
                 // Name captures
-                "func_name" | "class_name" | "interface_name" | "type_name"
-                | "enum_name" | "method_name" | "field_name" | "name" | "arrow_name" => {
+                "func_name" | "class_name" | "interface_name" | "type_name" | "enum_name"
+                | "method_name" | "field_name" | "name" | "arrow_name" => {
                     name = node_text.to_string();
                 }
                 _ => {}
             }
         }
 
-        let documentation = primary_node.and_then(|n| {
-            self.extract_documentation_for_node(language, n, content)
-        });
+        let documentation =
+            primary_node.and_then(|n| self.extract_documentation_for_node(language, n, content));
 
         Ok(AstSignature {
             signature: signature_text,
@@ -670,19 +676,39 @@ impl AstParser {
     }
 
     // Delegate to import_extractors module
-    fn extract_python_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+    fn extract_python_import_node(
+        &self,
+        node: Node,
+        content: &str,
+        imports: &mut Vec<AstImport>,
+    ) -> Result<()> {
         super::import_extractors::extract_python_import_node(node, content, imports)
     }
 
-    fn extract_js_ts_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+    fn extract_js_ts_import_node(
+        &self,
+        node: Node,
+        content: &str,
+        imports: &mut Vec<AstImport>,
+    ) -> Result<()> {
         super::import_extractors::extract_js_ts_import_node(node, content, imports)
     }
 
-    fn extract_go_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+    fn extract_go_import_node(
+        &self,
+        node: Node,
+        content: &str,
+        imports: &mut Vec<AstImport>,
+    ) -> Result<()> {
         super::import_extractors::extract_go_import_node(node, content, imports)
     }
 
-    fn extract_rust_import_node(&self, node: Node, content: &str, imports: &mut Vec<AstImport>) -> Result<()> {
+    fn extract_rust_import_node(
+        &self,
+        node: Node,
+        content: &str,
+        imports: &mut Vec<AstImport>,
+    ) -> Result<()> {
         super::import_extractors::extract_rust_import_node(node, content, imports)
     }
 
@@ -738,7 +764,10 @@ impl AstParser {
                 }
             } else {
                 // Case-insensitive substring match
-                if !chunk_name.to_lowercase().contains(&name_pattern.to_lowercase()) {
+                if !chunk_name
+                    .to_lowercase()
+                    .contains(&name_pattern.to_lowercase())
+                {
                     return false;
                 }
             }

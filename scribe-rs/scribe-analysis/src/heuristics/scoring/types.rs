@@ -333,5 +333,4 @@ mod tests {
         assert_eq!(map.get("doc_score"), Some(&0.5));
         assert_eq!(map.get("readme_score"), Some(&1.0));
     }
-
 }

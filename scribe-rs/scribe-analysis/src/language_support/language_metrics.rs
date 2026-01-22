@@ -132,7 +132,9 @@ impl LanguageMetrics {
         let (language_factors, idiom_score, framework_complexity) = match language {
             AstLanguage::Python => Self::python_complexity(content),
             AstLanguage::Rust => Self::rust_complexity(content),
-            AstLanguage::JavaScript | AstLanguage::TypeScript => Self::js_ts_complexity(content, language),
+            AstLanguage::JavaScript | AstLanguage::TypeScript => {
+                Self::js_ts_complexity(content, language)
+            }
             AstLanguage::Go => Self::go_complexity(content),
             _ => (0.1, 0.0, 0.0),
         };

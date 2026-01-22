@@ -876,7 +876,8 @@ mod tests {
         ]);
         let config = PageRankConfig::default();
 
-        let results = SpecializedPageRank::personalized_pagerank(&graph, &personalization, config).unwrap();
+        let results =
+            SpecializedPageRank::personalized_pagerank(&graph, &personalization, config).unwrap();
         assert!(!results.scores.is_empty());
     }
 
@@ -934,8 +935,12 @@ mod tests {
 
         // Create larger graph to test convergence more thoroughly
         for i in 0..10 {
-            graph.add_edge(format!("A{}", i), format!("B{}", i)).unwrap();
-            graph.add_edge(format!("B{}", i), format!("C{}", i)).unwrap();
+            graph
+                .add_edge(format!("A{}", i), format!("B{}", i))
+                .unwrap();
+            graph
+                .add_edge(format!("B{}", i), format!("C{}", i))
+                .unwrap();
         }
 
         let computer = PageRankComputer::new();
@@ -964,12 +969,19 @@ mod tests {
 
         // Create a graph with nodes - main.py is auto-detected as entrypoint
         graph.add_node("main.py".to_string()).unwrap();
-        graph.add_edge("main.py".to_string(), "utils.py".to_string()).unwrap();
-        graph.add_edge("utils.py".to_string(), "config.py".to_string()).unwrap();
+        graph
+            .add_edge("main.py".to_string(), "utils.py".to_string())
+            .unwrap();
+        graph
+            .add_edge("utils.py".to_string(), "config.py".to_string())
+            .unwrap();
 
         // Verify entrypoint is detected
         let entrypoints = graph.entrypoint_nodes();
-        assert!(!entrypoints.is_empty(), "main.py should be detected as entrypoint");
+        assert!(
+            !entrypoints.is_empty(),
+            "main.py should be detected as entrypoint"
+        );
 
         let config = PageRankConfig::default();
         let results = SpecializedPageRank::entrypoint_focused_pagerank(&graph, config).unwrap();
@@ -991,7 +1003,9 @@ mod tests {
         let mut graph = DependencyGraph::new();
 
         // Create a graph without entrypoints
-        graph.add_edge("a.py".to_string(), "b.py".to_string()).unwrap();
+        graph
+            .add_edge("a.py".to_string(), "b.py".to_string())
+            .unwrap();
 
         let config = PageRankConfig::default();
         let results = SpecializedPageRank::entrypoint_focused_pagerank(&graph, config).unwrap();

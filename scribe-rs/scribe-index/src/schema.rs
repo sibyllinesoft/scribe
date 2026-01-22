@@ -1,8 +1,8 @@
 //! Schema definition for code document indexing
 
 use tantivy::schema::{
-    Field, Schema, FAST, INDEXED, STORED, STRING, TEXT, TextFieldIndexing, TextOptions,
-    IndexRecordOption,
+    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, FAST, INDEXED, STORED,
+    STRING, TEXT,
 };
 
 /// Fields in the code document schema

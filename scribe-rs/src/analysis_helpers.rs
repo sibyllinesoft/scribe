@@ -127,13 +127,19 @@ mod tests {
     #[test]
     fn test_language_from_identifier_javascript() {
         let path = Path::new("test.js");
-        assert_eq!(language_from_identifier("javascript", path), Language::JavaScript);
+        assert_eq!(
+            language_from_identifier("javascript", path),
+            Language::JavaScript
+        );
     }
 
     #[test]
     fn test_language_from_identifier_typescript() {
         let path = Path::new("test.ts");
-        assert_eq!(language_from_identifier("typescript", path), Language::TypeScript);
+        assert_eq!(
+            language_from_identifier("typescript", path),
+            Language::TypeScript
+        );
     }
 
     #[test]

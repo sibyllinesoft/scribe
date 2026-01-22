@@ -198,8 +198,16 @@ fn write_xml_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn 
     let path = escape_xml(&file.relative_path);
     let modified = escape_xml(&format_timestamp(file.modified));
 
-    writeln!(output, "  <file path=\"{}\" modified=\"{}\">", path, modified)?;
-    writeln!(output, "    <size bytes=\"{}\" tokens=\"{}\"/>", file.size, file.estimated_tokens)?;
+    writeln!(
+        output,
+        "  <file path=\"{}\" modified=\"{}\">",
+        path, modified
+    )?;
+    writeln!(
+        output,
+        "    <size bytes=\"{}\" tokens=\"{}\"/>",
+        file.size, file.estimated_tokens
+    )?;
     writeln!(
         output,
         "    <scores importance=\"{:.2}\" centrality=\"{:.2}\" quality=\"{:.2}\"/>",
@@ -278,7 +286,11 @@ pub fn generate_json_output(
 
 /// Write a single file entry in text format
 fn write_text_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn Error>> {
-    writeln!(output, "=== {} ({} tokens)", file.relative_path, file.estimated_tokens)?;
+    writeln!(
+        output,
+        "=== {} ({} tokens)",
+        file.relative_path, file.estimated_tokens
+    )?;
     append_content_with_newline(output, &file.content);
     writeln!(output)?;
     Ok(())
@@ -309,7 +321,12 @@ pub fn generate_text_output(
 /// Write a single file entry in markdown format
 fn write_markdown_file(output: &mut String, file: &ReportFile) -> Result<(), Box<dyn Error>> {
     writeln!(output, "## {}", file.relative_path)?;
-    writeln!(output, "*{} | {} tokens*", format_bytes(file.size), file.estimated_tokens)?;
+    writeln!(
+        output,
+        "*{} | {} tokens*",
+        format_bytes(file.size),
+        file.estimated_tokens
+    )?;
     writeln!(output, "")?;
     let lang = get_language_hint(&file.relative_path);
     writeln!(output, "```{}", lang)?;
@@ -1085,7 +1102,10 @@ mod tests {
     fn test_selection_metrics_clone() {
         let metrics = create_test_metrics();
         let cloned = metrics.clone();
-        assert_eq!(metrics.total_files_discovered, cloned.total_files_discovered);
+        assert_eq!(
+            metrics.total_files_discovered,
+            cloned.total_files_discovered
+        );
         assert_eq!(metrics.algorithm_used, cloned.algorithm_used);
     }
 

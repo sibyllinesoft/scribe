@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(stats.total_nodes, 4);
         assert_eq!(stats.total_edges, 4);
         assert_eq!(stats.out_degree_max, 2); // node0 has 2 outgoing edges
-        assert_eq!(stats.in_degree_max, 2);  // node3 has 2 incoming edges
+        assert_eq!(stats.in_degree_max, 2); // node3 has 2 incoming edges
     }
 
     #[test]
@@ -638,14 +638,23 @@ mod tests {
 
     #[test]
     fn test_documentation_type_equality() {
-        assert_eq!(DocumentationType::LineComment, DocumentationType::LineComment);
-        assert_eq!(DocumentationType::BlockComment, DocumentationType::BlockComment);
+        assert_eq!(
+            DocumentationType::LineComment,
+            DocumentationType::LineComment
+        );
+        assert_eq!(
+            DocumentationType::BlockComment,
+            DocumentationType::BlockComment
+        );
         assert_eq!(DocumentationType::DocComment, DocumentationType::DocComment);
         assert_eq!(DocumentationType::Docstring, DocumentationType::Docstring);
         assert_eq!(DocumentationType::ModuleDoc, DocumentationType::ModuleDoc);
         assert_eq!(DocumentationType::Readme, DocumentationType::Readme);
 
-        assert_ne!(DocumentationType::LineComment, DocumentationType::BlockComment);
+        assert_ne!(
+            DocumentationType::LineComment,
+            DocumentationType::BlockComment
+        );
         assert_ne!(DocumentationType::DocComment, DocumentationType::Docstring);
     }
 
@@ -847,7 +856,11 @@ mod tests {
             Ok("formatted results".to_string())
         }
 
-        fn format_repository_info(&self, _repo_info: &RepositoryInfo, _config: &Config) -> Result<String> {
+        fn format_repository_info(
+            &self,
+            _repo_info: &RepositoryInfo,
+            _config: &Config,
+        ) -> Result<String> {
             Ok("formatted repo info".to_string())
         }
 
@@ -872,11 +885,19 @@ mod tests {
 
     #[async_trait]
     impl RepositoryAnalyzer for MockRepositoryAnalyzer {
-        async fn analyze_repository(&self, _root_path: &Path, _config: &Config) -> Result<RepositoryInfo> {
+        async fn analyze_repository(
+            &self,
+            _root_path: &Path,
+            _config: &Config,
+        ) -> Result<RepositoryInfo> {
             unimplemented!()
         }
 
-        async fn get_statistics(&self, _root_path: &Path, _files: &[FileInfo]) -> Result<RepositoryInfo> {
+        async fn get_statistics(
+            &self,
+            _root_path: &Path,
+            _files: &[FileInfo],
+        ) -> Result<RepositoryInfo> {
             unimplemented!()
         }
 

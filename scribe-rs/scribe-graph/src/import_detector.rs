@@ -799,28 +799,49 @@ mod tests {
     #[test]
     fn test_detect_language_python() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.py"), Some("python".to_string()));
+        assert_eq!(
+            detector.detect_language("test.py"),
+            Some("python".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_javascript() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.js"), Some("javascript".to_string()));
-        assert_eq!(detector.detect_language("test.jsx"), Some("javascript".to_string()));
-        assert_eq!(detector.detect_language("test.mjs"), Some("javascript".to_string()));
+        assert_eq!(
+            detector.detect_language("test.js"),
+            Some("javascript".to_string())
+        );
+        assert_eq!(
+            detector.detect_language("test.jsx"),
+            Some("javascript".to_string())
+        );
+        assert_eq!(
+            detector.detect_language("test.mjs"),
+            Some("javascript".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_typescript() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.ts"), Some("typescript".to_string()));
-        assert_eq!(detector.detect_language("test.tsx"), Some("typescript".to_string()));
+        assert_eq!(
+            detector.detect_language("test.ts"),
+            Some("typescript".to_string())
+        );
+        assert_eq!(
+            detector.detect_language("test.tsx"),
+            Some("typescript".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_rust() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.rs"), Some("rust".to_string()));
+        assert_eq!(
+            detector.detect_language("test.rs"),
+            Some("rust".to_string())
+        );
     }
 
     #[test]
@@ -832,17 +853,32 @@ mod tests {
     #[test]
     fn test_detect_language_java() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("Test.java"), Some("java".to_string()));
-        assert_eq!(detector.detect_language("Test.kt"), Some("java".to_string()));
+        assert_eq!(
+            detector.detect_language("Test.java"),
+            Some("java".to_string())
+        );
+        assert_eq!(
+            detector.detect_language("Test.kt"),
+            Some("java".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_cpp() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.cpp"), Some("cpp".to_string()));
+        assert_eq!(
+            detector.detect_language("test.cpp"),
+            Some("cpp".to_string())
+        );
         assert_eq!(detector.detect_language("test.cc"), Some("cpp".to_string()));
-        assert_eq!(detector.detect_language("test.cxx"), Some("cpp".to_string()));
-        assert_eq!(detector.detect_language("test.hpp"), Some("cpp".to_string()));
+        assert_eq!(
+            detector.detect_language("test.cxx"),
+            Some("cpp".to_string())
+        );
+        assert_eq!(
+            detector.detect_language("test.hpp"),
+            Some("cpp".to_string())
+        );
         assert_eq!(detector.detect_language("test.h"), Some("cpp".to_string()));
     }
 
@@ -855,25 +891,37 @@ mod tests {
     #[test]
     fn test_detect_language_ruby() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.rb"), Some("ruby".to_string()));
+        assert_eq!(
+            detector.detect_language("test.rb"),
+            Some("ruby".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_php() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.php"), Some("php".to_string()));
+        assert_eq!(
+            detector.detect_language("test.php"),
+            Some("php".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_csharp() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.cs"), Some("csharp".to_string()));
+        assert_eq!(
+            detector.detect_language("test.cs"),
+            Some("csharp".to_string())
+        );
     }
 
     #[test]
     fn test_detect_language_swift() {
         let detector = ImportDetector::with_config(default_config());
-        assert_eq!(detector.detect_language("test.swift"), Some("swift".to_string()));
+        assert_eq!(
+            detector.detect_language("test.swift"),
+            Some("swift".to_string())
+        );
     }
 
     #[test]
@@ -926,7 +974,10 @@ mod tests {
         assert_eq!(strip_known_suffix("module.py", PYTHON_SUFFIXES), "module");
         assert_eq!(strip_known_suffix("component.js", JS_SUFFIXES), "component");
         assert_eq!(strip_known_suffix("lib.rs", RUST_SUFFIXES), "lib");
-        assert_eq!(strip_known_suffix("noextension", PYTHON_SUFFIXES), "noextension");
+        assert_eq!(
+            strip_known_suffix("noextension", PYTHON_SUFFIXES),
+            "noextension"
+        );
     }
 
     #[test]
@@ -976,10 +1027,7 @@ mod tests {
 
     #[test]
     fn test_resolve_import_rust_crate() {
-        let files = vec![
-            mock_result("src/utils.rs"),
-            mock_result("src/lib.rs"),
-        ];
+        let files = vec![mock_result("src/utils.rs"), mock_result("src/lib.rs")];
 
         let detector = ImportDetector::with_file_index(default_config(), &files);
         let file_map: HashMap<&str, &MockScanResult> =
@@ -992,7 +1040,9 @@ mod tests {
     #[test]
     fn test_resolve_import_with_path_mapping() {
         let mut config = default_config();
-        config.path_mappings.insert("@/utils".to_string(), "src/utils.py".to_string());
+        config
+            .path_mappings
+            .insert("@/utils".to_string(), "src/utils.py".to_string());
 
         let files = vec![mock_result("src/utils.py")];
         let detector = ImportDetector::with_file_index(config, &files);
@@ -1053,7 +1103,10 @@ mod tests {
         let detector = ImportDetector::with_config(default_config());
         let cloned = detector.clone();
 
-        assert_eq!(detector.config.exclude_stdlib_imports, cloned.config.exclude_stdlib_imports);
+        assert_eq!(
+            detector.config.exclude_stdlib_imports,
+            cloned.config.exclude_stdlib_imports
+        );
     }
 
     #[test]
@@ -1165,10 +1218,7 @@ mod tests {
 
     #[test]
     fn test_resolve_rust_self() {
-        let files = vec![
-            mock_result("src/lib.rs"),
-            mock_result("src/utils.rs"),
-        ];
+        let files = vec![mock_result("src/lib.rs"), mock_result("src/utils.rs")];
 
         let detector = ImportDetector::with_file_index(default_config(), &files);
         let file_map: HashMap<&str, &MockScanResult> =
@@ -1196,7 +1246,8 @@ mod tests {
             files.iter().map(|f| (f.path.as_str(), f)).collect();
 
         // Stdlib import should be excluded
-        let resolved = detector.resolve_import("std::collections::HashMap", "src/lib.rs", &file_map);
+        let resolved =
+            detector.resolve_import("std::collections::HashMap", "src/lib.rs", &file_map);
         assert!(resolved.is_none());
     }
 
@@ -1274,10 +1325,7 @@ mod tests {
 
     #[test]
     fn test_find_module_candidate() {
-        let files = vec![
-            mock_result("src/utils.py"),
-            mock_result("src/helpers.py"),
-        ];
+        let files = vec![mock_result("src/utils.py"), mock_result("src/helpers.py")];
 
         let detector = ImportDetector::with_file_index(default_config(), &files);
 
@@ -1517,10 +1565,7 @@ mod tests {
     #[test]
     fn test_resolve_rust_single_module_lib() {
         // Exercises lines 313-317: single module part with lib.rs lookup
-        let files = vec![
-            mock_result("src/lib.rs"),
-            mock_result("src/utils.rs"),
-        ];
+        let files = vec![mock_result("src/lib.rs"), mock_result("src/utils.rs")];
 
         let detector = ImportDetector::with_file_index(default_config(), &files);
         let file_map: HashMap<&str, &MockScanResult> =
@@ -1556,10 +1601,7 @@ mod tests {
     #[test]
     fn test_fuzzy_match_filename_lookup() {
         // Exercises lines 617-620: filename_to_paths lookup
-        let files = vec![
-            mock_result("src/utils.py"),
-            mock_result("lib/utils.py"),
-        ];
+        let files = vec![mock_result("src/utils.py"), mock_result("lib/utils.py")];
 
         let detector = ImportDetector::with_file_index(default_config(), &files);
         let file_map: HashMap<&str, &MockScanResult> =

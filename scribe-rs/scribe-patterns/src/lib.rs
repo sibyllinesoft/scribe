@@ -728,8 +728,7 @@ mod tests {
 
     #[test]
     fn test_pattern_builder_gitignore() {
-        let builder = PatternBuilder::new()
-            .gitignore("/path/to/.gitignore");
+        let builder = PatternBuilder::new().gitignore("/path/to/.gitignore");
 
         assert_eq!(builder.gitignore_files.len(), 1);
         assert_eq!(
@@ -775,16 +774,10 @@ mod tests {
         assert_eq!(normalize_path(".."), PathBuf::from(".."));
 
         // Multiple parent refs
-        assert_eq!(
-            normalize_path("a/b/c/../../../d"),
-            PathBuf::from("d")
-        );
+        assert_eq!(normalize_path("a/b/c/../../../d"), PathBuf::from("d"));
 
         // Leading parent refs should be preserved
-        assert_eq!(
-            normalize_path("../../a/b"),
-            PathBuf::from("../../a/b")
-        );
+        assert_eq!(normalize_path("../../a/b"), PathBuf::from("../../a/b"));
     }
 
     #[test]

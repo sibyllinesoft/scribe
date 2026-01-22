@@ -657,8 +657,12 @@ mod tests {
         let tokens = index.extract_tokens(path);
 
         // Should have directory components
-        assert!(tokens.iter().any(|t| t.text == "auth" && t.token_type == TokenType::Directory));
-        assert!(tokens.iter().any(|t| t.text == "handlers" && t.token_type == TokenType::Directory));
+        assert!(tokens
+            .iter()
+            .any(|t| t.text == "auth" && t.token_type == TokenType::Directory));
+        assert!(tokens
+            .iter()
+            .any(|t| t.text == "handlers" && t.token_type == TokenType::Directory));
     }
 
     #[test]

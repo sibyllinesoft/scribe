@@ -17,7 +17,11 @@ pub fn determine_output_path(
 
     if let Some(config_path) = config_path {
         let path = PathBuf::from(config_path);
-        return if path.is_absolute() { path } else { repo_dir.join(path) };
+        return if path.is_absolute() {
+            path
+        } else {
+            repo_dir.join(path)
+        };
     }
 
     auto_generate_output_path(repo_dir, report_format)
@@ -98,7 +102,10 @@ pub fn print_selection_summary(
         "  • Files excluded  : {}",
         eligible_file_count.saturating_sub(metrics.files_selected)
     );
-    println!("  • Coverage        : {:.1}%", metrics.coverage_score * 100.0);
+    println!(
+        "  • Coverage        : {:.1}%",
+        metrics.coverage_score * 100.0
+    );
     if unlimited_budget || token_target == 0 {
         println!("  • Token usage     : unlimited");
     } else {

@@ -11,9 +11,7 @@ pub fn count_import_nodes(node: &Node, language: &Language) -> usize {
     let mut count = 0;
     let import_types: &[&str] = match language {
         Language::Python => &["import_statement", "import_from_statement"],
-        Language::JavaScript | Language::TypeScript => {
-            &["import_statement", "import_declaration"]
-        }
+        Language::JavaScript | Language::TypeScript => &["import_statement", "import_declaration"],
         Language::Rust => &["use_declaration"],
         Language::Go => &["import_spec", "import_declaration"],
         Language::Java => &["import_declaration"],
@@ -127,17 +125,13 @@ mod tests {
 
     fn create_rust_parser() -> Parser {
         let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_rust::language())
-            .unwrap();
+        parser.set_language(tree_sitter_rust::language()).unwrap();
         parser
     }
 
     fn create_python_parser() -> Parser {
         let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_python::language())
-            .unwrap();
+        parser.set_language(tree_sitter_python::language()).unwrap();
         parser
     }
 
@@ -151,9 +145,7 @@ mod tests {
 
     fn create_go_parser() -> Parser {
         let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_go::language())
-            .unwrap();
+        parser.set_language(tree_sitter_go::language()).unwrap();
         parser
     }
 

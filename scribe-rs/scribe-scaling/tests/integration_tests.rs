@@ -1,6 +1,6 @@
 use scribe_scaling::{
-    AdaptiveConfig, CacheConfig, MemoryConfig, ParallelConfig, RepositoryType,
-    ScalingConfig, ScalingEngine, SignatureConfig, SignatureLevel, StreamingConfig,
+    AdaptiveConfig, CacheConfig, MemoryConfig, ParallelConfig, RepositoryType, ScalingConfig,
+    ScalingEngine, SignatureConfig, SignatureLevel, StreamingConfig,
 };
 use std::fs;
 use std::path::PathBuf;

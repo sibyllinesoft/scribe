@@ -1,7 +1,7 @@
 //! Import extraction utilities for different programming languages
 
-use std::collections::HashSet;
 use scribe_core::Language;
+use std::collections::HashSet;
 
 /// Extract imports from file content based on language
 pub fn extract_imports_for_diff(content: &str, language: &Language) -> Vec<String> {

@@ -205,9 +205,7 @@ mod tests {
 
     fn parse_python(content: &str) -> tree_sitter::Tree {
         let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_python::language())
-            .unwrap();
+        parser.set_language(tree_sitter_python::language()).unwrap();
         parser.parse(content, None).unwrap()
     }
 
@@ -221,17 +219,13 @@ mod tests {
 
     fn parse_go(content: &str) -> tree_sitter::Tree {
         let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_go::language())
-            .unwrap();
+        parser.set_language(tree_sitter_go::language()).unwrap();
         parser.parse(content, None).unwrap()
     }
 
     fn parse_rust(content: &str) -> tree_sitter::Tree {
         let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_rust::language())
-            .unwrap();
+        parser.set_language(tree_sitter_rust::language()).unwrap();
         parser.parse(content, None).unwrap()
     }
 
@@ -311,7 +305,11 @@ mod tests {
 
         assert_eq!(imports.len(), 1);
         // Relative import detection
-        assert!(imports[0].is_relative || imports[0].module.starts_with('.') || imports[0].module.is_empty());
+        assert!(
+            imports[0].is_relative
+                || imports[0].module.starts_with('.')
+                || imports[0].module.is_empty()
+        );
     }
 
     #[test]
@@ -441,7 +439,7 @@ import "fmt"
 
     #[test]
     fn test_empty_imports_list() {
-        let content = "x = 1";  // No imports
+        let content = "x = 1"; // No imports
         let tree = parse_python(content);
         let root = tree.root_node();
 
@@ -470,7 +468,13 @@ import "fmt"
 
         assert_eq!(imports.len(), 1);
         // The module or alias should contain "numpy" or "np"
-        assert!(imports[0].module.contains("numpy") || imports[0].alias.as_ref().map_or(false, |a| a.contains("np")));
+        assert!(
+            imports[0].module.contains("numpy")
+                || imports[0]
+                    .alias
+                    .as_ref()
+                    .map_or(false, |a| a.contains("np"))
+        );
     }
 
     #[test]

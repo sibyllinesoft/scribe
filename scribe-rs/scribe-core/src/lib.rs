@@ -312,10 +312,18 @@ mod tests {
     #[test]
     fn test_file_type_re_exports() {
         // Test that FileType is re-exported correctly
-        let _: FileType = FileType::Source { language: Language::Rust };
-        let _: FileType = FileType::Test { language: Language::Python };
-        let _: FileType = FileType::Documentation { format: DocumentationFormat::Markdown };
-        let _: FileType = FileType::Configuration { format: ConfigurationFormat::Json };
+        let _: FileType = FileType::Source {
+            language: Language::Rust,
+        };
+        let _: FileType = FileType::Test {
+            language: Language::Python,
+        };
+        let _: FileType = FileType::Documentation {
+            format: DocumentationFormat::Markdown,
+        };
+        let _: FileType = FileType::Configuration {
+            format: ConfigurationFormat::Json,
+        };
         let _: FileType = FileType::Binary;
         let _: FileType = FileType::Generated;
         let _: FileType = FileType::Unknown;

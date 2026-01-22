@@ -139,33 +139,66 @@ mod tests {
 
     #[test]
     fn test_ast_language_from_extension_python() {
-        assert!(matches!(AstLanguage::from_extension("py"), Some(AstLanguage::Python)));
-        assert!(matches!(AstLanguage::from_extension("pyi"), Some(AstLanguage::Python)));
-        assert!(matches!(AstLanguage::from_extension("pyw"), Some(AstLanguage::Python)));
+        assert!(matches!(
+            AstLanguage::from_extension("py"),
+            Some(AstLanguage::Python)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("pyi"),
+            Some(AstLanguage::Python)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("pyw"),
+            Some(AstLanguage::Python)
+        ));
     }
 
     #[test]
     fn test_ast_language_from_extension_javascript() {
-        assert!(matches!(AstLanguage::from_extension("js"), Some(AstLanguage::JavaScript)));
-        assert!(matches!(AstLanguage::from_extension("mjs"), Some(AstLanguage::JavaScript)));
-        assert!(matches!(AstLanguage::from_extension("cjs"), Some(AstLanguage::JavaScript)));
+        assert!(matches!(
+            AstLanguage::from_extension("js"),
+            Some(AstLanguage::JavaScript)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("mjs"),
+            Some(AstLanguage::JavaScript)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("cjs"),
+            Some(AstLanguage::JavaScript)
+        ));
     }
 
     #[test]
     fn test_ast_language_from_extension_typescript() {
-        assert!(matches!(AstLanguage::from_extension("ts"), Some(AstLanguage::TypeScript)));
-        assert!(matches!(AstLanguage::from_extension("mts"), Some(AstLanguage::TypeScript)));
-        assert!(matches!(AstLanguage::from_extension("cts"), Some(AstLanguage::TypeScript)));
+        assert!(matches!(
+            AstLanguage::from_extension("ts"),
+            Some(AstLanguage::TypeScript)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("mts"),
+            Some(AstLanguage::TypeScript)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("cts"),
+            Some(AstLanguage::TypeScript)
+        ));
     }
 
     #[test]
     fn test_ast_language_from_extension_go() {
-        assert!(matches!(AstLanguage::from_extension("go"), Some(AstLanguage::Go)));
+        assert!(matches!(
+            AstLanguage::from_extension("go"),
+            Some(AstLanguage::Go)
+        ));
     }
 
     #[test]
     fn test_ast_language_from_extension_rust() {
-        assert!(matches!(AstLanguage::from_extension("rs"), Some(AstLanguage::Rust)));
+        assert!(matches!(
+            AstLanguage::from_extension("rs"),
+            Some(AstLanguage::Rust)
+        ));
     }
 
     #[test]
@@ -177,9 +210,18 @@ mod tests {
 
     #[test]
     fn test_ast_language_from_extension_case_insensitive() {
-        assert!(matches!(AstLanguage::from_extension("PY"), Some(AstLanguage::Python)));
-        assert!(matches!(AstLanguage::from_extension("RS"), Some(AstLanguage::Rust)));
-        assert!(matches!(AstLanguage::from_extension("Js"), Some(AstLanguage::JavaScript)));
+        assert!(matches!(
+            AstLanguage::from_extension("PY"),
+            Some(AstLanguage::Python)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("RS"),
+            Some(AstLanguage::Rust)
+        ));
+        assert!(matches!(
+            AstLanguage::from_extension("Js"),
+            Some(AstLanguage::JavaScript)
+        ));
     }
 
     #[test]

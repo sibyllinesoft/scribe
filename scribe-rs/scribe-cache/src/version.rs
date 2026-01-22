@@ -16,6 +16,5 @@ pub const CACHE_VERSION: u32 = 1;
 /// Version history for documentation
 /// - v1: Initial version with redb storage, xxh3 hashing
 #[allow(dead_code)]
-const VERSION_HISTORY: &[&str] = &[
-    "v1: Initial version - redb storage, xxh3 hashing, bincode serialization",
-];
+const VERSION_HISTORY: &[&str] =
+    &["v1: Initial version - redb storage, xxh3 hashing, bincode serialization"];

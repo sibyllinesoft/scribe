@@ -85,13 +85,16 @@ impl GitIntegrator {
     /// List all tracked files in the repository using libgit2 index
     pub async fn list_tracked_files(&self) -> Result<Vec<PathBuf>> {
         let repo = self.repo.lock();
-        let index = repo.index()
+        let index = repo
+            .index()
             .map_err(|e| ScribeError::git(format!("Failed to read index: {}", e)))?;
 
         let files: Vec<PathBuf> = index
             .iter()
             .filter_map(|entry| {
-                std::str::from_utf8(&entry.path).ok().map(|p| self.repo_path.join(p))
+                std::str::from_utf8(&entry.path)
+                    .ok()
+                    .map(|p| self.repo_path.join(p))
             })
             .collect();
 
@@ -110,7 +113,8 @@ impl GitIntegrator {
             .include_unmodified(false);
 
         let repo = self.repo.lock();
-        let statuses = repo.statuses(Some(&mut opts))
+        let statuses = repo
+            .statuses(Some(&mut opts))
             .map_err(|e| ScribeError::git(format!("Failed to get status: {}", e)))?;
 
         for entry in statuses.iter() {
@@ -140,7 +144,9 @@ impl GitIntegrator {
         }
 
         // Mark batch status as loaded, even if empty (empty = all files unmodified)
-        self.cache.batch_status_loaded.store(true, std::sync::atomic::Ordering::Release);
+        self.cache
+            .batch_status_loaded
+            .store(true, std::sync::atomic::Ordering::Release);
         *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
         log::debug!(
@@ -173,7 +179,9 @@ impl GitIntegrator {
 
         let status = self.get_file_status(file_path).await?;
 
-        self.cache.file_statuses.insert(file_path.to_path_buf(), status.clone());
+        self.cache
+            .file_statuses
+            .insert(file_path.to_path_buf(), status.clone());
         *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
         Ok(GitFileInfo {
@@ -196,11 +204,18 @@ impl GitIntegrator {
         let status = self.get_file_status(file_path).await?;
         let last_commit = self.get_last_commit_for_file(file_path).await.ok();
         let blame_info = self.get_blame_info(file_path).await.ok();
-        let (changes_count, additions, deletions) = self.get_file_change_stats(file_path).await.unwrap_or((0, 0, 0));
+        let (changes_count, additions, deletions) = self
+            .get_file_change_stats(file_path)
+            .await
+            .unwrap_or((0, 0, 0));
 
-        self.cache.file_statuses.insert(file_path.to_path_buf(), status.clone());
+        self.cache
+            .file_statuses
+            .insert(file_path.to_path_buf(), status.clone());
         if let Some(ref blame) = blame_info {
-            self.cache.blame_cache.insert(file_path.to_path_buf(), blame.clone());
+            self.cache
+                .blame_cache
+                .insert(file_path.to_path_buf(), blame.clone());
         }
         *self.cache.cache_timestamp.write() = Some(SystemTime::now());
 
@@ -217,7 +232,11 @@ impl GitIntegrator {
 
     async fn get_file_status(&self, file_path: &Path) -> Result<GitFileStatus> {
         // If batch status was loaded, use it (even if empty = all unmodified)
-        if self.cache.batch_status_loaded.load(std::sync::atomic::Ordering::Acquire) {
+        if self
+            .cache
+            .batch_status_loaded
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
             if let Some(status) = self.cache.batch_status_cache.get(file_path) {
                 return Ok(status.clone());
             }
@@ -231,7 +250,8 @@ impl GitIntegrator {
             .map_err(|_| ScribeError::git("File not in repository".to_string()))?;
 
         let repo = self.repo.lock();
-        let status = repo.status_file(relative_path)
+        let status = repo
+            .status_file(relative_path)
             .map_err(|e| ScribeError::git(format!("Failed to get file status: {}", e)))?;
 
         let result = if status.is_wt_new() {
@@ -382,7 +402,10 @@ impl GitIntegrator {
             i += 1;
         }
 
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         let mut age_distribution = AgeDistribution::default();
 
@@ -438,7 +461,9 @@ impl GitIntegrator {
 
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
-                if let (Ok(additions), Ok(deletions)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                if let (Ok(additions), Ok(deletions)) =
+                    (parts[0].parse::<usize>(), parts[1].parse::<usize>())
+                {
                     total_additions += additions;
                     total_deletions += deletions;
                     total_changes += 1;
@@ -456,7 +481,9 @@ impl GitIntegrator {
         let tags = self.get_tags().await?;
         let file_types = self.analyze_file_types().await?;
         let activity_timeline = self.get_activity_timeline().await?;
-        let repository_health = self.calculate_repository_health(&contributors, &activity_timeline).await?;
+        let repository_health = self
+            .calculate_repository_health(&contributors, &activity_timeline)
+            .await?;
 
         Ok(GitRepositoryStats {
             total_commits,
@@ -500,7 +527,9 @@ impl GitIntegrator {
                     };
 
                     let (lines_added, lines_deleted, files_modified, first_commit, last_commit) =
-                        self.get_detailed_contributor_stats(&email).await.unwrap_or((0, 0, 0, 0, 0));
+                        self.get_detailed_contributor_stats(&email)
+                            .await
+                            .unwrap_or((0, 0, 0, 0, 0));
 
                     contributors.push(ContributorStats {
                         name,
@@ -520,7 +549,10 @@ impl GitIntegrator {
         Ok((total_commits, contributors))
     }
 
-    async fn get_detailed_contributor_stats(&self, email: &str) -> Result<(usize, usize, usize, u64, u64)> {
+    async fn get_detailed_contributor_stats(
+        &self,
+        email: &str,
+    ) -> Result<(usize, usize, usize, u64, u64)> {
         let output = AsyncCommand::new("git")
             .arg("log")
             .arg("--author")
@@ -554,7 +586,9 @@ impl GitIntegrator {
 
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 3 {
-                if let (Ok(added), Ok(deleted)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                if let (Ok(added), Ok(deleted)) =
+                    (parts[0].parse::<usize>(), parts[1].parse::<usize>())
+                {
                     lines_added += added;
                     lines_deleted += deleted;
                     files_modified += 1;
@@ -565,7 +599,13 @@ impl GitIntegrator {
         let first_commit = timestamps.iter().min().copied().unwrap_or(0);
         let last_commit = timestamps.iter().max().copied().unwrap_or(0);
 
-        Ok((lines_added, lines_deleted, files_modified, first_commit, last_commit))
+        Ok((
+            lines_added,
+            lines_deleted,
+            files_modified,
+            first_commit,
+            last_commit,
+        ))
     }
 
     async fn get_branches(&self) -> Result<Vec<String>> {
@@ -582,7 +622,11 @@ impl GitIntegrator {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.lines().map(|line| line.trim_start_matches("* ").trim().to_string()).filter(|line| !line.is_empty()).collect())
+        Ok(stdout
+            .lines()
+            .map(|line| line.trim_start_matches("* ").trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect())
     }
 
     async fn get_tags(&self) -> Result<Vec<String>> {
@@ -598,7 +642,11 @@ impl GitIntegrator {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.lines().filter(|line| !line.trim().is_empty()).map(|line| line.trim().to_string()).collect())
+        Ok(stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+            .collect())
     }
 
     async fn analyze_file_types(&self) -> Result<HashMap<String, usize>> {
@@ -620,7 +668,11 @@ impl GitIntegrator {
         Ok(vec![])
     }
 
-    async fn calculate_repository_health(&self, contributors: &[ContributorStats], activity_timeline: &[ActivityPeriod]) -> Result<RepositoryHealth> {
+    async fn calculate_repository_health(
+        &self,
+        contributors: &[ContributorStats],
+        activity_timeline: &[ActivityPeriod],
+    ) -> Result<RepositoryHealth> {
         let commit_frequency = if !activity_timeline.is_empty() {
             let total_commits: usize = activity_timeline.iter().map(|p| p.commits).sum();
             total_commits as f64 / activity_timeline.len() as f64
@@ -631,7 +683,11 @@ impl GitIntegrator {
         let contributor_diversity = contributors.len() as f64;
         let total_added: usize = contributors.iter().map(|c| c.lines_added).sum();
         let total_deleted: usize = contributors.iter().map(|c| c.lines_deleted).sum();
-        let code_churn = if total_added > 0 { total_deleted as f64 / total_added as f64 } else { 0.0 };
+        let code_churn = if total_added > 0 {
+            total_deleted as f64 / total_added as f64
+        } else {
+            0.0
+        };
 
         Ok(RepositoryHealth {
             commit_frequency,
@@ -650,7 +706,10 @@ impl GitIntegrator {
 
     fn is_cache_valid(&self) -> bool {
         if let Some(cache_time) = *self.cache.cache_timestamp.read() {
-            SystemTime::now().duration_since(cache_time).map(|duration| duration < self.cache.cache_ttl).unwrap_or(false)
+            SystemTime::now()
+                .duration_since(cache_time)
+                .map(|duration| duration < self.cache.cache_ttl)
+                .unwrap_or(false)
         } else {
             false
         }
@@ -710,10 +769,15 @@ mod tests {
         let cache = GitCache::default();
         let path = PathBuf::from("test.rs");
 
-        cache.file_statuses.insert(path.clone(), GitFileStatus::Modified);
+        cache
+            .file_statuses
+            .insert(path.clone(), GitFileStatus::Modified);
 
         assert!(cache.file_statuses.contains_key(&path));
-        assert_eq!(*cache.file_statuses.get(&path).unwrap(), GitFileStatus::Modified);
+        assert_eq!(
+            *cache.file_statuses.get(&path).unwrap(),
+            GitFileStatus::Modified
+        );
     }
 
     #[test]
@@ -730,7 +794,9 @@ mod tests {
             files_changed: 5,
         };
 
-        cache.commit_cache.insert(commit_hash.clone(), commit_info.clone());
+        cache
+            .commit_cache
+            .insert(commit_hash.clone(), commit_info.clone());
 
         assert!(cache.commit_cache.contains_key(&commit_hash));
         let cached = cache.commit_cache.get(&commit_hash).unwrap();
@@ -756,9 +822,7 @@ mod tests {
     fn test_parse_ls_files_output() {
         // Test parsing of git ls-files -z output
         let output = "src/main.rs\0src/lib.rs\0tests/test.rs\0";
-        let files: Vec<&str> = output.split('\0')
-            .filter(|s| !s.is_empty())
-            .collect();
+        let files: Vec<&str> = output.split('\0').filter(|s| !s.is_empty()).collect();
 
         assert_eq!(files.len(), 3);
         assert_eq!(files[0], "src/main.rs");
@@ -1099,7 +1163,7 @@ mod tests {
     fn test_age_calculation() {
         let now = 1704067200u64; // Some fixed timestamp
         let timestamps = vec![
-            (now - 86400 * 7, "recent"),   // 7 days ago
+            (now - 86400 * 7, "recent"),    // 7 days ago
             (now - 86400 * 60, "moderate"), // 60 days ago
             (now - 86400 * 200, "old"),     // 200 days ago
             (now - 86400 * 500, "ancient"), // 500 days ago
@@ -1130,7 +1194,9 @@ mod tests {
         ];
 
         for path in &paths {
-            cache.batch_status_cache.insert(path.clone(), GitFileStatus::Modified);
+            cache
+                .batch_status_cache
+                .insert(path.clone(), GitFileStatus::Modified);
         }
 
         assert_eq!(cache.batch_status_cache.len(), 3);
@@ -1144,15 +1210,20 @@ mod tests {
         let cache = GitCache::default();
 
         // Add some items
-        cache.file_statuses.insert(PathBuf::from("test.rs"), GitFileStatus::Modified);
-        cache.commit_cache.insert("abc123".to_string(), GitCommitInfo {
-            hash: "abc123".to_string(),
-            author: "Test".to_string(),
-            email: "test@test.com".to_string(),
-            timestamp: 0,
-            message: "test".to_string(),
-            files_changed: 1,
-        });
+        cache
+            .file_statuses
+            .insert(PathBuf::from("test.rs"), GitFileStatus::Modified);
+        cache.commit_cache.insert(
+            "abc123".to_string(),
+            GitCommitInfo {
+                hash: "abc123".to_string(),
+                author: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: 0,
+                message: "test".to_string(),
+                files_changed: 1,
+            },
+        );
 
         assert!(!cache.file_statuses.is_empty());
         assert!(!cache.commit_cache.is_empty());

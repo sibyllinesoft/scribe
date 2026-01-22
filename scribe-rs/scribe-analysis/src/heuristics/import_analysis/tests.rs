@@ -382,15 +382,9 @@ fn test_import_matches_file_index_files() {
 #[test]
 fn test_import_matches_file_std_library() {
     // Rust std:: imports
-    assert!(import_matches_file(
-        "std::io::Read",
-        "std/io/read.rs"
-    ));
+    assert!(import_matches_file("std::io::Read", "std/io/read.rs"));
 
-    assert!(import_matches_file(
-        "std::fs::File",
-        "std/fs/file.rs"
-    ));
+    assert!(import_matches_file("std::fs::File", "std/fs/file.rs"));
 }
 
 #[test]

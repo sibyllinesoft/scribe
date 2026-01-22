@@ -675,7 +675,10 @@ mod tests {
 
         let cloned = stats.clone();
         assert_eq!(stats.files_walked, cloned.files_walked);
-        assert_eq!(stats.bytes_read_for_detection, cloned.bytes_read_for_detection);
+        assert_eq!(
+            stats.bytes_read_for_detection,
+            cloned.bytes_read_for_detection
+        );
     }
 
     #[test]
@@ -685,7 +688,10 @@ mod tests {
             FilterResult::Exclude(FilterReason::ColdExtension),
             FilterResult::Exclude(FilterReason::ColdExtension)
         );
-        assert_ne!(FilterResult::Include, FilterResult::Exclude(FilterReason::Hidden));
+        assert_ne!(
+            FilterResult::Include,
+            FilterResult::Exclude(FilterReason::Hidden)
+        );
     }
 
     #[test]
@@ -700,12 +706,30 @@ mod tests {
         let mut filter = FileFilter::new();
 
         // Test that hot extensions are included
-        assert_eq!(filter.pre_filter_path(Path::new("test.rs")), FilterResult::Include);
-        assert_eq!(filter.pre_filter_path(Path::new("test.py")), FilterResult::Include);
-        assert_eq!(filter.pre_filter_path(Path::new("test.js")), FilterResult::Include);
-        assert_eq!(filter.pre_filter_path(Path::new("test.ts")), FilterResult::Include);
-        assert_eq!(filter.pre_filter_path(Path::new("test.go")), FilterResult::Include);
-        assert_eq!(filter.pre_filter_path(Path::new("test.json")), FilterResult::Include);
+        assert_eq!(
+            filter.pre_filter_path(Path::new("test.rs")),
+            FilterResult::Include
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("test.py")),
+            FilterResult::Include
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("test.js")),
+            FilterResult::Include
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("test.ts")),
+            FilterResult::Include
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("test.go")),
+            FilterResult::Include
+        );
+        assert_eq!(
+            filter.pre_filter_path(Path::new("test.json")),
+            FilterResult::Include
+        );
     }
 
     #[test]
@@ -856,7 +880,10 @@ mod tests {
 
         // Cold extension should return exclude without checking file
         let result = filter.filter_file(Path::new("image.png")).await;
-        assert!(matches!(result, FilterResult::Exclude(FilterReason::ColdExtension)));
+        assert!(matches!(
+            result,
+            FilterResult::Exclude(FilterReason::ColdExtension)
+        ));
     }
 
     #[tokio::test]
@@ -881,7 +908,9 @@ mod tests {
         // Tests lines 309-312: binary detection within filter_file
         // Use current directory to avoid cold directory issues
         let binary_file = Path::new("test_binary_file.dat");
-        fs::write(&binary_file, &[0u8, 1u8, 0u8, 2u8, 0u8]).await.unwrap();
+        fs::write(&binary_file, &[0u8, 1u8, 0u8, 2u8, 0u8])
+            .await
+            .unwrap();
 
         let mut filter = FileFilter::new();
         let result = filter.filter_file(&binary_file).await;
@@ -890,7 +919,10 @@ mod tests {
         let _ = fs::remove_file(&binary_file).await;
 
         // Should be excluded as binary
-        assert!(matches!(result, FilterResult::Exclude(FilterReason::Binary)));
+        assert!(matches!(
+            result,
+            FilterResult::Exclude(FilterReason::Binary)
+        ));
     }
 
     #[tokio::test]
@@ -899,7 +931,9 @@ mod tests {
         let mut filter = FileFilter::new();
 
         // Non-existent file should return false (assume text)
-        let result = filter.is_binary_file(Path::new("/nonexistent/file.dat")).await;
+        let result = filter
+            .is_binary_file(Path::new("/nonexistent/file.dat"))
+            .await;
         assert!(!result);
     }
 

@@ -358,16 +358,14 @@ mod tests {
             total_tokens: "500".to_string(),
             total_size: "5 KB".to_string(),
             coverage_percentage: 30,
-            files: vec![
-                crate::handler_helpers::TemplateFile {
-                    relative_path: "src/main.rs".to_string(),
-                    icon: "🦀".to_string(),
-                    size: "1 KB".to_string(),
-                    estimated_tokens: "200".to_string(),
-                    importance_score: "0.90".to_string(),
-                    content: "fn main() {}".to_string(),
-                },
-            ],
+            files: vec![crate::handler_helpers::TemplateFile {
+                relative_path: "src/main.rs".to_string(),
+                icon: "🦀".to_string(),
+                size: "1 KB".to_string(),
+                estimated_tokens: "200".to_string(),
+                importance_score: "0.90".to_string(),
+                content: "fn main() {}".to_string(),
+            }],
         };
 
         let result = render_template(&template_data);

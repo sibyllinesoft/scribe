@@ -96,7 +96,9 @@ mod tests {
             is_binary: false,
             language: Language::Rust,
             modified: None,
-            file_type: FileType::Source { language: Language::Rust },
+            file_type: FileType::Source {
+                language: Language::Rust,
+            },
             decision: RenderDecision::include("test"),
             centrality_score: None,
             line_count: None,

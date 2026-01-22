@@ -297,7 +297,10 @@ mod tests {
 
         let cloned = selection.clone();
         assert_eq!(selection.total_tokens, cloned.total_tokens);
-        assert_eq!(selection.positioning_reasoning, cloned.positioning_reasoning);
+        assert_eq!(
+            selection.positioning_reasoning,
+            cloned.positioning_reasoning
+        );
     }
 
     #[test]
@@ -337,7 +340,12 @@ mod tests {
     #[test]
     fn test_context_positioner_creation() {
         let config = ContextPositioningConfig::default();
-        let positioner = ContextPositioner { config: config.clone() };
-        assert_eq!(positioner.config.enable_positioning, config.enable_positioning);
+        let positioner = ContextPositioner {
+            config: config.clone(),
+        };
+        assert_eq!(
+            positioner.config.enable_positioning,
+            config.enable_positioning
+        );
     }
 }

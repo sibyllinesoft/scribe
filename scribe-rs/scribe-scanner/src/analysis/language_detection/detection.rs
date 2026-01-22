@@ -177,10 +177,7 @@ pub fn get_likely_languages_from_content(content: &str) -> Vec<Language> {
     if content.contains("function ") || content.contains("const ") || content.contains("let ") {
         likely_languages.push(Language::JavaScript);
     }
-    if content.contains("interface ")
-        || content.contains("type ")
-        || content.contains(": string")
-    {
+    if content.contains("interface ") || content.contains("type ") || content.contains(": string") {
         likely_languages.push(Language::TypeScript);
     }
     if content.contains("func ") || content.contains("package ") {
@@ -395,11 +392,26 @@ mod tests {
     fn test_detect_by_extension() {
         let map = create_extension_map();
 
-        assert_eq!(detect_by_extension(Path::new("test.rs"), &map), Language::Rust);
-        assert_eq!(detect_by_extension(Path::new("test.py"), &map), Language::Python);
-        assert_eq!(detect_by_extension(Path::new("test.js"), &map), Language::JavaScript);
-        assert_eq!(detect_by_extension(Path::new("test.unknown"), &map), Language::Unknown);
-        assert_eq!(detect_by_extension(Path::new("no_extension"), &map), Language::Unknown);
+        assert_eq!(
+            detect_by_extension(Path::new("test.rs"), &map),
+            Language::Rust
+        );
+        assert_eq!(
+            detect_by_extension(Path::new("test.py"), &map),
+            Language::Python
+        );
+        assert_eq!(
+            detect_by_extension(Path::new("test.js"), &map),
+            Language::JavaScript
+        );
+        assert_eq!(
+            detect_by_extension(Path::new("test.unknown"), &map),
+            Language::Unknown
+        );
+        assert_eq!(
+            detect_by_extension(Path::new("no_extension"), &map),
+            Language::Unknown
+        );
     }
 
     #[test]
@@ -407,8 +419,14 @@ mod tests {
         let map = create_extension_map();
 
         // Extensions should be converted to lowercase
-        assert_eq!(detect_by_extension(Path::new("test.RS"), &map), Language::Rust);
-        assert_eq!(detect_by_extension(Path::new("test.PY"), &map), Language::Python);
+        assert_eq!(
+            detect_by_extension(Path::new("test.RS"), &map),
+            Language::Rust
+        );
+        assert_eq!(
+            detect_by_extension(Path::new("test.PY"), &map),
+            Language::Python
+        );
     }
 
     #[test]
@@ -435,15 +453,24 @@ mod tests {
 
         // Python shebang
         let python_script = "#!/usr/bin/env python3\nprint('hello')";
-        assert_eq!(detect_by_shebang(python_script, &patterns), Some(Language::Python));
+        assert_eq!(
+            detect_by_shebang(python_script, &patterns),
+            Some(Language::Python)
+        );
 
         // Bash shebang
         let bash_script = "#!/bin/bash\necho hello";
-        assert_eq!(detect_by_shebang(bash_script, &patterns), Some(Language::Bash));
+        assert_eq!(
+            detect_by_shebang(bash_script, &patterns),
+            Some(Language::Bash)
+        );
 
         // Node shebang
         let node_script = "#!/usr/bin/env node\nconsole.log('hi')";
-        assert_eq!(detect_by_shebang(node_script, &patterns), Some(Language::JavaScript));
+        assert_eq!(
+            detect_by_shebang(node_script, &patterns),
+            Some(Language::JavaScript)
+        );
 
         // No shebang
         let no_shebang = "print('hello')";
@@ -463,18 +490,36 @@ mod tests {
         assert!(quick_content_validation(&Language::Rust, "fn main() {}"));
         assert!(quick_content_validation(&Language::Rust, "use std::io;"));
         assert!(quick_content_validation(&Language::Rust, "struct Foo {}"));
-        assert!(!quick_content_validation(&Language::Rust, "no rust markers here"));
+        assert!(!quick_content_validation(
+            &Language::Rust,
+            "no rust markers here"
+        ));
 
         // Python markers
         assert!(quick_content_validation(&Language::Python, "def foo():"));
         assert!(quick_content_validation(&Language::Python, "import os"));
-        assert!(quick_content_validation(&Language::Python, "class MyClass:"));
-        assert!(!quick_content_validation(&Language::Python, "no python markers"));
+        assert!(quick_content_validation(
+            &Language::Python,
+            "class MyClass:"
+        ));
+        assert!(!quick_content_validation(
+            &Language::Python,
+            "no python markers"
+        ));
 
         // JavaScript markers
-        assert!(quick_content_validation(&Language::JavaScript, "function foo() {}"));
-        assert!(quick_content_validation(&Language::JavaScript, "const x = 1;"));
-        assert!(quick_content_validation(&Language::JavaScript, "var y = 2;"));
+        assert!(quick_content_validation(
+            &Language::JavaScript,
+            "function foo() {}"
+        ));
+        assert!(quick_content_validation(
+            &Language::JavaScript,
+            "const x = 1;"
+        ));
+        assert!(quick_content_validation(
+            &Language::JavaScript,
+            "var y = 2;"
+        ));
 
         // Unknown language has no markers, always returns true
         assert!(quick_content_validation(&Language::Unknown, "anything"));

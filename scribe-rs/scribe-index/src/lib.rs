@@ -8,9 +8,9 @@
 //! The index is persisted alongside the cache for incremental updates.
 
 pub mod error;
-pub mod schema;
 pub mod index;
 pub mod query;
+pub mod schema;
 pub mod tokenizer;
 
 pub use error::{IndexError, IndexResult};

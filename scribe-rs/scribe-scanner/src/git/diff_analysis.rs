@@ -5,14 +5,18 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command as AsyncCommand;
 
-use super::diff::{DiffAnalysisConfig, DiffAnalysisResult, DiffChangeType, DiffSource, GitDiffEntry};
+use super::diff::{
+    DiffAnalysisConfig, DiffAnalysisResult, DiffChangeType, DiffSource, GitDiffEntry,
+};
 use super::git_integration::GitIntegrator;
 
 impl GitIntegrator {
     /// Perform comprehensive diff-based analysis
     pub async fn analyze_diffs(&self, config: &DiffAnalysisConfig) -> Result<DiffAnalysisResult> {
         if !self.is_git_available() {
-            return Err(ScribeError::git("Git not available for diff analysis".to_string()));
+            return Err(ScribeError::git(
+                "Git not available for diff analysis".to_string(),
+            ));
         }
 
         let mut all_diffs = Vec::new();
@@ -40,7 +44,9 @@ impl GitIntegrator {
         }
 
         if let Some(ref branch_comp) = config.branch_comparison {
-            let branch_diffs = self.extract_branch_comparison_diffs(branch_comp, config).await?;
+            let branch_diffs = self
+                .extract_branch_comparison_diffs(branch_comp, config)
+                .await?;
             all_diffs.extend(branch_diffs);
         }
 
@@ -65,7 +71,10 @@ impl GitIntegrator {
         })
     }
 
-    async fn extract_staged_diffs(&self, _config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+    async fn extract_staged_diffs(
+        &self,
+        _config: &DiffAnalysisConfig,
+    ) -> Result<Vec<GitDiffEntry>> {
         let output = AsyncCommand::new("git")
             .arg("diff")
             .arg("--cached")
@@ -83,7 +92,10 @@ impl GitIntegrator {
         self.parse_numstat_output(&stdout, DiffSource::Staged).await
     }
 
-    async fn extract_unstaged_diffs(&self, _config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+    async fn extract_unstaged_diffs(
+        &self,
+        _config: &DiffAnalysisConfig,
+    ) -> Result<Vec<GitDiffEntry>> {
         let output = AsyncCommand::new("git")
             .arg("diff")
             .arg("--numstat")
@@ -97,10 +109,15 @@ impl GitIntegrator {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        self.parse_numstat_output(&stdout, DiffSource::Unstaged).await
+        self.parse_numstat_output(&stdout, DiffSource::Unstaged)
+            .await
     }
 
-    async fn extract_commit_diffs(&self, commit_hash: &str, _config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+    async fn extract_commit_diffs(
+        &self,
+        commit_hash: &str,
+        _config: &DiffAnalysisConfig,
+    ) -> Result<Vec<GitDiffEntry>> {
         let output = AsyncCommand::new("git")
             .arg("show")
             .arg("--numstat")
@@ -120,7 +137,11 @@ impl GitIntegrator {
         self.parse_commit_diff_output(&stdout, commit_hash).await
     }
 
-    async fn extract_range_diffs(&self, range: &str, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+    async fn extract_range_diffs(
+        &self,
+        range: &str,
+        config: &DiffAnalysisConfig,
+    ) -> Result<Vec<GitDiffEntry>> {
         let output = AsyncCommand::new("git")
             .arg("log")
             .arg("--numstat")
@@ -140,7 +161,11 @@ impl GitIntegrator {
         self.parse_log_diff_output(&stdout).await
     }
 
-    async fn extract_branch_comparison_diffs(&self, branch_comp: &str, _config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+    async fn extract_branch_comparison_diffs(
+        &self,
+        branch_comp: &str,
+        _config: &DiffAnalysisConfig,
+    ) -> Result<Vec<GitDiffEntry>> {
         let output = AsyncCommand::new("git")
             .arg("diff")
             .arg("--numstat")
@@ -148,17 +173,24 @@ impl GitIntegrator {
             .current_dir(self.repo_path())
             .output()
             .await
-            .map_err(|e| ScribeError::git(format!("Failed to get branch comparison diffs: {}", e)))?;
+            .map_err(|e| {
+                ScribeError::git(format!("Failed to get branch comparison diffs: {}", e))
+            })?;
 
         if !output.status.success() {
             return Ok(Vec::new());
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        self.parse_numstat_output(&stdout, DiffSource::BranchComparison).await
+        self.parse_numstat_output(&stdout, DiffSource::BranchComparison)
+            .await
     }
 
-    async fn parse_numstat_output(&self, output: &str, source: DiffSource) -> Result<Vec<GitDiffEntry>> {
+    async fn parse_numstat_output(
+        &self,
+        output: &str,
+        source: DiffSource,
+    ) -> Result<Vec<GitDiffEntry>> {
         let mut diffs = Vec::new();
 
         for line in output.lines() {
@@ -168,8 +200,16 @@ impl GitIntegrator {
 
             let parts: Vec<&str> = line.split('\t').collect();
             if parts.len() >= 3 {
-                let additions = if parts[0] == "-" { 0 } else { parts[0].parse::<usize>().unwrap_or(0) };
-                let deletions = if parts[1] == "-" { 0 } else { parts[1].parse::<usize>().unwrap_or(0) };
+                let additions = if parts[0] == "-" {
+                    0
+                } else {
+                    parts[0].parse::<usize>().unwrap_or(0)
+                };
+                let deletions = if parts[1] == "-" {
+                    0
+                } else {
+                    parts[1].parse::<usize>().unwrap_or(0)
+                };
                 let file_path = PathBuf::from(parts[2]);
 
                 let diff_content = self.get_file_diff_content(&file_path, &source).await?;
@@ -193,7 +233,11 @@ impl GitIntegrator {
         Ok(diffs)
     }
 
-    async fn parse_commit_diff_output(&self, output: &str, commit_hash: &str) -> Result<Vec<GitDiffEntry>> {
+    async fn parse_commit_diff_output(
+        &self,
+        output: &str,
+        commit_hash: &str,
+    ) -> Result<Vec<GitDiffEntry>> {
         let lines: Vec<&str> = output.lines().collect();
         let mut diffs = Vec::new();
 
@@ -204,7 +248,12 @@ impl GitIntegrator {
         let (commit_info, author, timestamp, message) = if let Some(first_line) = lines.first() {
             if first_line.contains('|') && first_line.split('|').count() >= 4 {
                 let parts: Vec<&str> = first_line.split('|').collect();
-                (Some(parts[0].to_string()), Some(parts[1].to_string()), parts[2].parse::<u64>().ok(), Some(parts[3].to_string()))
+                (
+                    Some(parts[0].to_string()),
+                    Some(parts[1].to_string()),
+                    parts[2].parse::<u64>().ok(),
+                    Some(parts[3].to_string()),
+                )
             } else {
                 (Some(commit_hash.to_string()), None, None, None)
             }
@@ -219,10 +268,20 @@ impl GitIntegrator {
 
             let parts: Vec<&str> = line.split('\t').collect();
             if parts.len() >= 3 {
-                let additions = if parts[0] == "-" { 0 } else { parts[0].parse::<usize>().unwrap_or(0) };
-                let deletions = if parts[1] == "-" { 0 } else { parts[1].parse::<usize>().unwrap_or(0) };
+                let additions = if parts[0] == "-" {
+                    0
+                } else {
+                    parts[0].parse::<usize>().unwrap_or(0)
+                };
+                let deletions = if parts[1] == "-" {
+                    0
+                } else {
+                    parts[1].parse::<usize>().unwrap_or(0)
+                };
                 let file_path = PathBuf::from(parts[2]);
-                let diff_content = self.get_commit_file_diff_content(&file_path, commit_hash).await?;
+                let diff_content = self
+                    .get_commit_file_diff_content(&file_path, commit_hash)
+                    .await?;
 
                 diffs.push(GitDiffEntry {
                     file_path,
@@ -268,10 +327,20 @@ impl GitIntegrator {
 
                     let parts: Vec<&str> = file_line.split('\t').collect();
                     if parts.len() >= 3 {
-                        let additions = if parts[0] == "-" { 0 } else { parts[0].parse::<usize>().unwrap_or(0) };
-                        let deletions = if parts[1] == "-" { 0 } else { parts[1].parse::<usize>().unwrap_or(0) };
+                        let additions = if parts[0] == "-" {
+                            0
+                        } else {
+                            parts[0].parse::<usize>().unwrap_or(0)
+                        };
+                        let deletions = if parts[1] == "-" {
+                            0
+                        } else {
+                            parts[1].parse::<usize>().unwrap_or(0)
+                        };
                         let file_path = PathBuf::from(parts[2]);
-                        let diff_content = self.get_commit_file_diff_content(&file_path, &commit_hash).await?;
+                        let diff_content = self
+                            .get_commit_file_diff_content(&file_path, &commit_hash)
+                            .await?;
 
                         diffs.push(GitDiffEntry {
                             file_path,
@@ -301,7 +370,9 @@ impl GitIntegrator {
         cmd.arg("diff");
 
         match source {
-            DiffSource::Staged => { cmd.arg("--cached"); }
+            DiffSource::Staged => {
+                cmd.arg("--cached");
+            }
             DiffSource::Unstaged | DiffSource::BranchComparison => {}
         }
 
@@ -320,7 +391,11 @@ impl GitIntegrator {
         }
     }
 
-    async fn get_commit_file_diff_content(&self, file_path: &Path, commit_hash: &str) -> Result<String> {
+    async fn get_commit_file_diff_content(
+        &self,
+        file_path: &Path,
+        commit_hash: &str,
+    ) -> Result<String> {
         let output = AsyncCommand::new("git")
             .arg("show")
             .arg(format!("{}:{}", commit_hash, file_path.display()))
@@ -336,7 +411,11 @@ impl GitIntegrator {
         }
     }
 
-    async fn determine_change_type(&self, file_path: &Path, _source: &DiffSource) -> Result<DiffChangeType> {
+    async fn determine_change_type(
+        &self,
+        file_path: &Path,
+        _source: &DiffSource,
+    ) -> Result<DiffChangeType> {
         let output = AsyncCommand::new("git")
             .arg("status")
             .arg("--porcelain")
@@ -364,7 +443,11 @@ impl GitIntegrator {
         Ok(DiffChangeType::Modified)
     }
 
-    async fn filter_diffs(&self, mut diffs: Vec<GitDiffEntry>, config: &DiffAnalysisConfig) -> Result<Vec<GitDiffEntry>> {
+    async fn filter_diffs(
+        &self,
+        mut diffs: Vec<GitDiffEntry>,
+        config: &DiffAnalysisConfig,
+    ) -> Result<Vec<GitDiffEntry>> {
         diffs.retain(|diff| {
             !config.ignore_patterns.iter().any(|pattern| {
                 if pattern.ends_with("/*") {
@@ -405,11 +488,34 @@ fn is_likely_binary_file(file_path: &Path) -> bool {
     if let Some(extension) = file_path.extension().and_then(|ext| ext.to_str()) {
         matches!(
             extension.to_lowercase().as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "svg" | "pdf" |
-            "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" |
-            "zip" | "tar" | "gz" | "7z" | "rar" |
-            "exe" | "dll" | "so" | "dylib" |
-            "mp3" | "mp4" | "avi" | "mov" | "wav"
+            "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "bmp"
+                | "ico"
+                | "svg"
+                | "pdf"
+                | "doc"
+                | "docx"
+                | "xls"
+                | "xlsx"
+                | "ppt"
+                | "pptx"
+                | "zip"
+                | "tar"
+                | "gz"
+                | "7z"
+                | "rar"
+                | "exe"
+                | "dll"
+                | "so"
+                | "dylib"
+                | "mp3"
+                | "mp4"
+                | "avi"
+                | "mov"
+                | "wav"
         )
     } else {
         false
@@ -418,19 +524,19 @@ fn is_likely_binary_file(file_path: &Path) -> bool {
 
 fn is_likely_generated_file(file_path: &Path) -> bool {
     let path_str = file_path.to_string_lossy().to_lowercase();
-    path_str.contains("generated") ||
-    path_str.contains(".generated.") ||
-    path_str.contains("node_modules") ||
-    path_str.contains("__pycache__") ||
-    path_str.contains(".pyc") ||
-    path_str.contains("target/") ||
-    path_str.contains("build/") ||
-    path_str.contains("dist/") ||
-    path_str.ends_with(".min.js") ||
-    path_str.ends_with(".min.css") ||
-    path_str.contains("package-lock.json") ||
-    path_str.contains("yarn.lock") ||
-    path_str.contains("Cargo.lock")
+    path_str.contains("generated")
+        || path_str.contains(".generated.")
+        || path_str.contains("node_modules")
+        || path_str.contains("__pycache__")
+        || path_str.contains(".pyc")
+        || path_str.contains("target/")
+        || path_str.contains("build/")
+        || path_str.contains("dist/")
+        || path_str.ends_with(".min.js")
+        || path_str.ends_with(".min.css")
+        || path_str.contains("package-lock.json")
+        || path_str.contains("yarn.lock")
+        || path_str.contains("Cargo.lock")
 }
 
 #[cfg(test)]
@@ -519,14 +625,22 @@ mod tests {
 
     #[test]
     fn test_is_likely_generated_file_node_modules() {
-        assert!(is_likely_generated_file(Path::new("node_modules/package/index.js")));
-        assert!(is_likely_generated_file(Path::new("./node_modules/lodash/lodash.js")));
+        assert!(is_likely_generated_file(Path::new(
+            "node_modules/package/index.js"
+        )));
+        assert!(is_likely_generated_file(Path::new(
+            "./node_modules/lodash/lodash.js"
+        )));
     }
 
     #[test]
     fn test_is_likely_generated_file_python_cache() {
-        assert!(is_likely_generated_file(Path::new("__pycache__/module.cpython-39.pyc")));
-        assert!(is_likely_generated_file(Path::new("src/__pycache__/test.pyc")));
+        assert!(is_likely_generated_file(Path::new(
+            "__pycache__/module.cpython-39.pyc"
+        )));
+        assert!(is_likely_generated_file(Path::new(
+            "src/__pycache__/test.pyc"
+        )));
         assert!(is_likely_generated_file(Path::new("module.pyc")));
     }
 
@@ -604,7 +718,9 @@ mod tests {
         let config = DiffAnalysisConfig::default();
 
         assert!(config.ignore_patterns.contains(&"*.lock".to_string()));
-        assert!(config.ignore_patterns.contains(&"node_modules/*".to_string()));
+        assert!(config
+            .ignore_patterns
+            .contains(&"node_modules/*".to_string()));
         assert!(config.ignore_patterns.contains(&".git/*".to_string()));
         assert!(config.ignore_patterns.contains(&"*.min.js".to_string()));
     }
@@ -761,7 +877,10 @@ mod tests {
         let deserialized: DiffAnalysisResult = serde_json::from_str(&json).unwrap();
 
         assert_eq!(result.total_files_changed, deserialized.total_files_changed);
-        assert_eq!(result.commit_range_analyzed, deserialized.commit_range_analyzed);
+        assert_eq!(
+            result.commit_range_analyzed,
+            deserialized.commit_range_analyzed
+        );
     }
 
     #[test]

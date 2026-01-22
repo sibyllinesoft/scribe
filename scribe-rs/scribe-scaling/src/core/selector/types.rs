@@ -326,11 +326,12 @@ mod tests {
         assert!(debug.contains("token_budget"));
     }
 
-
     #[test]
     fn test_scaling_selector_creation() {
         let config = ScalingSelectionConfig::default();
-        let selector = ScalingSelector { config: config.clone() };
+        let selector = ScalingSelector {
+            config: config.clone(),
+        };
         assert_eq!(selector.config.token_budget, config.token_budget);
     }
 }

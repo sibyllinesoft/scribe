@@ -46,9 +46,21 @@ fn write_xml_target<W: Write>(
     if let Some(target) = target {
         writeln!(handle, "  <target>")?;
         writeln!(handle, "    <file>{}</file>", escape_xml(&target.file_path))?;
-        writeln!(handle, "    <name>{}</name>", escape_xml(&target.entity_name))?;
-        writeln!(handle, "    <type>{}</type>", escape_xml(&target.entity_type))?;
-        writeln!(handle, "    <lines start=\"{}\" end=\"{}\"/>", target.start_line, target.end_line)?;
+        writeln!(
+            handle,
+            "    <name>{}</name>",
+            escape_xml(&target.entity_name)
+        )?;
+        writeln!(
+            handle,
+            "    <type>{}</type>",
+            escape_xml(&target.entity_type)
+        )?;
+        writeln!(
+            handle,
+            "    <lines start=\"{}\" end=\"{}\"/>",
+            target.start_line, target.end_line
+        )?;
         writeln!(handle, "  </target>")?;
     }
     Ok(())
@@ -114,7 +126,10 @@ fn write_xml_files<W: Write>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(handle, "  <files count=\"{}\">", files.len())?;
     for file in files {
-        let content = file_contents.get(&file.path).map(|s| s.as_str()).unwrap_or("");
+        let content = file_contents
+            .get(&file.path)
+            .map(|s| s.as_str())
+            .unwrap_or("");
         writeln!(handle, "{}", format_xml_file(file, content))?;
     }
     writeln!(handle, "  </files>")?;
@@ -127,11 +142,31 @@ fn write_xml_statistics<W: Write>(
     stats: &scribe_selection::CoveringSetStatistics,
 ) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(handle, "  <statistics>")?;
-    writeln!(handle, "    <files_examined>{}</files_examined>", stats.files_examined)?;
-    writeln!(handle, "    <files_selected>{}</files_selected>", stats.files_selected)?;
-    writeln!(handle, "    <entities_selected>{}</entities_selected>", stats.entities_selected)?;
-    writeln!(handle, "    <max_depth_reached>{}</max_depth_reached>", stats.max_depth_reached)?;
-    writeln!(handle, "    <limits_reached>{}</limits_reached>", stats.limits_reached)?;
+    writeln!(
+        handle,
+        "    <files_examined>{}</files_examined>",
+        stats.files_examined
+    )?;
+    writeln!(
+        handle,
+        "    <files_selected>{}</files_selected>",
+        stats.files_selected
+    )?;
+    writeln!(
+        handle,
+        "    <entities_selected>{}</entities_selected>",
+        stats.entities_selected
+    )?;
+    writeln!(
+        handle,
+        "    <max_depth_reached>{}</max_depth_reached>",
+        stats.max_depth_reached
+    )?;
+    writeln!(
+        handle,
+        "    <limits_reached>{}</limits_reached>",
+        stats.limits_reached
+    )?;
     writeln!(handle, "  </statistics>")?;
     Ok(())
 }
@@ -139,7 +174,9 @@ fn write_xml_statistics<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scribe_selection::{CoveringSetEntity, CoveringSetFile, CoveringSetStatistics, EntityLocation, InclusionReason};
+    use scribe_selection::{
+        CoveringSetEntity, CoveringSetFile, CoveringSetStatistics, EntityLocation, InclusionReason,
+    };
 
     #[test]
     fn test_escape_xml_ampersand() {
@@ -283,7 +320,9 @@ mod tests {
         assert!(result.contains("<file>"));
         assert!(result.contains("<path>src/main.rs</path>"));
         assert!(result.contains("<distance>2</distance>"));
-        assert!(result.contains("<content><![CDATA[fn main() { println!(\"Hello\"); }]]></content>"));
+        assert!(
+            result.contains("<content><![CDATA[fn main() { println!(\"Hello\"); }]]></content>")
+        );
         assert!(result.contains("</file>"));
     }
 

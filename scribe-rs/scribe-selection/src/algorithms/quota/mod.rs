@@ -796,7 +796,9 @@ mod tests {
         let manager = QuotaManager::new(10000).unwrap();
 
         let scores = vec![100.0, 80.0, 60.0, 40.0, 20.0];
-        let threshold = manager.calculate_importance_threshold(&scores, 0.4).unwrap();
+        let threshold = manager
+            .calculate_importance_threshold(&scores, 0.4)
+            .unwrap();
 
         // Top 40% means top 2 items (100, 80), threshold should be 80
         assert!((threshold - 80.0).abs() < 0.001);
@@ -807,7 +809,9 @@ mod tests {
         let manager = QuotaManager::new(10000).unwrap();
 
         let scores: Vec<f64> = vec![];
-        let threshold = manager.calculate_importance_threshold(&scores, 0.5).unwrap();
+        let threshold = manager
+            .calculate_importance_threshold(&scores, 0.5)
+            .unwrap();
 
         assert_eq!(threshold, 0.0);
     }
@@ -829,7 +833,11 @@ mod tests {
     fn test_quota_manager_apply_quotas_single_file() {
         let manager = QuotaManager::new(10000).unwrap();
 
-        let files = vec![create_test_scan_result("src/lib.rs", "pub mod utils;", false)];
+        let files = vec![create_test_scan_result(
+            "src/lib.rs",
+            "pub mod utils;",
+            false,
+        )];
         let mut scores = HashMap::new();
         scores.insert("src/lib.rs".to_string(), 50.0);
 
@@ -857,8 +865,9 @@ mod tests {
         scores.insert("src/main.rs".to_string(), 100.0);
         scores.insert("src/utils.rs".to_string(), 60.0);
 
-        let (selected, allocations) =
-            manager.select_files_density_greedy(&categorized, &scores, 0.0).unwrap();
+        let (selected, allocations) = manager
+            .select_files_density_greedy(&categorized, &scores, 0.0)
+            .unwrap();
 
         // Should select files based on density
         assert!(!selected.is_empty());
@@ -869,9 +878,7 @@ mod tests {
     fn test_quota_manager_adaptation_factor() {
         let manager = QuotaManager::new(10000).unwrap();
 
-        let files = vec![
-            create_test_scan_result("src/utils.rs", "fn a() {}", false),
-        ];
+        let files = vec![create_test_scan_result("src/utils.rs", "fn a() {}", false)];
 
         let categorized = manager.classify_files(&files);
 
@@ -879,10 +886,12 @@ mod tests {
         scores.insert("src/utils.rs".to_string(), 50.0);
 
         // High adaptation factor should reduce effective budget
-        let (_, allocations1) =
-            manager.select_files_density_greedy(&categorized, &scores, 0.0).unwrap();
-        let (_, allocations2) =
-            manager.select_files_density_greedy(&categorized, &scores, 0.5).unwrap();
+        let (_, allocations1) = manager
+            .select_files_density_greedy(&categorized, &scores, 0.0)
+            .unwrap();
+        let (_, allocations2) = manager
+            .select_files_density_greedy(&categorized, &scores, 0.5)
+            .unwrap();
 
         // Both should succeed
         assert!(!allocations1.is_empty() || !allocations2.is_empty() || true);
@@ -902,7 +911,9 @@ mod tests {
         // Check that all expected categories are configured
         assert!(manager.category_quotas.contains_key(&FileCategory::Config));
         assert!(manager.category_quotas.contains_key(&FileCategory::Entry));
-        assert!(manager.category_quotas.contains_key(&FileCategory::Examples));
+        assert!(manager
+            .category_quotas
+            .contains_key(&FileCategory::Examples));
         assert!(manager.category_quotas.contains_key(&FileCategory::General));
 
         // Config should have high priority
@@ -967,7 +978,9 @@ mod tests {
         scores.insert("src/main.rs".to_string(), 100.0);
         scores.insert("src/utils.rs".to_string(), 60.0);
 
-        let distribution = manager.distribute_remaining_budget(&categorized, &scores, 5000).unwrap();
+        let distribution = manager
+            .distribute_remaining_budget(&categorized, &scores, 5000)
+            .unwrap();
 
         // Should have allocations for categories with files
         assert!(!distribution.is_empty());
@@ -1034,8 +1047,9 @@ mod tests {
         let categorized = manager.classify_files(&files);
 
         // This should trigger the recall_target path since General has recall_target > 0
-        let (selected, allocations) =
-            manager.select_files_density_greedy(&categorized, &scores, 0.0).unwrap();
+        let (selected, allocations) = manager
+            .select_files_density_greedy(&categorized, &scores, 0.0)
+            .unwrap();
 
         // Should have selected some files
         assert!(!allocations.is_empty());
@@ -1047,23 +1061,21 @@ mod tests {
         // Tests line 453: used_budget = 0 edge case
         let manager = QuotaManager::new(1).unwrap(); // Impossibly small budget
 
-        let files = vec![
-            QuotaScanResult {
-                path: "huge_file.rs".to_string(),
-                relative_path: "huge_file.rs".to_string(),
-                depth: 0,
-                content: "x".repeat(10000), // Very large file
-                is_entrypoint: false,
-                priority_boost: 0.0,
-                churn_score: 0.0,
-                centrality_in: 0.0,
-                imports: None,
-                is_docs: false,
-                is_readme: false,
-                is_test: false,
-                has_examples: false,
-            },
-        ];
+        let files = vec![QuotaScanResult {
+            path: "huge_file.rs".to_string(),
+            relative_path: "huge_file.rs".to_string(),
+            depth: 0,
+            content: "x".repeat(10000), // Very large file
+            is_entrypoint: false,
+            priority_boost: 0.0,
+            churn_score: 0.0,
+            centrality_in: 0.0,
+            imports: None,
+            is_docs: false,
+            is_readme: false,
+            is_test: false,
+            has_examples: false,
+        }];
 
         let mut scores = HashMap::new();
         scores.insert("huge_file.rs".to_string(), 50.0);
@@ -1071,8 +1083,9 @@ mod tests {
         let categorized = manager.classify_files(&files);
 
         // With budget of 1, likely no files will be selected
-        let (selected, allocations) =
-            manager.select_files_density_greedy(&categorized, &scores, 0.0).unwrap();
+        let (selected, allocations) = manager
+            .select_files_density_greedy(&categorized, &scores, 0.0)
+            .unwrap();
 
         // Should complete without error
         let _ = (selected, allocations);

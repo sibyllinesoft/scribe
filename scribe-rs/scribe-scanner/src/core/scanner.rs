@@ -779,8 +779,7 @@ mod tests {
     #[test]
     fn test_should_include_file_case_insensitive() {
         let scanner = Scanner::new();
-        let options = ScanOptions::default()
-            .with_include_extensions(vec!["RS".to_string()]);
+        let options = ScanOptions::default().with_include_extensions(vec!["RS".to_string()]);
 
         assert!(scanner.should_include_file(Path::new("test.rs"), &options));
         assert!(scanner.should_include_file(Path::new("test.RS"), &options));
@@ -859,7 +858,9 @@ mod tests {
     #[tokio::test]
     async fn test_scan_nonexistent_path() {
         let scanner = Scanner::new();
-        let result = scanner.scan("/nonexistent/path/12345", ScanOptions::default()).await;
+        let result = scanner
+            .scan("/nonexistent/path/12345", ScanOptions::default())
+            .await;
         assert!(result.is_err());
     }
 
@@ -937,8 +938,7 @@ mod tests {
 
         fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
 
-        let options = ScanOptions::default()
-            .with_metadata_extraction(false);
+        let options = ScanOptions::default().with_metadata_extraction(false);
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
 
         assert_eq!(results.len(), 1);
@@ -952,8 +952,7 @@ mod tests {
 
         fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
 
-        let options = ScanOptions::default()
-            .with_git_integration(false);
+        let options = ScanOptions::default().with_git_integration(false);
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
 
         assert_eq!(results.len(), 1);
@@ -969,7 +968,11 @@ mod tests {
 
         // Create many files to ensure we hit the parallel path with chunking
         for i in 0..200 {
-            fs::write(temp_dir.path().join(format!("file_{}.rs", i)), format!("fn f{}() {{}}", i)).unwrap();
+            fs::write(
+                temp_dir.path().join(format!("file_{}.rs", i)),
+                format!("fn f{}() {{}}", i),
+            )
+            .unwrap();
         }
 
         let options = ScanOptions::default()
@@ -989,8 +992,7 @@ mod tests {
         // Create a file but don't initialize git repo
         fs::write(temp_dir.path().join("test.rs"), "fn main() {}").unwrap();
 
-        let options = ScanOptions::default()
-            .with_git_integration(true);
+        let options = ScanOptions::default().with_git_integration(true);
         let results = scanner.scan(temp_dir.path(), options).await.unwrap();
 
         // Should still work and fall back to filesystem discovery
