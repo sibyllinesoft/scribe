@@ -43,6 +43,10 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # output a note when they are encountered.
 ignore = [
     "RUSTSEC-2025-0057",  # fxhash unmaintained - TODO: replace with rustc-hash
+    "RUSTSEC-2025-0141",  # bincode unmaintained - used by tantivy, no alternative yet
+    "RUSTSEC-2024-0384",  # instant unmaintained - transitive dep, waiting on upstream
+    "RUSTSEC-2025-0119",  # number_prefix unmaintained - used by indicatif
+    "RUSTSEC-2025-0134",  # rustls-pemfile unmaintained - used by reqwest, migration pending
 ]
 
 [sources]
