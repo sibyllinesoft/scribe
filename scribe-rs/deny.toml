@@ -15,7 +15,7 @@ allow = [
     "GPL-2.0",
     "Zlib",
     "BSL-1.0",
-    "MPL-2.0+",  # smartstring (dep of swc_ecma_parser)
+    "MPL-2.0",  # smartstring (dep of swc_ecma_parser)
 ]
 
 [bans]
