@@ -45,6 +45,40 @@ scribe --covering-set-diff --stdout
 scribe --covering-set "src/lib.rs" --stdout
 ```
 
+## Language-Specific Tips
+
+### TypeScript/JavaScript
+
+For TypeScript codebases, add `--granularity entity` to avoid pulling entire files:
+
+```bash
+# Without granularity: may return 50x more context than needed
+scribe --covering-set "src/app.ts:handleRequest" --stdout
+
+# With entity granularity: returns only the specific entities needed
+scribe --covering-set "src/app.ts:handleRequest" --granularity entity --stdout
+```
+
+TypeScript imports often pull in entire modules. Entity granularity extracts just the functions/types used.
+
+### Large Codebases
+
+For deeply connected code, limit dependency traversal depth:
+
+```bash
+# Default: traverses up to depth 10
+scribe --covering-set "src/core.rs:process" --stdout
+
+# Limited depth: stops at 4 levels of dependencies
+scribe --covering-set "src/core.rs:process" --max-depth 4 --stdout
+```
+
+If output is too large, you can also limit tokens:
+
+```bash
+scribe --covering-set "src/core.rs:process" --token-target 4000 --stdout
+```
+
 ## Integration
 
 Scribe is installed globally and works in any git repository. It automatically:
