@@ -1,6 +1,6 @@
 {
   "name": "@sibyllinesoft/scribe-linux-arm64",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Scribe binary for Linux ARM64",
   "repository": {
     "type": "git",
