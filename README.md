@@ -155,6 +155,37 @@ cd scribe/scribe-rs
 cargo install --path .
 ```
 
+## AI Agent Integration
+
+Scribe can automatically configure AI coding agents to use scribe for code context retrieval:
+
+```bash
+# Install integration for Claude Code (recommended)
+scribe --install claude
+
+# Install integration for OpenCode
+scribe --install opencode
+
+# Install for all detected agents
+scribe --install
+
+# Use warn mode instead of blocking (shows reminder but allows operation)
+scribe --install claude --install-mode warn
+```
+
+This installs:
+- **SCRIBE.md** — Instructions for the agent on when/how to use scribe
+- **Hooks** — Pre-tool hooks that redirect Read/Grep on code files to scribe
+
+After installation, restart your AI agent session for hooks to take effect.
+
+### What the hooks do
+
+- **Block mode** (default): Blocks Read/Grep on code files, tells agent to use `scribe --covering-set`
+- **Warn mode**: Shows a reminder but allows the operation
+
+The hooks only affect code files (`.rs`, `.py`, `.ts`, etc.). Config files, docs, and other non-code files are unaffected.
+
 ## Supported Languages
 
 Import resolution and dependency tracking works for:
@@ -200,6 +231,15 @@ Import resolution and dependency tracking works for:
 --exclude <PATTERNS>        Exclude matching files
 
 --output-format <FMT>       text (default), html, xml, json, markdown, repomix
+```
+
+### Agent Integration Options
+
+```
+--install [AGENT]           Install scribe integration for AI agents
+                            AGENT: claude, opencode, or all (default: all)
+
+--install-mode <MODE>       Hook behavior: block (default) or warn
 ```
 
 ## Library Usage
