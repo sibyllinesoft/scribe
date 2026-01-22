@@ -52,7 +52,7 @@ jobs:
 
       - name: Build scribe binaries
         run: |
-          cargo build -p scribe-analyzer --bin scribe --release
+          cargo build -p scribe-cli --bin scribe --release
           cargo build -p scribe-webservice --bin scribe-web --release
 
       - name: Test CLI functionality
