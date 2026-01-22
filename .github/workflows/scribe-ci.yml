@@ -459,12 +459,18 @@ jobs:
           # Ensure all workspace crates have the same version
           EXPECTED_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
           echo "Expected version: $EXPECTED_VERSION"
-          
+
           for crate in scribe-*; do
             if [ -f "$crate/Cargo.toml" ]; then
-              CRATE_VERSION=$(grep '^version.workspace = true' "$crate/Cargo.toml" || grep '^version = ' "$crate/Cargo.toml" | cut -d'"' -f2)
-              if [ -n "$CRATE_VERSION" ] && [ "$CRATE_VERSION" != "true" ] && [ "$CRATE_VERSION" != "$EXPECTED_VERSION" ]; then
-                echo "Version mismatch in $crate: $CRATE_VERSION"
+              # Skip crates that inherit version from workspace
+              if grep -q '^version.workspace = true' "$crate/Cargo.toml"; then
+                echo "$crate: using workspace version (OK)"
+                continue
+              fi
+              # Check explicit version
+              CRATE_VERSION=$(grep '^version = ' "$crate/Cargo.toml" | cut -d'"' -f2)
+              if [ -n "$CRATE_VERSION" ] && [ "$CRATE_VERSION" != "$EXPECTED_VERSION" ]; then
+                echo "Version mismatch in $crate: $CRATE_VERSION (expected $EXPECTED_VERSION)"
                 exit 1
               fi
             fi
