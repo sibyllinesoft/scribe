@@ -59,7 +59,7 @@ jobs:
       - name: Build scribe binary
         run: |
           cd scribe-rs
-          cargo build -p scribe-analyzer --bin scribe --release
+          cargo build -p scribe-cli --bin scribe --release
 
       - name: Test CLI functionality
         run: |
