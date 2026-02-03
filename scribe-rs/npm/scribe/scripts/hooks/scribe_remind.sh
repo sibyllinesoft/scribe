@@ -3,8 +3,11 @@
 # Scribe reminder hook for Claude Code
 # Warns about Read/Grep on code files but allows them
 #
+# Philosophy: Multiple small focused slices > few large dumps
+#
 
-set -e
+# Don't use set -e as grep may return non-zero on some inputs
+# set -e
 
 # Read JSON input from stdin
 INPUT=$(cat)
@@ -49,8 +52,8 @@ EOF
     exit 0
 }
 
-# Short nudge
-NUDGE="Tip: scribe --covering-set may be faster for code."
+# Short nudge with surgical guidance
+NUDGE="Tip: Use scribe for surgical slices: scribe --covering-set 'file:func' --max-depth 1 --token-target 800 --stdout"
 
 # Check Grep tool - nudge on code files
 if [ "$TOOL_NAME" = "Grep" ]; then

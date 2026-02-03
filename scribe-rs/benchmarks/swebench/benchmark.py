@@ -37,22 +37,30 @@ from common.results import get_results_dir
 try:
     from .runner import TaskRunner, run_task_batch, check_opencode_installed, get_scribe_git_info
     from .evaluation import analyze_results, generate_report, save_benchmark_results
+    from .dataset_adapter import load_dataset_with_adapter, DatasetAdapter, is_pro_dataset
     from ..common.claude_config import resolve_claude_config_dir
 except ImportError:
     from runner import TaskRunner, run_task_batch, check_opencode_installed, get_scribe_git_info
     from evaluation import analyze_results, generate_report, save_benchmark_results
+    from dataset_adapter import load_dataset_with_adapter, DatasetAdapter, is_pro_dataset
     from common.claude_config import resolve_claude_config_dir
 
 
 def load_swebench_tasks(dataset: str = "princeton-nlp/SWE-bench_Lite", split: str = "test") -> list:
     """Load SWE-bench tasks from Hugging Face.
 
+    Supports multiple SWE-bench variants:
+    - princeton-nlp/SWE-bench_Lite
+    - princeton-nlp/SWE-bench_Verified
+    - swe-bench/SWE-bench_Multilingual
+    - ScaleAI/SWE-bench_Pro
+
     Args:
         dataset: Dataset name on Hugging Face.
         split: Dataset split to use.
 
     Returns:
-        List of task dicts.
+        List of task dicts with normalized fields.
     """
     if not HAS_DATASETS:
         raise ImportError(
@@ -60,24 +68,8 @@ def load_swebench_tasks(dataset: str = "princeton-nlp/SWE-bench_Lite", split: st
             "Also need: pip install swebench"
         )
 
-    print(f"Loading dataset: {dataset}")
-    ds = load_dataset(dataset, split=split)
-
-    tasks = []
-    for item in ds:
-        tasks.append({
-            "instance_id": item.get("instance_id", ""),
-            "repo": item.get("repo", ""),
-            "base_commit": item.get("base_commit", ""),
-            "problem_statement": item.get("problem_statement", ""),
-            "hints_text": item.get("hints_text", ""),
-            "created_at": item.get("created_at", ""),
-            "patch": item.get("patch", ""),  # Gold patch for reference
-            "test_patch": item.get("test_patch", ""),
-            "version": item.get("version", ""),
-        })
-
-    print(f"Loaded {len(tasks)} tasks")
+    # Use adapter for unified loading across all dataset variants
+    tasks, adapter = load_dataset_with_adapter(dataset, split)
     return tasks
 
 
@@ -125,6 +117,7 @@ def run_benchmark(
     max_tasks: int = 50,
     mode: str = "both",
     model: str = "glm-4.7",
+    agent: str = "pi",
     dataset: str = "princeton-nlp/SWE-bench_Lite",
     use_docker: bool = True,
     quick: bool = False,
@@ -138,6 +131,8 @@ def run_benchmark(
     config_path: str = None,
     context_tokens: int = 4000,
     claude_config_dir: Optional[str] = None,
+    max_system_retries: int = 1,
+    system_retry_delay_s: int = 30,
 ) -> dict:
     """Run the SWE-bench benchmark using Claude Code.
 
@@ -214,9 +209,12 @@ def run_benchmark(
     print(f"Delay between runs: {delay_between_runs}s")
     print(f"Timeout per task: {task_timeout_s}s")
     print(f"Context tokens: {context_tokens}")
+    print(f"System retry: {max_system_retries}x with {system_retry_delay_s}s delay")
     print()
 
     resolved_claude_config_dir = resolve_claude_config_dir(claude_config_dir)
+
+    progress_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Run benchmark - multiple runs per task
     all_results = []
@@ -230,16 +228,17 @@ def run_benchmark(
             tasks=tasks,
             mode=mode,
             model=model,
+            agent_type=agent,
             use_docker=use_docker,
             task_timeout_s=task_timeout_s,
             parallel_workers=parallel_workers,
             context_tokens=context_tokens,
             claude_config_dir=resolved_claude_config_dir,
+            run_number=run_num,
+            max_system_retries=max_system_retries,
+            system_retry_delay_s=system_retry_delay_s,
+            progress_path=get_results_dir("swebench") / f"progress_{progress_stamp}_run{run_num}.json",
         )
-
-        # Tag results with run number
-        for r in results:
-            r.run_number = run_num
 
         all_results.extend(results)
 
@@ -345,6 +344,13 @@ def main():
         help="Model to use (default: glm-4.7)",
     )
     parser.add_argument(
+        "--agent",
+        type=str,
+        choices=["claude", "pi"],
+        default="pi",
+        help="Agent to use: claude (Claude Code) or pi (Pi coding agent). Pi is recommended for scribe-tool mode as it has reliable extension support. (default: pi)",
+    )
+    parser.add_argument(
         "--claude-config-dir",
         type=str,
         default=None,
@@ -419,6 +425,18 @@ def main():
         default=4000,
         help="Token budget for scribe-context mode (default: 4000). Range 1000-16000 recommended.",
     )
+    parser.add_argument(
+        "--system-retries",
+        type=int,
+        default=1,
+        help="Retry count for system/infra failures (default: 1)",
+    )
+    parser.add_argument(
+        "--system-retry-delay",
+        type=int,
+        default=30,
+        help="Delay in seconds before retrying a system/infra failure (default: 30)",
+    )
 
     args = parser.parse_args()
 
@@ -426,6 +444,7 @@ def main():
         max_tasks=args.max_tasks,
         mode=args.mode,
         model=args.model,
+        agent=args.agent,
         dataset=args.dataset,
         use_docker=not args.no_docker,
         quick=args.quick,
@@ -439,6 +458,8 @@ def main():
         config_path=args.config_path,
         context_tokens=args.context_tokens,
         claude_config_dir=args.claude_config_dir,
+        max_system_retries=args.system_retries,
+        system_retry_delay_s=args.system_retry_delay,
     )
 
 

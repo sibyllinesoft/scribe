@@ -1,6 +1,6 @@
 {
   "name": "@sibyllinesoft/scribe",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Intelligent code context for AI agents - surgical code retrieval with dependency resolution",
   "keywords": [
     "code-analysis",

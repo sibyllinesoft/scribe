@@ -1,87 +1,77 @@
-# Scribe: Intelligent Code Context
+# Scribe: Surgical Code Context
 
-When you need to understand code and its dependencies, **always use scribe** instead of iterative Read/Grep operations.
+When you need to understand code and its dependencies, **use scribe** instead of iterative Read/Grep operations.
+
+## Philosophy: Multiple Small Slices > Large Dumps
+
+Large context windows can hurt as much as they help. The surgical approach:
+1. Start small: Get just the target function
+2. Expand if needed: Request specific dependencies one at a time
+3. Multiple focused calls beat one massive dump
 
 ## Quick Reference
 
 ```bash
-# Get a function/class and all its dependencies
-scribe --covering-set "path/to/file.rs:function_name" --stdout
+# Surgical pattern: small, focused slices
+scribe --covering-set "file.go:HandleRequest" --max-depth 1 --token-target 800 --stdout
 
-# Get a class with its dependencies
-scribe --covering-set "path/to/module.py:ClassName" --stdout
+# Then get a specific dependency if needed
+scribe --covering-set "file.go:ValidateInput" --max-depth 1 --token-target 800 --stdout
 
 # Analyze impact of current git changes
-scribe --covering-set-diff --stdout
+scribe --covering-set-diff --max-depth 1 --stdout
 ```
 
-## Why Use Scribe
+## Key Parameters
 
-- **Complete context**: Returns the target entity plus all types, functions, and constants it depends on
-- **10x more efficient**: Single call vs iterative grep/read discovery loops
-- **No missed dependencies**: Captures implicit dependencies you'd otherwise miss
-- **Reduced token usage**: Less back-and-forth means fewer tokens consumed
+- `--max-depth 1`: Only direct dependencies (tight focus)
+- `--token-target 800`: Small slices, expand only if needed
+- `--stdout`: Output to terminal for agent consumption
 
-## When to Use
+## Why Surgical Works Better
 
-- **Understanding code**: Before reading a function, get it with dependencies
-- **Before modifications**: See what a function depends on before changing it
-- **Impact analysis**: Understand what depends on code you're changing
-- **Code review**: Get full context for git diff changes
+- **Reduced context pollution**: No distraction from deeply nested utilities
+- **Better attention allocation**: Relevant code stays in high-attention window
+- **Iterative refinement**: Build understanding incrementally
+- **Matches agent workflow**: Explore, understand, expand as needed
 
 ## Examples
 
 ```bash
-# Understand a Rust function and everything it uses
-scribe --covering-set "src/parser.rs:parse_expression" --stdout
+# Get just a handler function (start here)
+scribe --covering-set "api/handler.go:HandleRequest" --max-depth 1 --token-target 800 --stdout
 
-# Get a Python class with all its dependencies
-scribe --covering-set "app/models/user.py:UserModel" --stdout
+# If you need a helper it calls (expand specifically)
+scribe --covering-set "api/validate.go:ValidateInput" --max-depth 1 --token-target 800 --stdout
 
-# See what's affected by your current changes
-scribe --covering-set-diff --stdout
+# For TypeScript, add entity granularity
+scribe --covering-set "src/app.ts:handleRequest" --granularity entity --max-depth 1 --token-target 800 --stdout
 
-# Get context for a specific file
+# Context for git changes
+scribe --covering-set-diff --max-depth 1 --stdout
+```
+
+## Anti-Patterns to Avoid
+
+```bash
+# DON'T: Large depth pulls in too much
+scribe --covering-set "file.rs:func" --max-depth 10 --stdout
+
+# DON'T: Large token targets encourage context dumps
+scribe --covering-set "file.rs:func" --token-target 8000 --stdout
+
+# DON'T: Whole file targets miss the point
 scribe --covering-set "src/lib.rs" --stdout
+
+# DON'T: Pipe output through head/grep (loses structure)
+scribe --covering-set "file.rs:func" --stdout | head -100
 ```
 
-## Language-Specific Tips
+## When to Expand
 
-### TypeScript/JavaScript
+If your first call doesn't give enough context:
+1. Check what functions/types are referenced but not included
+2. Make a targeted follow-up call for that specific entity
+3. Repeat until you have what you need
 
-For TypeScript codebases, add `--granularity entity` to avoid pulling entire files:
-
-```bash
-# Without granularity: may return 50x more context than needed
-scribe --covering-set "src/app.ts:handleRequest" --stdout
-
-# With entity granularity: returns only the specific entities needed
-scribe --covering-set "src/app.ts:handleRequest" --granularity entity --stdout
-```
-
-TypeScript imports often pull in entire modules. Entity granularity extracts just the functions/types used.
-
-### Large Codebases
-
-For deeply connected code, limit dependency traversal depth:
-
-```bash
-# Default: traverses up to depth 10
-scribe --covering-set "src/core.rs:process" --stdout
-
-# Limited depth: stops at 4 levels of dependencies
-scribe --covering-set "src/core.rs:process" --max-depth 4 --stdout
-```
-
-If output is too large, you can also limit tokens:
-
-```bash
-scribe --covering-set "src/core.rs:process" --token-target 4000 --stdout
-```
-
-## Integration
-
-Scribe is installed globally and works in any git repository. It automatically:
-- Detects the programming language
-- Builds a dependency graph
-- Returns optimally-ordered context for LLM consumption
+This iterative approach uses fewer tokens and gives better results than trying to get everything upfront.

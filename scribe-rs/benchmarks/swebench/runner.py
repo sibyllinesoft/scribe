@@ -13,7 +13,7 @@ import tempfile
 import time
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, is_dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -205,102 +205,62 @@ def cleanup_stale_workdirs(max_age_hours: int = 24) -> None:
 
 def _scribe_hook_source() -> str:
     return '''#!/usr/bin/env python3
-"""Hook to enforce scribe usage and handle permissions.
+"""Surgical hook: Suggest scribe only when it would clearly help.
 
-IMPORTANT: This hook returns "allow" for all tools EXCEPT:
-- Read on code files (blocked)
-- Grep (blocked)
-- Bad scribe usage patterns (blocked with retry)
+Philosophy:
+- Grep is for exploration (finding WHERE)
+- Scribe is for understanding (understanding HOW)
+- Don't force scribe during exploration phase
+- Suggest scribe when agent is clearly trying to understand something deeply
 
-This allows us to avoid --allowedTools which bypasses hooks entirely.
+Triggers for scribe suggestion:
+1. Multiple reads of same file → "use scribe for the full picture"
+2. Multiple greps on same file → "scribe shows the dependency graph"
+3. Reading a file with many imports → "scribe includes dependencies"
+
+NO BLOCKING. Only suggestions.
 """
-import json, sys, os, re, hashlib
+import json, sys, os, re
 
-CODE_EXTS = {".py",".pyi",".js",".jsx",".ts",".tsx",".mjs",".cjs",".go",".rs",
-    ".java",".kt",".c",".h",".cpp",".hpp",".cc",".rb",".php",".swift",".scala",
-    ".cs",".lua",".ex",".exs",".hs",".ml",".clj",".vue",".svelte",".sol"}
-
+CODE_EXTS = {".py",".pyi",".js",".jsx",".ts",".tsx",".go",".rs",".java",".c",".cpp",".rb"}
 LOG_PATH = os.environ.get("CLAUDE_HOOK_LOG")
-RECOMMENDED_TOKEN_TARGET = None
-RECOMMENDED_MAX_DEPTH = None
-try:
-    RECOMMENDED_TOKEN_TARGET = int(os.environ.get("CLAUDE_SCRIBE_TOKEN_TARGET", "") or 0) or None
-except Exception:
-    RECOMMENDED_TOKEN_TARGET = None
-try:
-    RECOMMENDED_MAX_DEPTH = int(os.environ.get("CLAUDE_SCRIBE_MAX_DEPTH", "") or 0) or None
-except Exception:
-    RECOMMENDED_MAX_DEPTH = None
+
 def log_event(kind, data):
-    if not LOG_PATH:
-        return
+    if not LOG_PATH: return
     try:
-        payload = {"kind": kind}
-        payload.update(data or {})
         with open(LOG_PATH, "a") as f:
-            f.write(json.dumps(payload) + "\\n")
-    except Exception:
-        pass
+            f.write(json.dumps({"kind": kind, **data}) + "\\n")
+    except: pass
 
 def get_state(sid):
     try:
         with open(f"/tmp/claude_hook_{sid}.json") as f: return json.load(f)
-    except: return {"seen_commands": [], "large_covering_sets": 0, "saw_scribe": False}
+    except: return {"file_reads": {}, "file_greps": {}, "scribe_used": False}
 
 def save_state(sid, s):
-    with open(f"/tmp/claude_hook_{sid}.json", "w") as f: json.dump(s, f)
+    try:
+        with open(f"/tmp/claude_hook_{sid}.json", "w") as f: json.dump(s, f)
+    except: pass
 
-def hash_command(tool, inp):
-    return hashlib.md5(json.dumps({"tool": tool, "input": inp}, sort_keys=True).encode()).hexdigest()
-
-def deny(msg, tool=None, inp=None):
-    log_event("deny", {"tool": tool, "input": inp, "reason": msg[:2000]})
-    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-           "permissionDecision": "deny", "permissionDecisionReason": msg}}
-    print(json.dumps(out))
-    sys.exit(0)
-
-def allow(msg=None, tool=None, inp=None):
-    if msg:
-        log_event("warn", {"tool": tool, "input": inp, "reason": msg[:2000]})
-    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-           "permissionDecision": "allow"}}
+def allow(msg=None):
+    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
     if msg:
         out["hookSpecificOutput"]["permissionDecisionReason"] = msg
+        log_event("suggest", {"message": msg[:500]})
     print(json.dumps(out))
     sys.exit(0)
 
-def load_payload():
-    raw = ""
-    try:
-        raw = sys.stdin.read()
-    except Exception:
-        raw = ""
-    if raw and raw.strip():
-        return raw
-    if len(sys.argv) > 1:
-        return sys.argv[1]
-    for key in ("CLAUDE_HOOK_PAYLOAD", "CLAUDE_HOOK_INPUT", "CLAUDE_HOOK_EVENT"):
-        val = os.environ.get(key)
-        if val:
-            return val
-    return ""
-
 def main():
-    raw = load_payload()
-    if not raw:
-        log_event("no_payload", {"argv": sys.argv[1:]})
-        allow()
+    raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if not raw and len(sys.argv) > 1: raw = sys.argv[1]
+    if not raw: allow()
+    
     if os.path.exists(raw):
-        try:
-            raw = open(raw).read()
-        except Exception:
-            pass
-    try:
-        data = json.loads(raw)
-    except Exception:
-        log_event("bad_payload", {"raw_preview": raw[:200]})
-        allow()
+        try: raw = open(raw).read()
+        except: pass
+    
+    try: data = json.loads(raw)
+    except: allow()
 
     sid = data.get("session_id", "x")
     tool = data.get("tool_name", "")
@@ -310,222 +270,69 @@ def main():
     if event != "PreToolUse": sys.exit(0)
 
     state = get_state(sid)
-    if state.get("logged_events", 0) < 5:
-        log_event("seen", {"tool": tool, "event": event, "input_keys": list(inp.keys())})
-        state["logged_events"] = int(state.get("logged_events", 0)) + 1
-        save_state(sid, state)
-
-    # BLOCK: Read on code files
+    
+    # Track file reads - suggest scribe proactively
     if tool == "Read":
         fp = inp.get("file_path", "")
         ext = os.path.splitext(fp)[1].lower()
+        fname = os.path.basename(fp)
+        
         if ext in CODE_EXTS:
-            deny(f"""BLOCKED: Cannot Read code files directly. Use scribe.
-
-You tried to read: {fp}
-
-USE SCRIBE to get the code WITH its dependencies:
-
+            reads = state.setdefault("file_reads", {})
+            total_reads = state.get("total_code_reads", 0) + 1
+            reads[fp] = reads.get(fp, 0) + 1
+            state["total_code_reads"] = total_reads
+            save_state(sid, state)
+            
+            # Log all code file reads for tracking
+            log_event("code_read", {"file": fp, "count": reads[fp], "total": total_reads})
+            
+            # First code read - introduce scribe
+            if total_reads == 1 and not state.get("scribe_introduced"):
+                state["scribe_introduced"] = True
+                save_state(sid, state)
+                allow(f"""REMINDER: Use scribe for code understanding:
   scribe --covering-set "{fp}:FUNCTION_NAME" --stdout
+This shows the function AND all its dependencies in one call.""")
+            
+            # Second read of same file - stronger suggestion
+            elif reads[fp] == 2:
+                allow(f"TIP: Reading {fname} again? scribe --covering-set \"{fp}:TARGET\" shows it + all dependencies.")
+        
+        allow()
 
-Replace FUNCTION_NAME with the function/class you need.
-This returns the entity AND all types/functions it depends on.
-
-If you don't know the function/class yet, use Grep with output_mode="files_with_matches"
-to locate the file, then run scribe --covering-set on the symbol.
-
-For non-code files (configs, docs), Read is allowed.""", tool, inp)
-        # Non-code files: allow
-        allow(tool=tool, inp=inp)
-
-    # Grep: allow for file discovery, block for content reading on code files
+    # Track grep patterns - suggest scribe after 2 greps (reduced from 3)
     if tool == "Grep":
-        output_mode = inp.get("output_mode", "files_with_matches")
-        grep_path = inp.get("path", "")
+        path = inp.get("path", "")
+        if path:
+            ext = os.path.splitext(path)[1].lower()
+            if ext in CODE_EXTS:
+                greps = state.setdefault("file_greps", {})
+                greps[path] = greps.get(path, 0) + 1
+                save_state(sid, state)
+                
+                log_event("code_grep", {"path": path, "count": greps[path]})
+                
+                if greps[path] == 2:
+                    fname = os.path.basename(path)
+                    allow(f"TIP: Multiple searches in {fname}. Try: scribe --covering-set \"{path}:TARGET\" --stdout")
+        
+        allow()
 
-        # Allow file discovery (finding which files match)
-        if output_mode == "files_with_matches":
-            allow(tool=tool, inp=inp)
-
-        # For content mode, check if targeting code files
-        if output_mode == "content":
-            ext = os.path.splitext(grep_path)[1].lower() if grep_path else ""
-            if ext in CODE_EXTS or not grep_path:
-                pattern = inp.get("pattern", "")
-                deny(f"""BLOCKED: Use scribe instead of Grep content on code files.
-
-You searched for: {pattern}
-
-USE SCRIBE to get complete context:
-
-  scribe --covering-set "path/to/file:entity_name" --stdout
-
-This returns the entity AND all its dependencies in one call.
-
-Tip: Grep with output_mode="files_with_matches" is allowed for discovery.""", tool, inp)
-
-        # Allow grep on non-code paths (content mode on config files, etc.)
-        allow(tool=tool, inp=inp)
-
-    warning_msg = None
-
-    # Enforce: no edits before scribe
-    if tool in ("Edit", "Write", "MultiEdit"):
-        if not state.get("saw_scribe", False):
-            deny("""BLOCKED: Use scribe before editing code.
-
-Start by running a scribe command (prefer --covering-set). After you have context, you may edit.""", tool, inp)
-
-    # Check Bash for bad scribe usage patterns
+    # Track scribe usage
     if tool == "Bash":
         cmd = inp.get("command", "")
-        is_scribe_cmd = re.search(r"^\\s*scribe(\\s|$)", cmd, re.I)
-        if is_scribe_cmd:
-            cmd_hash = hash_command(tool, inp)
-            log_event("scribe_cmd", {"cmd": cmd})
-            # Allow retry for scribe commands
-            if cmd_hash in state.get("seen_commands", []):
-                allow(tool=tool, inp=inp)
-
-            state["saw_scribe"] = True
+        if re.search(r"^\\s*scribe\\s", cmd, re.I):
+            state["scribe_used"] = True
+            log_event("scribe_cmd", {"cmd": cmd[:200]})
             save_state(sid, state)
+        allow()
 
-            # Parse covering-set target + token target
-            target = None
-            m_target = re.search(r'--covering-set\\s+"?([^"\\s]+)"?', cmd)
-            if m_target:
-                target = m_target.group(1)
-            m_token = re.search(r"--token-target\\s+(\\d+)", cmd)
-            token_target = int(m_token.group(1)) if m_token else None
+    # No blocking on Edit/Write - agent may have enough context
+    allow()
 
-            # Guard: covering-set on file only (no symbol). Deny once, allow on retry.
-            if target is not None:
-                file_only = (":" not in target) or target.endswith(":")
-                if file_only:
-                    state.setdefault("seen_commands", []).append(cmd_hash)
-                    save_state(sid, state)
-                    deny(f"""Are you sure? --covering-set should usually include a symbol.
-
-You ran: {cmd}
-
-If you really want a file-level covering-set, re-run the exact command to confirm.
-Otherwise use: scribe --covering-set "path/to/file:SymbolName" --stdout""", tool, inp)
-
-            # Guard: multiple large covering-set calls
-            if target is not None and token_target and RECOMMENDED_TOKEN_TARGET:
-                if token_target > RECOMMENDED_TOKEN_TARGET:
-                    count = int(state.get("large_covering_sets", 0))
-                    if count >= 1:
-                        state.setdefault("seen_commands", []).append(cmd_hash)
-                        save_state(sid, state)
-                        deny(f"""Multiple large covering-set calls detected.
-
-Recommended token target for this repo: {RECOMMENDED_TOKEN_TARGET}
-You ran: {cmd}
-
-Please reduce --token-target or narrow the symbol. Re-run to confirm if you really need this.""", tool, inp)
-                    state["large_covering_sets"] = count + 1
-                    save_state(sid, state)
-
-            # Warn if scribe is used without an explicit token target
-            if "--token-target" not in cmd and not re.search(r"\\s--(help|version)\\b", cmd):
-                rec = f" (recommended: {RECOMMENDED_TOKEN_TARGET})" if RECOMMENDED_TOKEN_TARGET else ""
-                warning_msg = f"""NOTE: Consider adding --token-target to scribe commands to control context size{rec}.
-
-Examples:
-  scribe --covering-set "path/to/file:function" --token-target 8000 --stdout
-  scribe --token-target 12000 src/specific/dir --stdout"""
-
-            # Warn: token target above recommended
-            if RECOMMENDED_TOKEN_TARGET and not re.search(r"\\s--(help|version)\\b", cmd):
-                m = re.search(r"--token-target\\s+(\\d+)", cmd)
-                if m:
-                    try:
-                        requested = int(m.group(1))
-                        if requested > RECOMMENDED_TOKEN_TARGET:
-                            warning_msg = f"""NOTE: Requested --token-target {requested} exceeds recommended {RECOMMENDED_TOKEN_TARGET} for this repo.
-
-Prefer starting at {RECOMMENDED_TOKEN_TARGET} and only increasing if context is insufficient."""
-                    except Exception:
-                        pass
-
-            # Warn: TypeScript/JavaScript covering-set without --granularity entity
-            if " --covering-set " in f" {cmd} " and "--granularity" not in cmd:
-                if target and (".ts:" in target or ".tsx:" in target or ".js:" in target or ".jsx:" in target):
-                    warning_msg = warning_msg or f"""NOTE: For TypeScript/JavaScript, add --granularity entity to avoid pulling in entire files.
-
-You ran: {cmd}
-
-Better: scribe --covering-set "{target}" --granularity entity --token-target {token_target or 4000} --stdout
-
-Without --granularity entity, TypeScript imports can pull in 50x more context than needed."""
-
-            # Note: covering-set without --max-depth uses the default (shown in prompt)
-            # We don't warn here since the default is applied, but we note if they go higher
-            if " --covering-set " in f" {cmd} " and "--max-depth" in cmd and RECOMMENDED_MAX_DEPTH:
-                m_depth = re.search(r"--max-depth\\s+(\\d+)", cmd)
-                if m_depth:
-                    try:
-                        requested_depth = int(m_depth.group(1))
-                        if requested_depth > RECOMMENDED_MAX_DEPTH + 2:
-                            warning_msg = warning_msg or f"""NOTE: --max-depth {requested_depth} is higher than default ({RECOMMENDED_MAX_DEPTH}).
-
-High max-depth can pull in hundreds of entities on deeply connected code.
-Only increase if the default output is clearly insufficient for understanding the code."""
-                    except Exception:
-                        pass
-
-            # Warn: directory scan (no covering-set) tends to overfetch
-            if " --covering-set " not in f" {cmd} " and not re.search(r"\\s--(help|version)\\b", cmd):
-                if re.search(r"\\bscribe\\s+--.*\\s+[^-][^\\s]+", cmd):
-                    warning_msg = warning_msg or """NOTE: Directory scans can inflate context size. Prefer --covering-set when possible.
-If you must scan a directory, use a smaller token target (≈ half the recommended target)."""
-
-        # Warn for unnecessary scribe discovery commands
-        if re.search(r"^\\s*which\\s+scribe\\b", cmd):
-            warning_msg = "NOTE: Skip `which scribe` to save turns; assume scribe is available."
-        if re.search(r"^\\s*scribe\\s+--(help|version)\\b", cmd):
-            warning_msg = "NOTE: Skip `scribe --help/--version` to save turns; use it only if stuck."
-
-            # Block: scribe . (root scan without options)
-            if re.search(r"scribe\\s+\\.", cmd) and not re.search(r"--(covering-set|token-target|output)", cmd):
-                state.setdefault("seen_commands", []).append(cmd_hash)
-                save_state(sid, state)
-                deny(f"""BLOCKED: Don't run scribe on root without constraints.
-
-You ran: {cmd}
-
-USE TARGETED SCRIBE:
-
-  scribe --covering-set "path/to/file:function" --stdout
-  scribe --token-target 8000 src/specific/dir --stdout
-
-Resubmit if you really need this.""", tool, inp)
-
-            # Block: piping scribe output
-            if re.search(r"scribe.*\\|\\s*(head|tail|grep|awk|sed|cut)", cmd, re.I):
-                state.setdefault("seen_commands", []).append(cmd_hash)
-                save_state(sid, state)
-                deny(f"""BLOCKED: Don't pipe scribe output.
-
-You ran: {cmd}
-
-Scribe returns exactly what you need. Use --token-target to limit size.
-
-Resubmit if you really need this.""", tool, inp)
-
-            # Block: redirecting scribe to /dev/null
-            if re.search(r"scribe.*>\\s*/dev/null", cmd, re.I):
-                state.setdefault("seen_commands", []).append(cmd_hash)
-                save_state(sid, state)
-                deny("""BLOCKED: Don't discard scribe output.
-
-Resubmit if you really need this.""", tool, inp)
-
-    # ALLOW all other tools (with optional warning)
-    allow(warning_msg, tool=tool, inp=inp)
-
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
 '''
 
 
@@ -1175,10 +982,11 @@ def fetch_scribe_context(repo_path: Path, issue_text: str, timeout_s: int = 60, 
             output_file = Path(tempfile.mktemp(suffix='.txt', prefix='scribe_'))
 
             try:
-                # Determine target path - prefer src/ or lib/ if they exist
+                # Determine target path - prefer src/ if it exists
                 # This avoids noise from demo/docs/examples directories
+                # Note: 'lib' is excluded as it's usually compiled output
                 target_path = repo_path
-                for src_dir in ['src', 'lib', 'pkg', 'packages']:
+                for src_dir in ['src', 'pkg', 'packages']:
                     candidate = repo_path / src_dir
                     if candidate.is_dir():
                         target_path = candidate
@@ -1328,6 +1136,7 @@ class TaskResult:
     # Outcome
     resolved: bool = False
     patch: str = ""
+    test_output: str = ""
     explanation: str = ""
 
     # Token usage
@@ -1345,6 +1154,8 @@ class TaskResult:
 
     # Run tracking
     run_number: int = 1
+    retry_count: int = 0
+    system_failure: bool = False
 
     # Status
     success: bool = True
@@ -1358,6 +1169,40 @@ class TaskResult:
 
     # Model tracking - actual model ID returned by Claude (e.g., "claude-sonnet-4-5-20250929")
     model_resolved: str = ""
+
+
+SYSTEM_ERROR_PATTERNS = [
+    r"only prompt commands are supported in streaming mode",
+    r"lock acquisition failed",
+    r"api error: 429",
+    r"usage limit reached",
+    r"error: non-fatal: lock acquisition failed",
+    r"datasets package required",
+    r"failed to set up task environment",
+    r"docker\\.errors",
+]
+
+
+def is_system_failure(result: TaskResult) -> bool:
+    """Return True if a failure looks like a system/infra error worth retrying."""
+    if result.success:
+        return False
+    haystack = f"{result.error}\n{result.raw_output or ''}".lower()
+    return any(re.search(pat, haystack, re.IGNORECASE) for pat in SYSTEM_ERROR_PATTERNS)
+
+
+def write_progress(results: list[TaskResult], progress_path: Path) -> None:
+    """Write a progress file with current results list (atomic replace)."""
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = []
+    for item in results:
+        if is_dataclass(item) and not isinstance(item, type):
+            payload.append(asdict(item))
+        else:
+            payload.append(item)
+    tmp_path = progress_path.with_suffix(progress_path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, default=str))
+    tmp_path.replace(progress_path)
 
 
 def get_claude_path() -> Optional[str]:
@@ -1398,14 +1243,154 @@ def check_opencode_installed() -> bool:
     return check_claude_installed()
 
 
+
+# Pi agent support
+PI_MONO_PATH = Path.home() / "Projects" / "pi-mono"
+PI_SCRIBE_EXTENSION = PI_MONO_PATH / ".pi" / "extensions" / "scribe.ts"
+
+
+def get_pi_path() -> Optional[str]:
+    """Get path to Pi coding agent CLI."""
+    cli_path = PI_MONO_PATH / "packages" / "coding-agent" / "dist" / "cli.js"
+    if cli_path.exists():
+        return str(cli_path)
+    return None
+
+
+def check_pi_installed() -> bool:
+    """Check if Pi coding agent is installed."""
+    return get_pi_path() is not None
+
+
+def parse_pi_output(stdout: str, stderr: str) -> dict:
+    """Parse Pi agent output to extract metrics.
+
+    Handles both text output and JSONL streaming output.
+    Extension stats are parsed from stderr.
+    """
+    metrics = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "tool_calls": [],
+        "scribe_calls": 0,
+        "total_cost_usd": 0,
+        "num_turns": 0,
+        "had_error": False,
+        "error_types": [],
+        "model_resolved": "",
+    }
+
+    # Parse extension stats from stderr: [scribe-ext] Stats: reads=1, readBlocks=1, ...
+    ext_stats_match = re.search(
+        r'\[scribe-ext\] Stats: reads=(\d+), readBlocks=(\d+), greps=(\d+), grepBlocks=(\d+), scribeCalls=(\d+)',
+        stderr
+    )
+    if ext_stats_match:
+        metrics["scribe_calls"] = int(ext_stats_match.group(5))
+        metrics["read_blocks"] = int(ext_stats_match.group(2))
+        metrics["grep_blocks"] = int(ext_stats_match.group(4))
+
+    # Try to parse JSONL output (--mode json)
+    for line in stdout.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+            event_type = event.get("type", "")
+
+            # Extract usage from turn_end or agent_end
+            if event_type in ("turn_end", "agent_end"):
+                if event_type == "turn_end":
+                    msg = event.get("message", {})
+                else:
+                    msgs = event.get("messages", [])
+                    msg = msgs[-1] if msgs else {}
+
+                usage = msg.get("usage", {})
+                if usage:
+                    metrics["input_tokens"] += usage.get("input", 0) + usage.get("cacheRead", 0)
+                    metrics["output_tokens"] += usage.get("output", 0)
+                    cost = usage.get("cost", {})
+                    metrics["total_cost_usd"] += cost.get("total", 0)
+
+                # Extract model info
+                if msg.get("model"):
+                    metrics["model_resolved"] = msg.get("model", "")
+
+            # Count tool calls
+            if event_type == "tool_start":
+                tool_name = event.get("toolName", "")
+                metrics["tool_calls"].append({
+                    "name": tool_name,
+                    "input": event.get("input", {}),
+                })
+                # Check for scribe in bash commands
+                if tool_name == "bash":
+                    cmd = event.get("input", {}).get("command", "")
+                    if re.search(r'scribe\s+--', cmd, re.IGNORECASE):
+                        metrics["scribe_calls"] += 1
+
+            # Count turns
+            if event_type == "turn_start":
+                metrics["num_turns"] += 1
+
+        except json.JSONDecodeError:
+            # Text mode output - scan for scribe patterns
+            scribe_patterns = [
+                r'scribe\s+--covering-set',
+                r'scribe\s+--token-target',
+                r'scribe\s+--stdout',
+            ]
+            for pattern in scribe_patterns:
+                if re.search(pattern, line, re.IGNORECASE):
+                    metrics["scribe_calls"] += 1
+
+    # Check for errors in stderr
+    if "error" in stderr.lower() and ("api" in stderr.lower() or "timeout" in stderr.lower()):
+        metrics["had_error"] = True
+
+    return metrics
+
 def get_docker_image_name(task: dict) -> str:
     """Get the Docker image name for a SWE-bench task.
 
-    SWE-bench images are named: sweb.eval.x86_64.{instance_id}:latest
-    where instance_id is like 'astropy__astropy-12907'
+    Supports multiple naming conventions:
+    - Standard/Multilingual: sweb.eval.x86_64.{instance_id}:latest
+      where instance_id is like 'astropy__astropy-12907'
+    - Pro: jefzda/sweap-images:{owner}.{repo}-{owner}__{repo}-{commit}-v{version}
+      Pre-built images on DockerHub for SWE-bench Pro
     """
     instance_id = task.get("instance_id", "")
+
+    # SWE-bench Pro instance IDs start with 'instance_'
+    if instance_id.startswith("instance_"):
+        # Pro format: instance_{owner}__{repo}-{commit}-v{version}
+        # Docker format: jefzda/sweap-images:{owner}.{repo}-{owner}__{repo}-{commit}-v{version}
+        clean_id = instance_id[len("instance_"):]
+        match = re.match(r'^([^_]+)__([^-]+)-(.+)$', clean_id)
+        if match:
+            owner, repo, rest = match.groups()
+            return f"jefzda/sweap-images:{owner}.{repo}-{owner}__{repo}-{rest}"
+        # Fallback
+        return f"jefzda/sweap-images:{clean_id}"
+
+    # Standard format
     return f"sweb.eval.x86_64.{instance_id}:latest"
+
+def get_container_repo_path(task: dict) -> str:
+    """Get the repo path inside the container.
+    
+    Different SWE-bench variants store repos in different locations:
+    - Standard/Multilingual: /testbed/
+    - Pro: /app/
+    """
+    instance_id = task.get("instance_id", "")
+    if instance_id.startswith("instance_"):
+        return "/app/"
+    return "/testbed/"
+
+
 
 
 def check_image_exists(image_name: str) -> bool:
@@ -1459,9 +1444,10 @@ def prepull_images(tasks: list[dict], max_workers: int = 4) -> dict[str, bool]:
 
 
 def parse_claude_output(output: str) -> dict:
-    """Parse Claude Code JSON output to extract metrics.
+    """Parse Claude Code output to extract metrics.
 
-    Claude Code with --output-format json outputs a single JSON result object.
+    Handles both JSON output (--output-format json) and text output.
+    Text output is used when JSON causes streaming errors with some providers.
     """
     metrics = {
         "input_tokens": 0,
@@ -1475,8 +1461,19 @@ def parse_claude_output(output: str) -> dict:
         "model_resolved": "",  # Actual model ID used (e.g., "claude-sonnet-4-5-20250929")
     }
 
+    # Patterns for detecting scribe usage in text output
+    scribe_patterns = [
+        r'scribe\s+--covering-set',
+        r'scribe\s+--token-target',
+        r'scribe\s+--query-hint',
+        r'scribe\s+--stdout',
+        r'scribe\s+\.',  # scribe .
+        r'scribe\s+src/',  # scribe src/...
+        r'scribe\s+["\'"][^\"\'\]+["\'"]',  # scribe "path" or scribe 'path'
+    ]
+
     try:
-        # Parse the single JSON result
+        # Try to parse as JSON first
         result = json.loads(output.strip())
 
         # Check for error_during_execution - tokens will be 0 but patch may exist
@@ -1518,22 +1515,20 @@ def parse_claude_output(output: str) -> dict:
         metrics["num_turns"] = result.get("num_turns", 0)
 
         # Count scribe calls by scanning the raw result for bash commands containing "scribe"
-        # The result text may contain tool call logs
         result_text = result.get("result", "")
         if isinstance(result_text, str):
-            # Count occurrences of scribe commands in the output
-            scribe_patterns = [
-                r'scribe\s+--covering-set',
-                r'scribe\s+--token-target',
-                r'scribe\s+--query-hint',
-                r'scribe\s+\.',  # scribe .
-                r'scribe\s+src/',  # scribe src/...
-            ]
             for pattern in scribe_patterns:
                 metrics["scribe_calls"] += len(re.findall(pattern, result_text, re.IGNORECASE))
 
     except json.JSONDecodeError:
-        pass
+        # Text output mode - scan the raw text for scribe commands
+        # This is less precise but allows basic tracking when JSON isn't available
+        for pattern in scribe_patterns:
+            metrics["scribe_calls"] += len(re.findall(pattern, output, re.IGNORECASE))
+
+        # Try to detect errors in text output
+        if "error" in output.lower() and ("api" in output.lower() or "timeout" in output.lower()):
+            metrics["had_error"] = True
 
     return metrics
 
@@ -1549,6 +1544,7 @@ class TaskRunner:
 
     def __init__(
         self,
+        agent_type: str = "claude",  # "claude" or "pi"
         model: str = "glm-4.7",
         scribe_binary: Optional[str] = None,
         use_docker: bool = True,
@@ -1558,9 +1554,14 @@ class TaskRunner:
         scribe_max_depth: int = 4,  # Default max depth for scribe covering-set
         claude_config_dir: Optional[Union[str, Path]] = None,
     ):
-        if not check_claude_installed():
+        self.agent_type = agent_type
+        if agent_type == "claude" and not check_claude_installed():
             raise RuntimeError(
                 "Claude Code not installed. Install with: npm install -g @anthropic-ai/claude-code"
+            )
+        if agent_type == "pi" and not check_pi_installed():
+            raise RuntimeError(
+                f"Pi coding agent not installed. Expected at: {PI_MONO_PATH}"
             )
 
         self.model = model
@@ -1579,10 +1580,12 @@ class TaskRunner:
         self.repo_path: Optional[Path] = None
         self.task_id: Optional[str] = None
         self.container_id: Optional[str] = None
+        self._current_task: Optional[dict] = None  # Store current task for helper functions
 
     def setup_task(self, task: dict) -> bool:
         """Set up the environment for a task."""
         self.task_id = task.get("instance_id", "unknown")
+        self._current_task = task  # Store for helper functions
 
         if self.use_docker:
             return self._setup_docker(task)
@@ -1607,7 +1610,7 @@ class TaskRunner:
             if self.verbose:
                 print(f"    Starting container from {image_name}...")
             result = subprocess.run(
-                ["docker", "run", "-d", "--rm", image_name, "sleep", "3600"],
+                ["docker", "run", "-d", "--rm", "--entrypoint", "", image_name, "sleep", "3600"],
                 capture_output=True,
                 text=True,
                 timeout=self.setup_timeout_s,
@@ -1628,7 +1631,7 @@ class TaskRunner:
             if self.verbose:
                 print(f"    Copying repo to {self.repo_path}...")
             cp_result = subprocess.run(
-                ["docker", "cp", f"{self.container_id}:/testbed/.", str(self.repo_path)],
+                ["docker", "cp", f"{self.container_id}:{get_container_repo_path(self._current_task)}.", str(self.repo_path)],
                 capture_output=True,
                 text=True,
                 timeout=self.setup_timeout_s,
@@ -1646,10 +1649,49 @@ class TaskRunner:
 
             mark_claude_project_trusted(self.claude_config_dir, self.repo_path)
 
+            # Run before_repo_set_cmd if specified (SWE-bench Pro)
+            if not self._run_setup_command(task):
+                if self.verbose:
+                    print("    Warning: setup command failed (continuing anyway)")
+
             return True
 
         except Exception as e:
             print(f"    Docker setup failed: {e}")
+            return False
+
+    def _run_setup_command(self, task: dict) -> bool:
+        """Run before_repo_set_cmd if present (SWE-bench Pro feature).
+
+        Args:
+            task: Task dict that may contain before_repo_set_cmd
+
+        Returns:
+            True if no command or command succeeded, False if command failed
+        """
+        before_cmd = task.get("before_repo_set_cmd", "")
+        if not before_cmd:
+            return True
+
+        if self.verbose:
+            print(f"    Running setup command: {before_cmd[:80]}...")
+        try:
+            result = subprocess.run(
+                before_cmd,
+                shell=True,
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=self.setup_timeout_s,
+            )
+            if result.returncode != 0:
+                if self.verbose:
+                    print(f"    Setup command warning: {result.stderr[:200]}")
+                return False
+            return True
+        except Exception as e:
+            if self.verbose:
+                print(f"    Setup command failed: {e}")
             return False
 
     def _setup_local(self, task: dict) -> bool:
@@ -1672,6 +1714,12 @@ class TaskRunner:
                 timeout=30,
             )
             mark_claude_project_trusted(self.claude_config_dir, self.repo_path)
+
+            # Run before_repo_set_cmd if specified (SWE-bench Pro)
+            if not self._run_setup_command(task):
+                if self.verbose:
+                    print("    Warning: setup command failed (continuing anyway)")
+
             return True
         except Exception as e:
             print(f"    Local setup failed: {e}")
@@ -1702,6 +1750,264 @@ class TaskRunner:
                     shutil.rmtree(d, ignore_errors=True)
             except Exception:
                 pass
+
+
+    def _evaluate_patch(self, task: dict, patch: str) -> tuple[bool, str]:
+        """Evaluate if a patch actually resolves the issue by running tests.
+        
+        Args:
+            task: Task dict with test info (fail_to_pass, test_patch)
+            patch: The agent's generated patch
+            
+        Returns:
+            Tuple of (resolved: bool, test_output: str)
+        """
+        if self.verbose:
+            print(f"    [EVAL] Starting evaluation, container_id={self.container_id[:12] if self.container_id else 'None'}")
+        if not self.container_id:
+            return False, "No container available for evaluation"
+        
+        container_repo_path = get_container_repo_path(task)
+        
+        # 1. Apply the agent's patch to the container (already done earlier)
+        # The files were copied back after Claude Code finished
+        
+        # 2. Apply the test_patch (adds/modifies test files for evaluation)
+        test_patch = task.get("test_patch", "")
+        if test_patch.strip():
+            # Write test_patch to container and apply it
+            apply_cmd = f"cd {container_repo_path} && git apply --3way -"
+            apply_result = subprocess.run(
+                ["docker", "exec", "-i", self.container_id, "bash", "-c", apply_cmd],
+                input=test_patch,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if apply_result.returncode != 0:
+                # Try without --3way
+                apply_result = subprocess.run(
+                    ["docker", "exec", "-i", self.container_id, "bash", "-c", 
+                     f"cd {container_repo_path} && git apply -"],
+                    input=test_patch,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if apply_result.returncode != 0:
+                    if self.verbose:
+                        print(f"    Warning: Could not apply test_patch: {apply_result.stderr[:200]}")
+        
+        # 3. Get fail_to_pass tests (check both lowercase and uppercase field names)
+        fail_to_pass = task.get("fail_to_pass") or task.get("FAIL_TO_PASS") or ""
+        if self.verbose:
+            print(f"    [EVAL] fail_to_pass raw: {repr(fail_to_pass)[:100]}")
+        if isinstance(fail_to_pass, str):
+            try:
+                import ast
+                # fail_to_pass can be Python list literal (single quotes) or JSON
+                fail_to_pass = ast.literal_eval(fail_to_pass) if fail_to_pass.startswith('[') else []
+            except Exception:
+                try:
+                    import json as json_module
+                    fail_to_pass = json_module.loads(fail_to_pass) if fail_to_pass.startswith('[') else []
+                except Exception:
+                    fail_to_pass = []
+
+        if not fail_to_pass:
+            # No specific tests to check - consider resolved if patch exists
+            return bool(patch.strip()), "No fail_to_pass tests specified"
+
+        # 4. Detect project type and build test command
+        test_specs = fail_to_pass[:20]
+
+        # Detect project type by checking for key files
+        # Python: setup.py, pyproject.toml, or Python test format
+        # JS/TS: package.json with vitest format tests (file > describe > test)
+
+        # Check test format - vitest uses " > " separators
+        is_vitest_format = any(" > " in spec for spec in test_specs)
+
+        # Check for Python project indicators (setup.py or pyproject.toml)
+        check_python = subprocess.run(
+            ["docker", "exec", self.container_id, "bash", "-c",
+             f"test -f {container_repo_path}/setup.py || test -f {container_repo_path}/pyproject.toml"],
+            capture_output=True, timeout=10
+        )
+        is_python_project = check_python.returncode == 0
+
+        # Check for Go project (go.mod)
+        check_go = subprocess.run(
+            ["docker", "exec", self.container_id, "bash", "-c",
+             f"test -f {container_repo_path}/go.mod"],
+            capture_output=True, timeout=10
+        )
+        is_go_project = check_go.returncode == 0
+
+        # Check for Rust project (Cargo.toml)
+        check_rust = subprocess.run(
+            ["docker", "exec", self.container_id, "bash", "-c",
+             f"test -f {container_repo_path}/Cargo.toml"],
+            capture_output=True, timeout=10
+        )
+        is_rust_project = check_rust.returncode == 0
+
+        # Django-style tests: test_name (module.Class)
+        is_django_format = any(re.match(r"^\w+\s*\(", spec) for spec in test_specs)
+
+        # Go-style tests: TestFunctionName or TestFunctionName/subtest
+        is_go_format = is_go_project or any(re.match(r"^Test[A-Z]", spec) for spec in test_specs)
+
+        # Rust-style tests: module::test_name or just test_name with underscores
+        is_rust_format = is_rust_project
+
+        # Conda activation prefix for Python projects (if conda is available)
+        conda_prefix = "source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null && conda activate testbed 2>/dev/null; "
+
+        if is_go_format and not is_python_project:
+            # Go projects - use go test with -run flag
+            # Handle both TestName and TestName/subtest formats
+            test_patterns = []
+            for spec in test_specs:
+                # Go test patterns: TestName or TestName/subtest
+                if "/" in spec:
+                    # Subtest: TestName/subtest -> use as-is
+                    test_patterns.append(spec)
+                else:
+                    # Regular test: TestName
+                    test_patterns.append(f"^{spec}$")
+            
+            pattern_str = "|".join(test_patterns)
+            test_cmd = f"cd {container_repo_path} && timeout 600 go test -v -run '{pattern_str}' ./... 2>&1; echo EXIT_CODE=$?"
+            
+            if self.verbose:
+                print(f"    Running {len(test_specs)} fail_to_pass tests (Go)...")
+
+        elif is_rust_format and not is_python_project:
+            # Rust projects - use cargo test with filter
+            # Test names can be module::test_name or just test_name
+            test_filters = " ".join(test_specs)
+            test_cmd = f"cd {container_repo_path} && timeout 600 cargo test {test_filters} -- --test-threads=1 2>&1; echo EXIT_CODE=$?"
+            
+            if self.verbose:
+                print(f"    Running {len(test_specs)} fail_to_pass tests (Rust)...")
+
+        elif is_vitest_format and not is_python_project:
+            # JS/TS projects with vitest format
+            test_patterns = []
+            for spec in test_specs:
+                if " > " in spec:
+                    test_name = spec.split(" > ")[-1]
+                    test_patterns.append(test_name)
+                else:
+                    test_patterns.append(spec)
+
+            pattern_str = "|".join(re.escape(p) for p in test_patterns)
+            test_cmd = f"cd {container_repo_path} && timeout 300 pnpm test -- --testNamePattern '{pattern_str}' 2>&1; echo EXIT_CODE=$?"
+
+        elif is_django_format:
+            # Django tests: use Django test runner
+            # Format: test_name (module.Class) -> module.Class.test_name
+            # Extract module from first test spec
+            test_modules = set()
+            for spec in test_specs:
+                match = re.match(r"\w+\s*\(([^)]+)\)", spec)
+                if match:
+                    # Extract module.Class -> module
+                    full_path = match.group(1)
+                    test_modules.add(full_path.rsplit(".", 1)[0] if "." in full_path else full_path)
+
+            if test_modules:
+                modules_str = " ".join(sorted(test_modules))
+                test_cmd = f"{conda_prefix}cd {container_repo_path}/tests && timeout 300 python runtests.py {modules_str} --parallel 1 2>&1; echo EXIT_CODE=$?"
+            else:
+                test_cmd = f"{conda_prefix}cd {container_repo_path} && timeout 300 python -m pytest --tb=short -q 2>&1; echo EXIT_CODE=$?"
+
+        else:
+            # Generic Python - use pytest with conda environment
+            test_spec_str = " ".join(f'"{t}"' for t in test_specs)
+            test_cmd = f"{conda_prefix}cd {container_repo_path} && timeout 300 python -m pytest {test_spec_str} --tb=short -q 2>&1; echo EXIT_CODE=$?"
+
+        # Print test type for non-Go/Rust (those print earlier in their branches)
+        if not (is_go_format and not is_python_project) and not (is_rust_format and not is_python_project):
+            if self.verbose:
+                test_type = 'JS/TS' if is_vitest_format and not is_python_project else 'Django' if is_django_format else 'Python'
+                print(f"    Running {len(test_specs)} fail_to_pass tests ({test_type})...")
+
+        test_result = subprocess.run(
+            ["docker", "exec", self.container_id, "bash", "-c", test_cmd],
+            capture_output=True,
+            text=True,
+            timeout=360,
+        )
+        
+        output = test_result.stdout
+
+        # Check if tests passed
+        # For Go/Rust: check specific test results since overall exit code may be non-zero
+        # due to unrelated package issues
+        if "EXIT_CODE=0" in output:
+            if self.verbose:
+                print(f"    Tests PASSED")
+            return True, output
+
+        # Go tests: check if all required tests show "--- PASS:"
+        if is_go_format and not is_python_project:
+            passed_tests = set()
+            failed_tests = set()
+            for line in output.split("\n"):
+                if "--- PASS:" in line:
+                    # Extract test name: "--- PASS: TestName (1.23s)"
+                    match = re.search(r"--- PASS:\s+(\S+)", line)
+                    if match:
+                        passed_tests.add(match.group(1))
+                elif "--- FAIL:" in line:
+                    match = re.search(r"--- FAIL:\s+(\S+)", line)
+                    if match:
+                        failed_tests.add(match.group(1))
+
+            # Check if all required tests passed
+            all_passed = True
+            for spec in test_specs:
+                # Handle subtest format: TestName/subtest
+                test_name = spec.split("/")[0] if "/" in spec else spec
+                if test_name in failed_tests:
+                    all_passed = False
+                    break
+                if test_name not in passed_tests:
+                    # Test wasn't found at all - could be an issue
+                    # But we'll be lenient if no failure was recorded
+                    pass
+
+            if all_passed and passed_tests:
+                if self.verbose:
+                    print(f"    Tests PASSED (Go: {len(passed_tests)} tests)")
+                return True, output
+
+        # Rust tests: check if tests show "ok"
+        if is_rust_format and not is_python_project:
+            # Rust output: "test module::test_name ... ok"
+            passed_tests = []
+            failed_tests = []
+            for line in output.split("\n"):
+                if " ... ok" in line:
+                    passed_tests.append(line)
+                elif " ... FAILED" in line:
+                    failed_tests.append(line)
+
+            if not failed_tests and passed_tests:
+                if self.verbose:
+                    print(f"    Tests PASSED (Rust: {len(passed_tests)} tests)")
+                return True, output
+
+        if self.verbose:
+            # Extract failure summary
+            lines = output.split("\n")
+            for line in lines[-10:]:
+                if "FAILED" in line or "ERROR" in line or "passed" in line:
+                    print(f"    {line}")
+        return False, output
+
 
     def run_task(self, task: dict, mode: str = "scribe") -> TaskResult:
         """Run a single SWE-bench task using OpenCode.
@@ -1813,71 +2119,42 @@ After fixing, run the relevant tests to verify your fix works."""
                     if self.verbose:
                         print("    Set up scribe enforcement hooks")
 
-                # Pre-identify directories to give agent concrete targets
-                target_dirs = infer_target_directories(self.repo_path, issue)
-                if target_dirs:
-                    dir_example = str(target_dirs[0].relative_to(self.repo_path))
-                else:
-                    dir_example = "src/"
-
                 prompt = f"""Fix the following issue in this repository.
 
 ISSUE:
 {issue}
 
-=== HOW TO USE SCRIBE (CRITICAL - READ THIS) ===
+=== SCRIBE: SURGICAL CODE SLICES ===
 
-You have `scribe` which returns a function/class AND ALL ITS DEPENDENCIES in one call.
-This is the ONLY tool you need for understanding code. Do NOT use grep/read for exploration.
+Use `scribe` for targeted code slices with dependencies. Pattern: start small, expand as needed.
 
-**PRIMARY USAGE - Covering Set (use this!):**
-When you identify a relevant function or class, get it WITH all dependencies:
+**Command format:**
+  scribe --covering-set "FILE:FUNCTION" --max-depth 1 --token-target 800 --stdout
+
+**Workflow:**
+1. Find relevant code with grep
+2. Get a small slice: `scribe --covering-set "file.go:FuncName" --max-depth 1 --token-target 800 --stdout`
+3. If you need more context, get another specific slice
+4. Make your fix and test
+
+**Key settings:**
+- `--max-depth 1` = only direct dependencies (tight focus)
+- `--token-target 800` = small output (~800 tokens)
+- Multiple small calls are better than one large call
+
+**Example:**
+```bash
+# Find where the bug is
+grep -rn "ValidationError" --include="*.go"
+
+# Get just that function
+scribe --covering-set "internal/validate.go:ValidateInput" --max-depth 1 --token-target 800 --stdout
+
+# Need a helper it uses? Get that separately
+scribe --covering-set "internal/errors.go:NewError" --max-depth 1 --token-target 800 --stdout
 ```
-scribe --covering-set "path/to/file.py:function_name" --token-target {token_target} --stdout
-scribe --covering-set "path/to/file.ts:ClassName" --granularity entity --token-target {token_target} --stdout
-scribe --covering-set "path/to/file.go:MethodName" --token-target {token_target} --stdout
-```
 
-**IMPORTANT for TypeScript/JavaScript**: Always use `--granularity entity` to avoid pulling in
-entire files for every import. Without it, you may get 50x more context than needed.
-
-This returns the target entity PLUS every type, function, and constant it uses.
-You get the complete dependency graph in ONE call. No need to trace imports manually.
-If you must use a file-level covering set (no symbol), expect a confirmation prompt and keep it rare.
-Avoid multiple large covering-set calls that overlap; prefer smaller targets or lower token budgets.
-
-**Depth Control**: By default, scribe traverses up to {self.scribe_max_depth} levels of dependencies (--max-depth {self.scribe_max_depth}).
-This prevents explosion on deeply connected code. If you need more context for a complex function,
-you can increase it: `--max-depth 6`. Only do this if the default output is clearly insufficient.
-
-**SECONDARY USAGE - Directory Overview (only if you don't know the target):**
-```
-scribe --token-target {dir_token_target} {dir_example} --stdout
-```
-
-**Token Guidance**
-- Always include `--token-target` with scribe commands to control context size.
-- Start with `{token_target}` and increase only if the context is clearly insufficient.
-- Avoid directory-wide scans unless covering-set fails. If you must scan, use a smaller token target (≈ {dir_token_target}).
-
-=== WORKFLOW ===
-
-1. Use grep ONCE (files_with_matches only) to locate the file/function mentioned in the issue
-2. Run scribe --covering-set on that symbol to get complete context
-3. Implement your fix using the context scribe provided
-4. Run tests
-
-=== CRITICAL RULES ===
-
-- After scribe returns, DO NOT read the same files again. Scribe already gave you everything.
-- After scribe returns, DO NOT grep for more context. You have the dependency graph.
-- DO NOT pipe scribe through head/tail/grep. Let it complete fully.
-- ALWAYS include `--token-target` unless you have a specific reason not to.
-- NEVER run scribe on "." - always target a specific directory or use --covering-set
-- Do NOT run `which scribe` or `scribe --help` unless you are truly blocked.
-- Do NOT edit files before at least one scribe call.
-
-The whole point of scribe is to REPLACE iterative exploration. Use it once, then fix the code."""
+Target specific functions. Never request whole files."""
 
             else:  # standard mode
                 prompt = f"""Fix the following issue in this repository.
@@ -1887,51 +2164,95 @@ ISSUE:
 
 After fixing, run the relevant tests to verify your fix works."""
 
-            # Run Claude Code
-            claude_bin = get_claude_path()
-            env = build_claude_env(active_config_dir)
-            if mode == "scribe-tool":
-                fd, path = tempfile.mkstemp(prefix="claude_hook_", suffix=".jsonl")
-                os.close(fd)
-                hook_log_path = Path(path)
-                fd, path = tempfile.mkstemp(prefix="claude_hook_debug_", suffix=".log")
-                os.close(fd)
-                hook_debug_path = Path(path)
-                env["CLAUDE_HOOK_LOG"] = str(hook_log_path)
-                env["CLAUDE_HOOK_DEBUG"] = str(hook_debug_path)
-                env["CLAUDE_SCRIBE_TOKEN_TARGET"] = str(token_target)
-                env["CLAUDE_SCRIBE_MAX_DEPTH"] = str(self.scribe_max_depth)
+            # Run agent (Claude Code or Pi)
+            if self.agent_type == "pi":
+                # Pi agent setup
+                pi_bin = get_pi_path()
+                env = os.environ.copy()
+                # Determine provider from model name
+                if self.model.startswith("glm"):
+                    provider = "zai"
+                elif self.model.startswith("claude"):
+                    provider = "anthropic"
+                elif self.model.startswith("gpt"):
+                    provider = "openai"
+                else:
+                    provider = "zai"  # Default to zai for unknown models
+                
+                # Use JSON mode for metrics (pi supports this better than Claude with z.ai)
+                cmd = [
+                    "node", pi_bin,
+                    "--print",  # Print mode (non-interactive)
+                    "--provider", provider,
+                    "--model", self.model,
+                    "--mode", "json",  # JSONL output for metrics
+                    "--no-session",
+                ]
+                
+                # For scribe-tool mode, use the scribe extension
+                if mode == "scribe-tool":
+                    cmd.extend(["-e", str(PI_SCRIBE_EXTENSION)])
+                
+                cmd.append(prompt)
+                
+                if self.verbose:
+                    print(f"    Running Pi agent ({self.model})...")
+                    print(f"    Timeout: {self.task_timeout_s}s")
+                    print(f"    Mode: {mode} (extension: {mode == 'scribe-tool'})")
+            else:
+                # Claude Code setup
+                claude_bin = get_claude_path()
+                env = build_claude_env(active_config_dir)
+                if mode == "scribe-tool":
+                    fd, path = tempfile.mkstemp(prefix="claude_hook_", suffix=".jsonl")
+                    os.close(fd)
+                    hook_log_path = Path(path)
+                    fd, path = tempfile.mkstemp(prefix="claude_hook_debug_", suffix=".log")
+                    os.close(fd)
+                    hook_debug_path = Path(path)
+                    env["CLAUDE_HOOK_LOG"] = str(hook_log_path)
+                    env["CLAUDE_HOOK_DEBUG"] = str(hook_debug_path)
+                    env["CLAUDE_SCRIBE_TOKEN_TARGET"] = str(token_target)
+                    env["CLAUDE_SCRIBE_MAX_DEPTH"] = str(self.scribe_max_depth)
 
-            # Build command based on mode:
-            # - standard/scribe-context: Use --allowedTools to grant permissions (no hooks needed)
-            # - scribe-tool: Use hooks for permissions (--allowedTools bypasses hooks)
-            cmd = [
-                claude_bin,
-                "-p",  # Print mode (non-interactive)
-                "--model", self.model,
-                "--output-format", "text",  # Text output (json was causing streaming errors with z.ai)
-                "--no-session-persistence",
-                "--disable-slash-commands",
-                "--input-format", "text",
-            ]
+                # Build command based on mode:
+                # - standard/scribe-context: Use --allowedTools to grant permissions (no hooks needed)
+                # - scribe-tool: Use hooks for permissions (--allowedTools bypasses hooks)
+                # Use JSON output for Anthropic models (opus/sonnet/haiku) for proper metrics
+                # Use text output for z.ai models (glm-*) which have streaming issues with JSON
+                is_zai_model = self.model.startswith("glm")
+                output_format = "text" if is_zai_model else "json"
 
-            if mode in ("standard", "scribe-context"):
-                # Use --dangerously-skip-permissions instead of --allowedTools
-                # --allowedTools was causing "only prompt commands are supported in streaming mode" errors
-                cmd.append("--dangerously-skip-permissions")
-            if mode == "scribe-tool":
-                cmd.extend(["--permission-mode", "acceptEdits", "--setting-sources", "user,local"])
-                if self.repo_path:
-                    settings_path = self.repo_path / ".claude" / "settings.json"
-                    cmd.extend(["--settings", str(settings_path)])
-            # scribe-tool mode: hooks handle permissions, no permission bypass (hooks need to work)
+                cmd = [
+                    claude_bin,
+                    "-p",  # Print mode (non-interactive)
+                    "--model", self.model,
+                    "--output-format", output_format,
+                    "--no-session-persistence",
+                    "--disable-slash-commands",
+                    "--input-format", "text",
+                ]
 
-            cmd.append(prompt)
+                if mode in ("standard", "scribe-context"):
+                    # Use --dangerously-skip-permissions instead of --allowedTools
+                    # --allowedTools was causing "only prompt commands are supported in streaming mode" errors
+                    cmd.append("--dangerously-skip-permissions")
+                if mode == "scribe-tool":
+                    # Use bypassPermissions mode which should still run hooks for logging
+                    # while auto-accepting all permission requests
+                    cmd.extend(["--permission-mode", "bypassPermissions"])
+                    cmd.extend(["--setting-sources", "user,local"])
+                    if self.repo_path:
+                        settings_path = self.repo_path / ".claude" / "settings.json"
+                        cmd.extend(["--settings", str(settings_path)])
+                # scribe-tool mode: hooks handle permissions, no permission bypass (hooks need to work)
 
-            if self.verbose:
-                print(f"    Running Claude Code ({self.model})...")
-                print(f"    Timeout: {self.task_timeout_s}s")
-                print(f"    Command: claude -p --model {self.model}...")
+                cmd.append(prompt)
+
+                if self.verbose:
+                    print(f"    Running Claude Code ({self.model})...")
+                    print(f"    Timeout: {self.task_timeout_s}s")
+                    print(f"    Command: claude -p --model {self.model}...")
 
             proc_result = subprocess.run(
                 cmd,
@@ -1950,8 +2271,11 @@ After fixing, run the relevant tests to verify your fix works."""
                 if proc_result.stderr:
                     print(f"    stderr: {proc_result.stderr[:200]}")
 
-            # Parse output for metrics (even if returncode != 0, Claude may have worked)
-            metrics = parse_claude_output(proc_result.stdout)
+            # Parse output for metrics (even if returncode != 0, agent may have worked)
+            if self.agent_type == "pi":
+                metrics = parse_pi_output(proc_result.stdout, proc_result.stderr)
+            else:
+                metrics = parse_claude_output(proc_result.stdout)
             result.input_tokens = metrics["input_tokens"]
             result.output_tokens = metrics["output_tokens"]
             result.total_tokens = result.input_tokens + result.output_tokens
@@ -1988,7 +2312,6 @@ After fixing, run the relevant tests to verify your fix works."""
                 result.resolved = False
             else:
                 result.patch = new_diff[:5000]
-                result.resolved = len(result.patch.strip()) > 0
 
             # If Claude errored before doing any work, treat as failure and ignore any diffs
             if metrics.get("had_error", False) and metrics.get("num_turns", 0) == 0:
@@ -1999,21 +2322,23 @@ After fixing, run the relevant tests to verify your fix works."""
                 result.error = err[0] if err else "error_during_execution"
             else:
                 # Consider successful if we got a patch, regardless of Claude's internal errors
-                result.success = result.resolved or proc_result.returncode == 0
-                if proc_result.returncode != 0 and not result.resolved:
-                    result.error = proc_result.stderr[:500] if proc_result.stderr else "Non-zero exit with no patch"
+                result.success = proc_result.returncode == 0
 
             # If using Docker, copy changes back and run tests
             if self.use_docker and self.container_id and result.patch:
                 # Copy modified files back to container
                 subprocess.run(
-                    ["docker", "cp", f"{self.repo_path}/.", f"{self.container_id}:/testbed/"],
+                    ["docker", "cp", f"{self.repo_path}/.", f"{self.container_id}:{get_container_repo_path(self._current_task)}"],
                     capture_output=True,
                     timeout=60,
                 )
 
-                # TODO: Run SWE-bench test harness to verify fix
-                # For now, just check if there's a patch
+                # Evaluate patch by actually running tests
+                result.resolved, result.test_output = self._evaluate_patch(self._current_task, result.patch)
+                result.success = result.resolved or result.success
+            else:
+                # No Docker or no patch - just check if there's a patch
+                result.resolved = len(result.patch.strip()) > 0
 
         except subprocess.TimeoutExpired as e:
             result.duration_s = time.time() - start_time
@@ -2094,11 +2419,15 @@ def _run_single_task(args: tuple) -> TaskResult:
         context_tokens,
         scribe_max_depth,
         claude_config_dir,
+        run_number,
+        max_system_retries,
+        system_retry_delay_s,
     ) = args
     task_id = task.get("instance_id", f"task_{task_index}")
 
     # Create a new runner for each task (thread-safe)
     runner = TaskRunner(
+        agent_type=agent_type,
         model=model,
         use_docker=use_docker,
         task_timeout_s=task_timeout_s,
@@ -2109,7 +2438,18 @@ def _run_single_task(args: tuple) -> TaskResult:
     runner.verbose = False  # Less verbose in parallel mode
 
     print(f"  [{task_index+1}/{total_tasks}] {task_id} ({run_mode})...")
-    result = runner.run_task(task, mode=run_mode)
+    attempt = 0
+    while True:
+        result = runner.run_task(task, mode=run_mode)
+        result.run_number = run_number
+        result.retry_count = attempt
+        result.system_failure = is_system_failure(result)
+        if result.system_failure and attempt < max_system_retries:
+            attempt += 1
+            print(f"    [{task_index+1}/{total_tasks}] {task_id} ({run_mode}): SYSTEM FAIL, retrying in {system_retry_delay_s}s (attempt {attempt}/{max_system_retries})")
+            time.sleep(system_retry_delay_s)
+            continue
+        break
     status = "OK" if result.success else f"FAILED"
     print(f"    [{task_index+1}/{total_tasks}] {task_id} ({run_mode}): {status} - {result.total_tokens:,} tokens")
     return result
@@ -2119,6 +2459,7 @@ def run_task_batch(
     tasks: list[dict],
     mode: str = "both",
     model: str = "glm-4.7",
+    agent_type: str = "claude",
     max_tasks: Optional[int] = None,
     use_docker: bool = True,
     prepull_workers: int = 4,
@@ -2127,6 +2468,10 @@ def run_task_batch(
     context_tokens: int = 4000,
     scribe_max_depth: int = 4,
     claude_config_dir: Optional[Union[str, Path]] = None,
+    run_number: int = 1,
+    max_system_retries: int = 1,
+    system_retry_delay_s: int = 30,
+    progress_path: Optional[Union[str, Path]] = None,
 ) -> list[TaskResult]:
     """Run a batch of SWE-bench tasks.
 
@@ -2144,6 +2489,10 @@ def run_task_batch(
         parallel_workers: Number of tasks to run in parallel (default: 1 = sequential).
         context_tokens: Token budget for scribe-context mode (default: 4000).
         scribe_max_depth: Default max depth for scribe covering-set (default: 4).
+        run_number: Current run index (for tracking across repeated runs).
+        max_system_retries: Retry count for system/infra failures.
+        system_retry_delay_s: Delay before retrying a system/infra failure.
+        progress_path: Optional path to write incremental results JSON.
 
     Returns:
         List of TaskResult objects.
@@ -2196,6 +2545,9 @@ def run_task_batch(
                 context_tokens,
                 scribe_max_depth,
                 claude_config_dir,
+                run_number,
+                max_system_retries,
+                system_retry_delay_s,
             ))
         if run_scribe_context:
             work_items.append((
@@ -2209,6 +2561,9 @@ def run_task_batch(
                 context_tokens,
                 scribe_max_depth,
                 claude_config_dir,
+                run_number,
+                max_system_retries,
+                system_retry_delay_s,
             ))
         if run_scribe_tool:
             work_items.append((
@@ -2222,9 +2577,13 @@ def run_task_batch(
                 context_tokens,
                 scribe_max_depth,
                 claude_config_dir,
+                run_number,
+                max_system_retries,
+                system_retry_delay_s,
             ))
 
     results = []
+    progress_file = Path(progress_path) if progress_path else None
 
     if parallel_workers > 1:
         print(f"Running {len(work_items)} task/mode combinations with {parallel_workers} parallel workers...")
@@ -2234,12 +2593,15 @@ def run_task_batch(
                 try:
                     result = future.result()
                     results.append(result)
+                    if progress_file:
+                        write_progress(results, progress_file)
                 except Exception as e:
                     item = future_to_item[future]
                     print(f"  Task {item[0].get('instance_id')} ({item[1]}) raised exception: {e}")
     else:
         # Sequential execution (original behavior)
         runner = TaskRunner(
+            agent_type=agent_type,
             model=model,
             use_docker=use_docker,
             task_timeout_s=task_timeout_s,
@@ -2254,23 +2616,62 @@ def run_task_batch(
 
             if run_standard:
                 print("  Running standard mode...")
-                result = runner.run_task(task, mode="standard")
+                attempt = 0
+                while True:
+                    result = runner.run_task(task, mode="standard")
+                    result.run_number = run_number
+                    result.retry_count = attempt
+                    result.system_failure = is_system_failure(result)
+                    if result.system_failure and attempt < max_system_retries:
+                        attempt += 1
+                        print(f"    SYSTEM FAIL, retrying in {system_retry_delay_s}s (attempt {attempt}/{max_system_retries})")
+                        time.sleep(system_retry_delay_s)
+                        continue
+                    break
                 status = "OK" if result.success else f"FAILED: {result.error[:30]}"
                 print(f"    {status} - Tokens: {result.total_tokens:,}, Calls: {result.num_tool_calls}")
                 results.append(result)
+                if progress_file:
+                    write_progress(results, progress_file)
 
             if run_scribe_context:
                 print("  Running scribe-context mode...")
-                result = runner.run_task(task, mode="scribe-context")
+                attempt = 0
+                while True:
+                    result = runner.run_task(task, mode="scribe-context")
+                    result.run_number = run_number
+                    result.retry_count = attempt
+                    result.system_failure = is_system_failure(result)
+                    if result.system_failure and attempt < max_system_retries:
+                        attempt += 1
+                        print(f"    SYSTEM FAIL, retrying in {system_retry_delay_s}s (attempt {attempt}/{max_system_retries})")
+                        time.sleep(system_retry_delay_s)
+                        continue
+                    break
                 status = "OK" if result.success else f"FAILED: {result.error[:30]}"
                 print(f"    {status} - Tokens: {result.total_tokens:,}, Calls: {result.num_tool_calls}")
                 results.append(result)
+                if progress_file:
+                    write_progress(results, progress_file)
 
             if run_scribe_tool:
                 print("  Running scribe-tool mode...")
-                result = runner.run_task(task, mode="scribe-tool")
+                attempt = 0
+                while True:
+                    result = runner.run_task(task, mode="scribe-tool")
+                    result.run_number = run_number
+                    result.retry_count = attempt
+                    result.system_failure = is_system_failure(result)
+                    if result.system_failure and attempt < max_system_retries:
+                        attempt += 1
+                        print(f"    SYSTEM FAIL, retrying in {system_retry_delay_s}s (attempt {attempt}/{max_system_retries})")
+                        time.sleep(system_retry_delay_s)
+                        continue
+                    break
                 status = "OK" if result.success else f"FAILED: {result.error[:30]}"
                 print(f"    {status} - Tokens: {result.total_tokens:,}, Calls: {result.num_tool_calls}")
                 results.append(result)
+                if progress_file:
+                    write_progress(results, progress_file)
 
     return results

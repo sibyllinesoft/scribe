@@ -40,4 +40,13 @@ def build_claude_env(config_dir: Optional[Path]) -> dict[str, str]:
         config_dir.mkdir(parents=True, exist_ok=True)
         env["CLAUDE_CONFIG_DIR"] = str(config_dir)
 
+    # Isolate Claude CLI data dir per benchmark process to avoid cross-run locks.
+    # Can be overridden via CLAUDE_BENCH_DATA_DIR if you want a fixed location.
+    data_dir = os.environ.get("CLAUDE_BENCH_DATA_DIR")
+    if not data_dir and config_dir:
+        data_dir = str(config_dir / f"xdg-data-{os.getpid()}")
+    if data_dir:
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        env["XDG_DATA_HOME"] = data_dir
+
     return env

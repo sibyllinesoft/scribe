@@ -1,6 +1,6 @@
 //! Agent installation module
 //!
-//! Handles configuring AI coding agents (Claude Code, OpenCode) to use scribe.
+//! Handles configuring AI coding agents (Claude Code, OpenCode, Pi) to use scribe.
 
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +8,8 @@ use std::path::PathBuf;
 const SCRIBE_MD: &str = include_str!("../../../npm/scribe/scripts/SCRIBE.md");
 const HOOK_ENFORCE: &str = include_str!("../../../npm/scribe/scripts/hooks/scribe_enforce.sh");
 const HOOK_REMIND: &str = include_str!("../../../npm/scribe/scripts/hooks/scribe_remind.sh");
+const PI_EXTENSION: &str = include_str!("../../../npm/scribe/scripts/extensions/scribe.ts");
+const OPENCODE_PLUGIN: &str = include_str!("../../../npm/scribe/scripts/plugins/scribe.ts");
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HookMode {
@@ -19,6 +21,7 @@ pub enum HookMode {
 pub enum Agent {
     Claude,
     OpenCode,
+    Pi,
     All,
 }
 
@@ -29,8 +32,9 @@ impl std::str::FromStr for Agent {
         match s.to_lowercase().as_str() {
             "claude" | "claude-code" => Ok(Agent::Claude),
             "opencode" => Ok(Agent::OpenCode),
+            "pi" | "pi-coding-agent" => Ok(Agent::Pi),
             "all" => Ok(Agent::All),
-            _ => Err(format!("Unknown agent: {}. Use 'claude', 'opencode', or 'all'", s)),
+            _ => Err(format!("Unknown agent: {}. Use 'claude', 'opencode', 'pi', or 'all'", s)),
         }
     }
 }
@@ -53,6 +57,24 @@ fn detect_agents() -> Vec<(Agent, PathBuf)> {
         let opencode_dir = home.join(".config").join("opencode");
         if opencode_dir.exists() {
             found.push((Agent::OpenCode, opencode_dir));
+        }
+
+        // Pi: ~/.pi/ or project-local .pi/
+        let pi_dir = home.join(".pi");
+        if pi_dir.exists() {
+            found.push((Agent::Pi, pi_dir));
+        }
+    }
+
+    // Also check current directory for .pi/
+    if let Ok(cwd) = std::env::current_dir() {
+        let local_pi = cwd.join(".pi");
+        if local_pi.exists() {
+            // Only add if not already in the list
+            let already_found = found.iter().any(|(a, p)| *a == Agent::Pi && *p == local_pi);
+            if !already_found {
+                found.push((Agent::Pi, local_pi));
+            }
         }
     }
 
@@ -160,12 +182,20 @@ fn install_opencode(config_dir: &PathBuf, _mode: HookMode) -> Result<(), Box<dyn
     // Ensure directory exists
     fs::create_dir_all(config_dir)?;
 
-    // 1. Copy SCRIBE.md
+    // 1. Create plugins directory and install plugin
+    let plugins_dir = config_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir)?;
+
+    let plugin_path = plugins_dir.join("scribe.ts");
+    fs::write(&plugin_path, OPENCODE_PLUGIN)?;
+    println!("    ✓ Installed scribe.ts plugin");
+
+    // 2. Copy SCRIBE.md
     let scribe_md_path = config_dir.join("SCRIBE.md");
     fs::write(&scribe_md_path, SCRIBE_MD)?;
     println!("    ✓ Installed SCRIBE.md");
 
-    // 2. Update AGENTS.md with include
+    // 3. Update AGENTS.md with include
     let agents_md_path = config_dir.join("AGENTS.md");
     let include_directive = "@~/.config/opencode/SCRIBE.md";
 
@@ -183,7 +213,50 @@ fn install_opencode(config_dir: &PathBuf, _mode: HookMode) -> Result<(), Box<dyn
         println!("    ✓ Created AGENTS.md with SCRIBE.md include");
     }
 
-    println!("    Note: OpenCode hooks require plugin setup");
+    println!("    Note: Plugin will be loaded automatically by OpenCode");
+
+    Ok(())
+}
+
+fn install_pi(config_dir: &PathBuf, _mode: HookMode) -> Result<(), Box<dyn std::error::Error>> {
+    println!("  Configuring Pi coding agent...");
+    println!("    Config dir: {}", config_dir.display());
+
+    // Ensure directory exists
+    fs::create_dir_all(config_dir)?;
+
+    // 1. Create extensions directory and install extension
+    let extensions_dir = config_dir.join("extensions");
+    fs::create_dir_all(&extensions_dir)?;
+
+    let extension_path = extensions_dir.join("scribe.ts");
+    fs::write(&extension_path, PI_EXTENSION)?;
+    println!("    ✓ Installed scribe.ts extension");
+
+    // 2. Copy SCRIBE.md for reference
+    let scribe_md_path = config_dir.join("SCRIBE.md");
+    fs::write(&scribe_md_path, SCRIBE_MD)?;
+    println!("    ✓ Installed SCRIBE.md");
+
+    // 3. Update or create AGENTS.md with include
+    let agents_md_path = config_dir.join("AGENTS.md");
+    let include_content = format!("@{}/SCRIBE.md", config_dir.display());
+
+    if agents_md_path.exists() {
+        let content = fs::read_to_string(&agents_md_path)?;
+        if !content.contains("SCRIBE.md") {
+            let new_content = format!("{}\n\n{}", include_content, content);
+            fs::write(&agents_md_path, new_content)?;
+            println!("    ✓ Added SCRIBE.md include to AGENTS.md");
+        } else {
+            println!("    ✓ AGENTS.md already includes SCRIBE.md");
+        }
+    } else {
+        fs::write(&agents_md_path, format!("{}\n", include_content))?;
+        println!("    ✓ Created AGENTS.md with SCRIBE.md include");
+    }
+
+    println!("    Note: Extension will be loaded automatically by Pi agent");
 
     Ok(())
 }
@@ -197,10 +270,14 @@ pub fn run_install(agent: Agent, mode: HookMode) -> Result<(), Box<dyn std::erro
 
     if detected.is_empty() && agent == Agent::All {
         println!("No AI coding agents detected.");
-        println!("Supported agents: Claude Code (~/.claude), OpenCode (~/.config/opencode)");
+        println!("Supported agents:");
+        println!("  - Claude Code (~/.claude)");
+        println!("  - OpenCode (~/.config/opencode)");
+        println!("  - Pi coding agent (~/.pi or .pi/)");
         println!("\nTo install for a specific agent anyway, use:");
         println!("  scribe --install claude");
         println!("  scribe --install opencode");
+        println!("  scribe --install pi");
         return Ok(());
     }
 
@@ -218,6 +295,18 @@ pub fn run_install(agent: Agent, mode: HookMode) -> Result<(), Box<dyn std::erro
             fs::create_dir_all(&dir)?;
             vec![(Agent::OpenCode, dir)]
         }
+        Agent::Pi => {
+            // Prefer local .pi/ if it exists, otherwise use ~/.pi/
+            let local_pi = std::env::current_dir()?.join(".pi");
+            let dir = if local_pi.exists() {
+                local_pi
+            } else {
+                let home = home_dir().ok_or("Could not determine home directory")?;
+                home.join(".pi")
+            };
+            fs::create_dir_all(&dir)?;
+            vec![(Agent::Pi, dir)]
+        }
     };
 
     if agents_to_install.is_empty() {
@@ -233,6 +322,7 @@ pub fn run_install(agent: Agent, mode: HookMode) -> Result<(), Box<dyn std::erro
         match agent_type {
             Agent::Claude => install_claude(config_dir, mode)?,
             Agent::OpenCode => install_opencode(config_dir, mode)?,
+            Agent::Pi => install_pi(config_dir, mode)?,
             Agent::All => unreachable!(),
         }
         println!();
@@ -241,6 +331,12 @@ pub fn run_install(agent: Agent, mode: HookMode) -> Result<(), Box<dyn std::erro
     println!("══════════════════════════════════════════════════════════════");
     println!("  Installation complete!");
     println!("══════════════════════════════════════════════════════════════\n");
+
+    println!("Scribe is now configured with surgical context guidance:");
+    println!("  - Use --max-depth 1 for tight focus");
+    println!("  - Use --token-target 800 for small slices");
+    println!("  - Multiple small calls > one large call");
+    println!();
 
     Ok(())
 }
