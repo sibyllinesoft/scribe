@@ -17,6 +17,8 @@ const JS_FILE_EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const JS_SUFFIXES: &[&str] = &[".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"];
 const RUST_FILE_EXTENSIONS: &[&str] = &["rs"];
 const RUST_SUFFIXES: &[&str] = &[".rs"];
+const ELIXIR_FILE_EXTENSIONS: &[&str] = &["ex", "exs"];
+const ELIXIR_SUFFIXES: &[&str] = &[".ex", ".exs"];
 
 /// Strip known file extension suffixes from an import string
 fn strip_known_suffix<'a>(value: &'a str, suffixes: &[&str]) -> &'a str {
@@ -26,6 +28,45 @@ fn strip_known_suffix<'a>(value: &'a str, suffixes: &[&str]) -> &'a str {
         }
     }
     value
+}
+
+/// Convert CamelCase/PascalCase identifiers to snake_case.
+fn to_snake_case(identifier: &str) -> String {
+    let chars: Vec<char> = identifier.chars().collect();
+    if chars.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::with_capacity(chars.len() + 4);
+
+    for (idx, ch) in chars.iter().enumerate() {
+        if *ch == '-' || *ch == ' ' {
+            if !result.ends_with('_') && !result.is_empty() {
+                result.push('_');
+            }
+            continue;
+        }
+
+        if ch.is_ascii_uppercase() {
+            let prev = idx.checked_sub(1).and_then(|i| chars.get(i));
+            let next = chars.get(idx + 1);
+            let boundary = idx > 0
+                && (prev
+                    .map(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                    .unwrap_or(false)
+                    || (prev.map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                        && next.map(|c| c.is_ascii_lowercase()).unwrap_or(false)));
+
+            if boundary && !result.ends_with('_') {
+                result.push('_');
+            }
+            result.push(ch.to_ascii_lowercase());
+        } else {
+            result.push(ch.to_ascii_lowercase());
+        }
+    }
+
+    result.trim_matches('_').to_string()
 }
 
 /// Import detection and resolution engine with pre-computed lookup optimization
@@ -129,6 +170,7 @@ impl ImportDetector {
             "php" => Some("php".to_string()),
             "cs" => Some("csharp".to_string()),
             "swift" => Some("swift".to_string()),
+            "ex" | "exs" => Some("elixir".to_string()),
             _ => None,
         }
     }
@@ -160,6 +202,7 @@ impl ImportDetector {
             }
             Some("rust") => self.resolve_rust_import(import_str, current_path, file_map),
             Some("go") => self.resolve_go_import(import_str, current_path, file_map),
+            Some("elixir") => self.resolve_elixir_import(import_str, current_path, file_map),
             _ => self.resolve_generic_import(import_str, current_path, file_map),
         }
     }
@@ -395,6 +438,102 @@ impl ImportDetector {
         self.fuzzy_match_import(&parts, file_map)
     }
 
+    /// Resolve Elixir import-like references (`alias`, `import`, `require`, `use`).
+    ///
+    /// Elixir modules are typically written as `MyApp.Accounts.User` and mapped to files
+    /// such as `lib/my_app/accounts/user.ex`, so we convert module segments to snake_case
+    /// before matching.
+    fn resolve_elixir_import<T>(
+        &self,
+        import_str: &str,
+        current_path: &Path,
+        file_map: &HashMap<&str, &T>,
+    ) -> Option<String>
+    where
+        T: ScanResult,
+    {
+        let mut module = import_str
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim();
+
+        if module.is_empty() {
+            return None;
+        }
+
+        if let Some((before_options, _)) = module.split_once(',') {
+            module = before_options.trim();
+        }
+
+        if let Some(stripped) = module.strip_prefix("Elixir.") {
+            module = stripped;
+        }
+
+        let module = strip_known_suffix(module, ELIXIR_SUFFIXES);
+
+        let is_module_relative = module.starts_with("__MODULE__.");
+        let module = module.strip_prefix("__MODULE__.").unwrap_or(module);
+
+        let module_parts: Vec<String> = module
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .map(to_snake_case)
+            .filter(|segment| !segment.is_empty())
+            .collect();
+
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        let module_part_refs: Vec<&str> = module_parts.iter().map(|s| s.as_str()).collect();
+        let base_dir = current_path.parent().unwrap_or(current_path);
+
+        if is_module_relative {
+            if let Some(resolved) =
+                self.resolve_relative_elixir(base_dir, &module_part_refs, file_map)
+            {
+                return Some(resolved);
+            }
+        }
+
+        if let Some(resolved) = self.find_module_candidate(&module_part_refs, ELIXIR_FILE_EXTENSIONS)
+        {
+            return Some(resolved);
+        }
+
+        if module_part_refs.len() > 1 {
+            if let Some(resolved) =
+                self.find_module_candidate(&module_part_refs[1..], ELIXIR_FILE_EXTENSIONS)
+            {
+                return Some(resolved);
+            }
+        }
+
+        if let Some(resolved) = self.resolve_relative_elixir(base_dir, &module_part_refs, file_map)
+        {
+            return Some(resolved);
+        }
+
+        if module_part_refs.len() > 1 {
+            if let Some(resolved) =
+                self.resolve_relative_elixir(base_dir, &module_part_refs[1..], file_map)
+            {
+                return Some(resolved);
+            }
+        }
+
+        if let Some(resolved) = self.fuzzy_match_import(&module_part_refs, file_map) {
+            return Some(resolved);
+        }
+
+        if module_part_refs.len() > 1 {
+            return self.fuzzy_match_import(&module_part_refs[1..], file_map);
+        }
+
+        None
+    }
+
     /// Generic import resolution
     fn resolve_generic_import<T>(
         &self,
@@ -526,6 +665,37 @@ impl ImportDetector {
         if let Some(candidate_str) = mod_candidate.to_str() {
             if file_map.contains_key(candidate_str) {
                 return Some(candidate_str.to_string());
+            }
+        }
+
+        None
+    }
+
+    fn resolve_relative_elixir<T>(
+        &self,
+        base_dir: &Path,
+        module_parts: &[&str],
+        file_map: &HashMap<&str, &T>,
+    ) -> Option<String>
+    where
+        T: ScanResult,
+    {
+        if module_parts.is_empty() {
+            return None;
+        }
+
+        let mut module_path = base_dir.to_path_buf();
+        for part in module_parts {
+            module_path.push(part);
+        }
+
+        for ext in ELIXIR_FILE_EXTENSIONS {
+            let mut candidate = module_path.clone();
+            candidate.set_extension(ext);
+            if let Some(candidate_str) = candidate.to_str() {
+                if file_map.contains_key(candidate_str) {
+                    return Some(candidate_str.to_string());
+                }
             }
         }
 
@@ -925,6 +1095,13 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_language_elixir() {
+        let detector = ImportDetector::with_config(default_config());
+        assert_eq!(detector.detect_language("test.ex"), Some("elixir".to_string()));
+        assert_eq!(detector.detect_language("test.exs"), Some("elixir".to_string()));
+    }
+
+    #[test]
     fn test_detect_language_unknown() {
         let detector = ImportDetector::with_config(default_config());
         assert_eq!(detector.detect_language("test.xyz"), None);
@@ -974,10 +1151,18 @@ mod tests {
         assert_eq!(strip_known_suffix("module.py", PYTHON_SUFFIXES), "module");
         assert_eq!(strip_known_suffix("component.js", JS_SUFFIXES), "component");
         assert_eq!(strip_known_suffix("lib.rs", RUST_SUFFIXES), "lib");
+        assert_eq!(strip_known_suffix("user.ex", ELIXIR_SUFFIXES), "user");
         assert_eq!(
             strip_known_suffix("noextension", PYTHON_SUFFIXES),
             "noextension"
         );
+    }
+
+    #[test]
+    fn test_to_snake_case() {
+        assert_eq!(to_snake_case("MyApp"), "my_app");
+        assert_eq!(to_snake_case("UserController"), "user_controller");
+        assert_eq!(to_snake_case("HTTPServer"), "http_server");
     }
 
     #[test]
@@ -1134,6 +1319,44 @@ mod tests {
         let resolved = detector.resolve_import("internal/utils", "main.go", &file_map);
         // May or may not resolve depending on exact path handling
         assert!(resolved.is_some() || resolved.is_none());
+    }
+
+    #[test]
+    fn test_resolve_import_elixir() {
+        let files = vec![
+            mock_result("lib/my_app/accounts/user.ex"),
+            mock_result("lib/my_app_web/controllers/page_controller.ex"),
+        ];
+
+        let detector = ImportDetector::with_file_index(default_config(), &files);
+        let file_map: HashMap<&str, &MockScanResult> =
+            files.iter().map(|f| (f.path.as_str(), f)).collect();
+
+        let resolved = detector.resolve_import(
+            "MyApp.Accounts.User",
+            "lib/my_app_web/controllers/page_controller.ex",
+            &file_map,
+        );
+        assert_eq!(resolved, Some("lib/my_app/accounts/user.ex".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_elixir_module_relative() {
+        let files = vec![
+            mock_result("lib/my_app/service/helper.ex"),
+            mock_result("lib/my_app/service/main.ex"),
+        ];
+
+        let detector = ImportDetector::with_file_index(default_config(), &files);
+        let file_map: HashMap<&str, &MockScanResult> =
+            files.iter().map(|f| (f.path.as_str(), f)).collect();
+
+        let resolved = detector.resolve_import(
+            "__MODULE__.Helper",
+            "lib/my_app/service/main.ex",
+            &file_map,
+        );
+        assert_eq!(resolved, Some("lib/my_app/service/helper.ex".to_string()));
     }
 
     #[test]

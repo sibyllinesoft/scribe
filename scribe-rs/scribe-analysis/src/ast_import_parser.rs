@@ -28,17 +28,19 @@ pub enum ImportLanguage {
     TypeScript,
     Go,
     Rust,
+    Elixir,
 }
 
 impl ImportLanguage {
-    /// Get the tree-sitter language for this language
-    pub fn tree_sitter_language(&self) -> Language {
+    /// Get the tree-sitter language for this language when available.
+    pub fn tree_sitter_language(&self) -> Option<Language> {
         match self {
-            ImportLanguage::Python => tree_sitter_python::language(),
-            ImportLanguage::JavaScript => tree_sitter_javascript::language(),
-            ImportLanguage::TypeScript => tree_sitter_typescript::language_typescript(),
-            ImportLanguage::Go => tree_sitter_go::language(),
-            ImportLanguage::Rust => tree_sitter_rust::language(),
+            ImportLanguage::Python => Some(tree_sitter_python::language()),
+            ImportLanguage::JavaScript => Some(tree_sitter_javascript::language()),
+            ImportLanguage::TypeScript => Some(tree_sitter_typescript::language_typescript()),
+            ImportLanguage::Go => Some(tree_sitter_go::language()),
+            ImportLanguage::Rust => Some(tree_sitter_rust::language()),
+            ImportLanguage::Elixir => None,
         }
     }
 
@@ -50,6 +52,7 @@ impl ImportLanguage {
             "ts" | "mts" | "cts" => Some(ImportLanguage::TypeScript),
             "go" => Some(ImportLanguage::Go),
             "rs" => Some(ImportLanguage::Rust),
+            "ex" | "exs" => Some(ImportLanguage::Elixir),
             _ => None,
         }
     }
@@ -104,14 +107,17 @@ impl SimpleAstParser {
         ] {
             if !pool.contains_key(&language) {
                 let mut parser = Parser::new();
-                parser
-                    .set_language(language.tree_sitter_language())
-                    .map_err(|e| {
-                        scribe_core::ScribeError::parse(format!(
-                            "Failed to set tree-sitter language: {}",
-                            e
-                        ))
-                    })?;
+                let ts_language = language.tree_sitter_language().ok_or_else(|| {
+                    scribe_core::ScribeError::parse(
+                        "No tree-sitter language available for import parser language",
+                    )
+                })?;
+                parser.set_language(ts_language).map_err(|e| {
+                    scribe_core::ScribeError::parse(format!(
+                        "Failed to set tree-sitter language: {}",
+                        e
+                    ))
+                })?;
                 pool.insert(language, vec![parser]);
             }
         }
@@ -131,14 +137,17 @@ impl SimpleAstParser {
 
         // Create a new parser if pool is empty
         let mut parser = Parser::new();
-        parser
-            .set_language(language.tree_sitter_language())
-            .map_err(|e| {
-                scribe_core::ScribeError::parse(format!(
-                    "Failed to set tree-sitter language: {}",
-                    e
-                ))
-            })?;
+        let ts_language = language.tree_sitter_language().ok_or_else(|| {
+            scribe_core::ScribeError::parse(
+                "No tree-sitter language available for import parser language",
+            )
+        })?;
+        parser.set_language(ts_language).map_err(|e| {
+            scribe_core::ScribeError::parse(format!(
+                "Failed to set tree-sitter language: {}",
+                e
+            ))
+        })?;
         Ok(parser)
     }
 
@@ -170,6 +179,8 @@ impl SimpleAstParser {
                     is_typescript,
                 ))
             }
+            // Elixir currently uses a regex-based fallback (no tree-sitter dependency)
+            ImportLanguage::Elixir => Ok(self.extract_elixir_imports_regex(content)),
             // Use tree-sitter for other languages
             _ => self.extract_imports_treesitter(content, language),
         }
@@ -277,6 +288,9 @@ impl SimpleAstParser {
             }
             ImportLanguage::Rust => {
                 self.extract_rust_import_node(node, content, imports)?;
+            }
+            ImportLanguage::Elixir => {
+                // Elixir is handled by regex fallback in extract_imports
             }
         }
         Ok(())
@@ -405,6 +419,93 @@ impl SimpleAstParser {
             }
         }
         Ok(())
+    }
+
+    /// Extract Elixir imports using a lightweight regex-free line parser.
+    fn extract_elixir_imports_regex(&self, content: &str) -> Vec<SimpleImport> {
+        let mut imports = Vec::new();
+
+        for (idx, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            let without_comments = trimmed.split('#').next().unwrap_or("").trim();
+            if without_comments.is_empty() {
+                continue;
+            }
+
+            for keyword in ["alias ", "import ", "require ", "use "] {
+                if let Some(statement) = without_comments.strip_prefix(keyword) {
+                    self.extract_elixir_statement(statement, idx + 1, &mut imports);
+                    break;
+                }
+            }
+        }
+
+        imports
+    }
+
+    fn extract_elixir_statement(
+        &self,
+        statement: &str,
+        line_number: usize,
+        imports: &mut Vec<SimpleImport>,
+    ) {
+        if let Some((base, remainder)) = statement.split_once('{') {
+            let base = Self::normalize_elixir_module(base.trim_end_matches('.'));
+            if let Some(end) = remainder.find('}') {
+                let grouped = &remainder[..end];
+                for module in grouped.split(',') {
+                    if let Some(module) = Self::normalize_elixir_module(module) {
+                        let module = if let Some(ref base) = base {
+                            format!("{}.{}", base, module)
+                        } else {
+                            module
+                        };
+                        imports.push(SimpleImport {
+                            module,
+                            line_number,
+                        });
+                    }
+                }
+            }
+            return;
+        }
+
+        if let Some(module) = Self::normalize_elixir_module(statement) {
+            imports.push(SimpleImport {
+                module,
+                line_number,
+            });
+        }
+    }
+
+    fn normalize_elixir_module(raw: &str) -> Option<String> {
+        let mut module = raw.trim();
+
+        if let Some((before_options, _)) = module.split_once(',') {
+            module = before_options.trim();
+        }
+
+        if module.ends_with(" do") {
+            module = module.trim_end_matches(" do").trim_end();
+        }
+
+        module = module.trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')'));
+
+        if let Some(stripped) = module.strip_prefix("Elixir.") {
+            module = stripped;
+        }
+
+        let cleaned: String = module
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
+            .collect();
+        let cleaned = cleaned.trim_end_matches('.').to_string();
+
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned)
+        }
     }
 
     /// Helper to extract text from a node
@@ -554,6 +655,52 @@ import (
     }
 
     #[test]
+    fn test_elixir_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+alias MyApp.Repo
+alias MyApp.{Accounts.User, Accounts.Team}
+import Plug.Conn
+require Logger
+use MyAppWeb, :controller
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Elixir).unwrap();
+
+        assert!(!imports.is_empty());
+        assert!(imports.iter().any(|i| i.module == "MyApp.Repo"));
+        assert!(imports.iter().any(|i| i.module == "MyApp.Accounts.User"));
+        assert!(imports.iter().any(|i| i.module == "MyApp.Accounts.Team"));
+        assert!(imports.iter().any(|i| i.module == "Plug.Conn"));
+        assert!(imports.iter().any(|i| i.module == "Logger"));
+        assert!(imports.iter().any(|i| i.module == "MyAppWeb"));
+    }
+
+    #[test]
+    fn test_import_language_from_extension_elixir() {
+        assert_eq!(ImportLanguage::from_extension("ex"), Some(ImportLanguage::Elixir));
+        assert_eq!(
+            ImportLanguage::from_extension("exs"),
+            Some(ImportLanguage::Elixir)
+        );
+    }
+
+    #[test]
+    fn test_elixir_multiline_grouped_alias_does_not_emit_partial_module() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+alias MyApp.{
+  Repo,
+  Accounts.User
+}
+"#;
+
+        let imports = parser.extract_imports(code, ImportLanguage::Elixir).unwrap();
+        assert!(!imports.iter().any(|i| i.module == "MyApp"));
+        assert!(!imports.iter().any(|i| i.module == "MyApp."));
+    }
+
+    #[test]
     fn test_empty_code() {
         let parser = SimpleAstParser::new().unwrap();
 
@@ -621,6 +768,7 @@ if __name__ == "__main__":
         let _typescript = ImportLanguage::TypeScript;
         let _rust = ImportLanguage::Rust;
         let _go = ImportLanguage::Go;
+        let _elixir = ImportLanguage::Elixir;
     }
 
     #[test]

@@ -51,6 +51,7 @@ pub(crate) fn language_from_identifier(language: &str, path: &std::path::Path) -
             "swift" => return Language::Swift,
             "php" => return Language::PHP,
             "ruby" => return Language::Ruby,
+            "elixir" => return Language::Elixir,
             _ => {}
         }
     }
@@ -189,6 +190,12 @@ mod tests {
     fn test_language_from_identifier_ruby() {
         let path = Path::new("test.rb");
         assert_eq!(language_from_identifier("ruby", path), Language::Ruby);
+    }
+
+    #[test]
+    fn test_language_from_identifier_elixir() {
+        let path = Path::new("test.ex");
+        assert_eq!(language_from_identifier("elixir", path), Language::Elixir);
     }
 
     #[test]

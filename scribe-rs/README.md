@@ -178,7 +178,7 @@ pub fn create_session(user_id: UserId) -> Result<Session> {
 ### Covering Set Analysis
 - **Entity-level granularity**: Get specific functions/classes, not entire files
 - **Automatic dependency resolution**: Follows imports across your codebase
-- **Multi-language support**: Rust, Python, JavaScript/TypeScript, Go
+- **Multi-language support**: Rust, Python, JavaScript/TypeScript, Go, Elixir
 - **Configurable depth**: Control how deep to traverse dependencies
 - **Diff-based analysis**: Get context for your current git changes
 
@@ -226,6 +226,7 @@ Import resolution and dependency tracking works for:
 | **Python** | `import`, `from...import`, relative imports |
 | **JavaScript/TypeScript** | ES6 `import`, `require()`, type imports |
 | **Go** | Single imports, block imports, aliased imports |
+| **Elixir** | `alias`, `import`, `require`, `use`, grouped aliases `alias App.{A, B}` |
 
 ## CLI Reference
 

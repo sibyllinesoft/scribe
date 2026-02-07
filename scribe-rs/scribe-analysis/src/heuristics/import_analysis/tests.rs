@@ -423,6 +423,9 @@ fn test_import_graph_builder_language_detection() {
     let imports = builder.extract_imports("use std::io;", "test.rs");
     assert!(!imports.is_empty());
 
+    let imports = builder.extract_imports("alias MyApp.Repo", "test.ex");
+    assert!(imports.contains(&"MyApp.Repo".to_string()));
+
     // Unknown extension should return empty
     let imports = builder.extract_imports("some content", "test.unknown");
     assert!(imports.is_empty());

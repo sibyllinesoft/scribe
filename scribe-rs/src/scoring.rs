@@ -17,7 +17,14 @@ const PACKAGE_MANAGER_BOOST: (&[&str], f64) = (
     0.25,
 );
 const ENTRYPOINT_BOOST: (&[&str], f64) = (
-    &["main.rs", "main.py", "main.go", "index.js", "index.ts"],
+    &[
+        "main.rs",
+        "main.py",
+        "main.go",
+        "index.js",
+        "index.ts",
+        "mix.exs",
+    ],
     0.3,
 );
 const LIB_BOOST: (&[&str], f64) = (&["lib.rs"], 0.2);
@@ -256,6 +263,13 @@ mod tests {
     #[test]
     fn test_main_go_boost() {
         let file = make_file_info("cmd/main.go");
+        let boost = compute_priority_boost(&file);
+        assert!(boost > 0.2);
+    }
+
+    #[test]
+    fn test_mix_exs_boost() {
+        let file = make_file_info("mix.exs");
         let boost = compute_priority_boost(&file);
         assert!(boost > 0.2);
     }

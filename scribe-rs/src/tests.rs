@@ -293,6 +293,25 @@ import (
             "Should not include dot alias"
         );
     }
+
+    #[test]
+    fn test_elixir_imports() {
+        let content = r#"
+alias MyApp.Repo
+alias MyApp.{Accounts.User, Accounts.Team}
+import Plug.Conn
+require Logger
+use MyAppWeb, :controller
+"#;
+        let imports = extract_imports(content, &Language::Elixir);
+
+        assert!(imports.contains(&"MyApp.Repo".to_string()));
+        assert!(imports.contains(&"MyApp.Accounts.User".to_string()));
+        assert!(imports.contains(&"MyApp.Accounts.Team".to_string()));
+        assert!(imports.contains(&"Plug.Conn".to_string()));
+        assert!(imports.contains(&"Logger".to_string()));
+        assert!(imports.contains(&"MyAppWeb".to_string()));
+    }
 }
 
 // Import edge case tests

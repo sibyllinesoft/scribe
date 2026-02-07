@@ -575,6 +575,7 @@ fn derive_file_context(file: &FileInfo, config: &Config) -> AnalyzerContext {
                     | Language::JavaScript
                     | Language::TypeScript
                     | Language::Go
+                    | Language::Elixir
             ) {
                 imports = extract_imports(&content, &file.language);
             }

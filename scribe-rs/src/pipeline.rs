@@ -171,6 +171,7 @@ fn extract_symbols_simple(content: &str, language: &str) -> Vec<String> {
         "go" => &[r"func\s+(\w+)", r"type\s+(\w+)\s+struct"],
         "javascript" | "typescript" => &[r"function\s+(\w+)", r"class\s+(\w+)"],
         "java" => &[r"class\s+(\w+)", r"interface\s+(\w+)"],
+        "elixir" => &[r"defmodule\s+([A-Za-z0-9_\.]+)", r"def\s+(\w+)", r"defp\s+(\w+)"],
         _ => &[],
     };
 

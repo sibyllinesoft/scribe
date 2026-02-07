@@ -38,7 +38,7 @@ Returns:
 
 - **Covering Set Analysis**: Get specific functions/classes with all their dependencies
 - **Entity-Level Granularity**: Extract exactly what you need, not entire files
-- **Multi-Language Support**: Rust, Python, JavaScript/TypeScript, Go
+- **Multi-Language Support**: Rust, Python, JavaScript/TypeScript, Go, Elixir
 - **PageRank Centrality**: Graph-based importance ranking
 - **Token Budget Management**: Progressive demotion within any context limit
 - **Git Integration**: Analyze changes and their impact

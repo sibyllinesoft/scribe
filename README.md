@@ -117,7 +117,7 @@ pub fn verify_password(input: &str, hash: &PasswordHash) -> Result<()> {
 ### Covering Set Analysis
 - **Entity-level granularity**: Get specific functions/classes, not entire files
 - **Automatic dependency resolution**: Follows imports across your codebase
-- **Multi-language support**: Rust, Python, JavaScript/TypeScript, Go
+- **Multi-language support**: Rust, Python, JavaScript/TypeScript, Go, Elixir
 - **Configurable depth**: Control how deep to traverse dependencies
 - **Diff-based analysis**: Get context for your current git changes
 
@@ -184,7 +184,7 @@ After installation, restart your AI agent session for hooks to take effect.
 - **Block mode** (default): Blocks Read/Grep on code files, tells agent to use `scribe --covering-set`
 - **Warn mode**: Shows a reminder but allows the operation
 
-The hooks only affect code files (`.rs`, `.py`, `.ts`, etc.). Config files, docs, and other non-code files are unaffected.
+The hooks only affect code files (`.rs`, `.py`, `.ts`, `.ex`, etc.). Config files, docs, and other non-code files are unaffected.
 
 ## Supported Languages
 
@@ -196,6 +196,7 @@ Import resolution and dependency tracking works for:
 | **Python** | `import`, `from...import`, relative imports |
 | **JavaScript/TypeScript** | ES6 `import`, `require()`, type imports |
 | **Go** | Single imports, block imports, aliased imports |
+| **Elixir** | `alias`, `import`, `require`, `use`, grouped aliases `alias App.{A, B}` |
 
 ## CLI Reference
 

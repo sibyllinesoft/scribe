@@ -10,7 +10,7 @@
 //! - **Research-grade PageRank implementation** optimized for code dependency graphs
 //! - **Reverse edge emphasis** (importance flows to imported files)
 //! - **Convergence detection** with configurable precision
-//! - **Multi-language import detection** (Python, JavaScript, TypeScript, Rust, Go, Java)
+//! - **Multi-language import detection** (Python, JavaScript, TypeScript, Rust, Go, Elixir, Java)
 //!
 //! ### Graph Construction and Analysis
 //! - **Efficient dependency graph** representation with adjacency lists

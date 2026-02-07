@@ -602,6 +602,7 @@ fn entrypoint_files(language: &Language) -> &'static [&'static str] {
         Language::JavaScript | Language::TypeScript => &["index.js", "index.ts"],
         Language::Go => &["main.go"],
         Language::Java => &["main.java"],
+        Language::Elixir => &["mix.exs", "application.ex"],
         _ => &[],
     }
 }
@@ -924,6 +925,19 @@ mod tests {
     fn test_is_entrypoint_path_go() {
         assert!(is_entrypoint_path(Path::new("main.go"), &Language::Go));
         assert!(!is_entrypoint_path(Path::new("handler.go"), &Language::Go));
+    }
+
+    #[test]
+    fn test_is_entrypoint_path_elixir() {
+        assert!(is_entrypoint_path(Path::new("mix.exs"), &Language::Elixir));
+        assert!(is_entrypoint_path(
+            Path::new("lib/my_app/application.ex"),
+            &Language::Elixir
+        ));
+        assert!(!is_entrypoint_path(
+            Path::new("lib/my_app/user.ex"),
+            &Language::Elixir
+        ));
     }
 
     #[test]
@@ -1417,6 +1431,7 @@ mod tests {
         assert!(!entrypoint_files(&Language::TypeScript).is_empty());
         assert!(!entrypoint_files(&Language::Go).is_empty());
         assert!(!entrypoint_files(&Language::Java).is_empty());
+        assert!(!entrypoint_files(&Language::Elixir).is_empty());
         assert!(entrypoint_files(&Language::Unknown).is_empty());
     }
 

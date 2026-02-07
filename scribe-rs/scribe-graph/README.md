@@ -9,7 +9,7 @@ Graph-based code representation and centrality analysis for Scribe.
 ## Key Features
 
 ### Dependency Graph Construction
-- **Multi-language import extraction**: Python, JavaScript/TypeScript, Rust, Go, Java
+- **Multi-language import extraction**: Python, JavaScript/TypeScript, Rust, Go, Elixir, Java
 - **Bidirectional edges**: Tracks both imports (who depends on me) and exports (what I depend on)
 - **Transitive closure computation**: Find all direct and indirect dependencies
 - **Strongly connected components (SCC)**: Detect circular dependency cycles using Kosaraju's algorithm
@@ -60,6 +60,7 @@ Language-specific import parsing:
 - **JavaScript/TypeScript**: `import`, `require()`, ES modules
 - **Rust**: `use`, `mod`, `extern crate` declarations
 - **Go**: `import` blocks with package resolution
+- **Elixir**: `alias`, `import`, `require`, `use` module references
 - **Java**: `import` statements with wildcard support
 
 #### `CentralityComputer`

@@ -59,6 +59,8 @@ static HOT_EXTENSIONS: Lazy<FxHashSet<&'static str>> = Lazy::new(|| {
         "elm",
         "ml",
         "ocaml",
+        "ex",
+        "exs",
         // Configuration and markup with logic
         "json",
         "yaml",
@@ -812,6 +814,7 @@ mod tests {
         assert!(HOT_EXTENSIONS.contains("rs"));
         assert!(HOT_EXTENSIONS.contains("py"));
         assert!(HOT_EXTENSIONS.contains("js"));
+        assert!(HOT_EXTENSIONS.contains("ex"));
         assert!(!HOT_EXTENSIONS.contains("png"));
 
         // Test COLD_EXTENSIONS set

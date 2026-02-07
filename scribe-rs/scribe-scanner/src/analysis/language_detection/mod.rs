@@ -168,7 +168,9 @@ impl LanguageDetector {
             });
 
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                let confident_extensions = ["rs", "py", "js", "ts", "go", "java", "cpp", "c"];
+                let confident_extensions = [
+                    "rs", "py", "js", "ts", "go", "java", "cpp", "c", "ex", "exs",
+                ];
                 if confident_extensions.contains(&ext) {
                     if detection::quick_content_validation(&extension_lang, content) {
                         return DetectionResult {
@@ -341,6 +343,8 @@ mod tests {
             Language::Cpp
         );
         assert_eq!(detector.detect_language(Path::new("test.c")), Language::C);
+        assert_eq!(detector.detect_language(Path::new("test.ex")), Language::Elixir);
+        assert_eq!(detector.detect_language(Path::new("test.exs")), Language::Elixir);
     }
 
     #[test]
@@ -836,6 +840,7 @@ from module import thing
             ("test.js", "function main() {}", Language::JavaScript),
             ("test.ts", "function main(): void {}", Language::TypeScript),
             ("test.go", "func main() {}", Language::Go),
+            ("test.ex", "defmodule MyApp do\n  def run, do: :ok\nend", Language::Elixir),
         ];
 
         for (path, code, expected_lang) in test_cases {

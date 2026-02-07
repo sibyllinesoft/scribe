@@ -90,6 +90,8 @@ pub fn initialize_extension_map() -> HashMap<String, Vec<(Language, f32)>> {
         ("vim", vec![(Language::Unknown, 1.0)]),
         ("hs", vec![(Language::Haskell, 1.0)]),
         ("lhs", vec![(Language::Haskell, 1.0)]),
+        ("ex", vec![(Language::Elixir, 1.0)]),
+        ("exs", vec![(Language::Elixir, 1.0)]),
     ];
 
     let mut map = HashMap::new();
@@ -144,10 +146,12 @@ pub fn initialize_shebang_patterns() -> HashMap<String, Language> {
         ("fish", Language::Bash),
         ("ruby", Language::Ruby),
         ("php", Language::PHP),
+        ("elixir", Language::Elixir),
         ("env python", Language::Python),
         ("env node", Language::JavaScript),
         ("env bash", Language::Bash),
         ("env ruby", Language::Ruby),
+        ("env elixir", Language::Elixir),
     ];
 
     let mut map = HashMap::new();
@@ -233,6 +237,24 @@ pub fn initialize_content_signatures() -> HashMap<Language, Vec<ContentSignature
             required_matches: 2,
         }];
         signatures.insert(Language::Rust, rust_sigs);
+    }
+
+    // Elixir signatures
+    let elixir_patterns = vec![
+        r"defmodule\s+[A-Z][\w\.]*\s+do",
+        r"def\s+\w+\s*\(",
+        r"alias\s+[A-Z][\w\.]*",
+        r"use\s+[A-Z][\w\.]*",
+        r"@moduledoc",
+    ];
+    if let Ok(compiled_patterns) = compile_patterns(elixir_patterns) {
+        let elixir_sigs = vec![ContentSignature {
+            language: Language::Elixir,
+            patterns: compiled_patterns,
+            weight: 0.9,
+            required_matches: 2,
+        }];
+        signatures.insert(Language::Elixir, elixir_sigs);
     }
 
     signatures
@@ -330,6 +352,29 @@ pub fn initialize_syntax_analyzers() -> HashMap<Language, SyntaxAnalyzer> {
         ]),
     };
     analyzers.insert(Language::Rust, rust_analyzer);
+
+    // Elixir syntax analyzer
+    let elixir_analyzer = SyntaxAnalyzer {
+        language: Language::Elixir,
+        keywords: vec![
+            "defmodule".to_string(),
+            "def".to_string(),
+            "defp".to_string(),
+            "alias".to_string(),
+            "import".to_string(),
+            "use".to_string(),
+        ],
+        structural_patterns: vec![
+            "call".to_string(),
+            "identifier".to_string(),
+            "alias".to_string(),
+        ],
+        confidence_weights: HashMap::from([
+            ("call".to_string(), 0.8),
+            ("alias".to_string(), 0.8),
+        ]),
+    };
+    analyzers.insert(Language::Elixir, elixir_analyzer);
 
     analyzers
 }

@@ -80,6 +80,7 @@ pub fn get_language_markers(language: &Language) -> &'static [&'static str] {
         Language::Java => &["class ", "public ", "import "],
         Language::C => &["#include", "int main", "void "],
         Language::Cpp => &["#include", "class ", "namespace "],
+        Language::Elixir => &["defmodule ", "def ", "alias "],
         _ => &[],
     }
 }
@@ -183,6 +184,9 @@ pub fn get_likely_languages_from_content(content: &str) -> Vec<Language> {
     if content.contains("func ") || content.contains("package ") {
         likely_languages.push(Language::Go);
     }
+    if content.contains("defmodule ") || content.contains("alias ") || content.contains("use ") {
+        likely_languages.push(Language::Elixir);
+    }
 
     if likely_languages.is_empty() {
         likely_languages = vec![
@@ -191,6 +195,7 @@ pub fn get_likely_languages_from_content(content: &str) -> Vec<Language> {
             Language::TypeScript,
             Language::Rust,
             Language::Go,
+            Language::Elixir,
         ];
     }
 
@@ -532,6 +537,7 @@ mod tests {
         assert!(!get_language_markers(&Language::JavaScript).is_empty());
         assert!(!get_language_markers(&Language::TypeScript).is_empty());
         assert!(!get_language_markers(&Language::Go).is_empty());
+        assert!(!get_language_markers(&Language::Elixir).is_empty());
         assert!(!get_language_markers(&Language::Java).is_empty());
         assert!(!get_language_markers(&Language::C).is_empty());
         assert!(!get_language_markers(&Language::Cpp).is_empty());
@@ -566,6 +572,11 @@ mod tests {
         let go_content = "func main() {\n    package main\n}";
         let languages = get_likely_languages_from_content(go_content);
         assert!(languages.contains(&Language::Go));
+
+        // Elixir-like content
+        let elixir_content = "defmodule MyApp do\n  alias MyApp.Repo\nend";
+        let languages = get_likely_languages_from_content(elixir_content);
+        assert!(languages.contains(&Language::Elixir));
 
         // Unknown content returns default set
         let unknown_content = "hello world";

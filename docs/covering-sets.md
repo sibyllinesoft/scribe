@@ -185,6 +185,7 @@ Covering set analysis works best with these languages:
 | TypeScript | Full | Full |
 | JavaScript | Full | Full |
 | Go | Full | Full |
+| Elixir | Full | Partial |
 | Java | Partial | Full |
 | C/C++ | Partial | Partial |
 
