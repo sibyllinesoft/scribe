@@ -28,6 +28,7 @@ pub enum ImportLanguage {
     TypeScript,
     Go,
     Rust,
+    Elixir,
 }
 
 impl ImportLanguage {
@@ -39,6 +40,7 @@ impl ImportLanguage {
             ImportLanguage::TypeScript => tree_sitter_typescript::language_typescript(),
             ImportLanguage::Go => tree_sitter_go::language(),
             ImportLanguage::Rust => tree_sitter_rust::language(),
+            ImportLanguage::Elixir => tree_sitter_elixir::language(),
         }
     }
 
@@ -50,6 +52,7 @@ impl ImportLanguage {
             "ts" | "mts" | "cts" => Some(ImportLanguage::TypeScript),
             "go" => Some(ImportLanguage::Go),
             "rs" => Some(ImportLanguage::Rust),
+            "ex" | "exs" => Some(ImportLanguage::Elixir),
             _ => None,
         }
     }
@@ -101,6 +104,7 @@ impl SimpleAstParser {
             ImportLanguage::TypeScript,
             ImportLanguage::Go,
             ImportLanguage::Rust,
+            ImportLanguage::Elixir,
         ] {
             if !pool.contains_key(&language) {
                 let mut parser = Parser::new();
@@ -211,12 +215,12 @@ impl SimpleAstParser {
         let node = cursor.node();
 
         // Fast filter: skip nodes that can't contain imports
-        if !self.node_can_contain_imports(node.kind()) {
+        if !self.node_can_contain_imports(node.kind(), language) {
             return Ok(());
         }
 
         // Process current node if it's an import
-        if self.is_import_node(node.kind()) {
+        if self.is_import_node(node.kind(), language) {
             self.extract_import_from_node(node, content, language, imports)?;
         }
 
@@ -235,26 +239,37 @@ impl SimpleAstParser {
     }
 
     /// Check if a node type can contain imports (fast filter)
-    fn node_can_contain_imports(&self, kind: &str) -> bool {
-        IMPORT_NODE_TYPES.contains(&kind)
-            || kind.contains("import")
-            || kind.contains("use")
-            || kind == "program"
-            || kind == "translation_unit"
-            || kind == "block"
-            || kind == "statement_block"
+    fn node_can_contain_imports(&self, kind: &str, language: ImportLanguage) -> bool {
+        match language {
+            ImportLanguage::Elixir => matches!(
+                kind,
+                "source" | "call" | "arguments" | "dot" | "tuple" | "block" | "do_block"
+            ),
+            _ => {
+                IMPORT_NODE_TYPES.contains(&kind)
+                    || kind.contains("import")
+                    || kind.contains("use")
+                    || kind == "program"
+                    || kind == "translation_unit"
+                    || kind == "block"
+                    || kind == "statement_block"
+            }
+        }
     }
 
     /// Check if a node is an import statement
-    fn is_import_node(&self, kind: &str) -> bool {
-        matches!(
-            kind,
-            "import_statement"
-                | "import_from_statement"
-                | "use_declaration"
-                | "import_declaration"
-                | "import_spec"
-        )
+    fn is_import_node(&self, kind: &str, language: ImportLanguage) -> bool {
+        match language {
+            ImportLanguage::Elixir => kind == "call",
+            _ => matches!(
+                kind,
+                "import_statement"
+                    | "import_from_statement"
+                    | "use_declaration"
+                    | "import_declaration"
+                    | "import_spec"
+            ),
+        }
     }
 
     /// Extract import from a specific node (no recursion needed)
@@ -277,6 +292,9 @@ impl SimpleAstParser {
             }
             ImportLanguage::Rust => {
                 self.extract_rust_import_node(node, content, imports)?;
+            }
+            ImportLanguage::Elixir => {
+                self.extract_elixir_import_node(node, content, imports)?;
             }
         }
         Ok(())
@@ -405,6 +423,137 @@ impl SimpleAstParser {
             }
         }
         Ok(())
+    }
+
+    /// Extract Elixir import-style calls (`alias`, `import`, `require`, `use`)
+    fn extract_elixir_import_node(
+        &self,
+        node: Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
+        if node.kind() != "call" {
+            return Ok(());
+        }
+
+        let Some(target) = node.child_by_field_name("target") else {
+            return Ok(());
+        };
+
+        if target.kind() != "identifier" {
+            return Ok(());
+        }
+
+        let target_name = self.node_text(target, content);
+        if !matches!(target_name.as_str(), "alias" | "import" | "require" | "use") {
+            return Ok(());
+        }
+
+        let arguments = (0..node.child_count()).find_map(|idx| {
+            let child = node.child(idx)?;
+            (child.kind() == "arguments").then_some(child)
+        });
+
+        if let Some(arguments) = arguments {
+            self.extract_elixir_import_arguments(arguments, content, imports)?;
+        }
+
+        Ok(())
+    }
+
+    fn extract_elixir_import_arguments(
+        &self,
+        arguments: Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
+        let mut cursor = arguments.walk();
+        if !cursor.goto_first_child() {
+            return Ok(());
+        }
+
+        loop {
+            let child = cursor.node();
+
+            if child.is_named() {
+                match child.kind() {
+                    // Options (`as:`, `only:`, etc.) start here; ignore everything after.
+                    "keywords" => break,
+                    "alias" | "identifier" => {
+                        let module = self.normalize_elixir_module(&self.node_text(child, content));
+                        if !module.is_empty() {
+                            imports.push(SimpleImport {
+                                module,
+                                line_number: child.start_position().row + 1,
+                            });
+                        }
+                    }
+                    "dot" => {
+                        self.extract_elixir_dot_imports(child, content, imports)?;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn extract_elixir_dot_imports(
+        &self,
+        dot: Node,
+        content: &str,
+        imports: &mut Vec<SimpleImport>,
+    ) -> Result<()> {
+        if let Some(right) = dot.child_by_field_name("right") {
+            if right.kind() == "tuple" {
+                if let Some(left) = dot.child_by_field_name("left") {
+                    let prefix = self.normalize_elixir_module(&self.node_text(left, content));
+
+                    let mut tuple_cursor = right.walk();
+                    if tuple_cursor.goto_first_child() {
+                        loop {
+                            let tuple_child = tuple_cursor.node();
+                            if tuple_child.is_named()
+                                && matches!(tuple_child.kind(), "alias" | "identifier")
+                            {
+                                let suffix = self
+                                    .normalize_elixir_module(&self.node_text(tuple_child, content));
+                                if !prefix.is_empty() && !suffix.is_empty() {
+                                    imports.push(SimpleImport {
+                                        module: format!("{}.{}", prefix, suffix),
+                                        line_number: tuple_child.start_position().row + 1,
+                                    });
+                                }
+                            }
+
+                            if !tuple_cursor.goto_next_sibling() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                return Ok(());
+            }
+        }
+
+        let module = self.normalize_elixir_module(&self.node_text(dot, content));
+        if !module.is_empty() {
+            imports.push(SimpleImport {
+                module,
+                line_number: dot.start_position().row + 1,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn normalize_elixir_module(&self, module: &str) -> String {
+        module.chars().filter(|ch| !ch.is_whitespace()).collect()
     }
 
     /// Helper to extract text from a node
@@ -554,6 +703,49 @@ import (
     }
 
     #[test]
+    fn test_elixir_imports() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+alias MyApp.Context
+import MyApp.Helpers
+require Logger
+use MyAppWeb, :controller
+"#;
+
+        let imports = parser
+            .extract_imports(code, ImportLanguage::Elixir)
+            .unwrap();
+
+        assert!(imports.iter().any(|i| i.module == "MyApp.Context"));
+        assert!(imports.iter().any(|i| i.module == "MyApp.Helpers"));
+        assert!(imports.iter().any(|i| i.module == "Logger"));
+        assert!(imports.iter().any(|i| i.module == "MyAppWeb"));
+    }
+
+    #[test]
+    fn test_elixir_grouped_aliases_and_options() {
+        let parser = SimpleAstParser::new().unwrap();
+        let code = r#"
+alias MyApp.{Repo, Accounts.User}, as: Context
+alias MyApp.{
+  Billing,
+  Accounts.Profile
+}, warn: false
+"#;
+
+        let imports = parser
+            .extract_imports(code, ImportLanguage::Elixir)
+            .unwrap();
+
+        assert!(imports.iter().any(|i| i.module == "MyApp.Repo"));
+        assert!(imports.iter().any(|i| i.module == "MyApp.Accounts.User"));
+        assert!(imports.iter().any(|i| i.module == "MyApp.Billing"));
+        assert!(imports.iter().any(|i| i.module == "MyApp.Accounts.Profile"));
+        assert!(!imports.iter().any(|i| i.module.contains("as:")));
+        assert!(!imports.iter().any(|i| i.module.contains("warn:")));
+    }
+
+    #[test]
     fn test_empty_code() {
         let parser = SimpleAstParser::new().unwrap();
 
@@ -621,6 +813,7 @@ if __name__ == "__main__":
         let _typescript = ImportLanguage::TypeScript;
         let _rust = ImportLanguage::Rust;
         let _go = ImportLanguage::Go;
+        let _elixir = ImportLanguage::Elixir;
     }
 
     #[test]
@@ -642,6 +835,18 @@ if __name__ == "__main__":
         let lang = ImportLanguage::TypeScript;
         let debug_str = format!("{:?}", lang);
         assert!(debug_str.contains("TypeScript"));
+    }
+
+    #[test]
+    fn test_import_language_from_extension_elixir() {
+        assert_eq!(
+            ImportLanguage::from_extension("ex"),
+            Some(ImportLanguage::Elixir)
+        );
+        assert_eq!(
+            ImportLanguage::from_extension("exs"),
+            Some(ImportLanguage::Elixir)
+        );
     }
 
     #[test]

@@ -183,6 +183,13 @@ pub fn get_likely_languages_from_content(content: &str) -> Vec<Language> {
     if content.contains("func ") || content.contains("package ") {
         likely_languages.push(Language::Go);
     }
+    if content.contains("defmodule ")
+        || content.contains("alias ")
+        || content.contains("require ")
+        || content.contains("import ")
+    {
+        likely_languages.push(Language::Elixir);
+    }
 
     if likely_languages.is_empty() {
         likely_languages = vec![
@@ -191,6 +198,7 @@ pub fn get_likely_languages_from_content(content: &str) -> Vec<Language> {
             Language::TypeScript,
             Language::Rust,
             Language::Go,
+            Language::Elixir,
         ];
     }
 
@@ -566,6 +574,11 @@ mod tests {
         let go_content = "func main() {\n    package main\n}";
         let languages = get_likely_languages_from_content(go_content);
         assert!(languages.contains(&Language::Go));
+
+        // Elixir-like content
+        let elixir_content = "defmodule AppWeb.Router do\n  alias AppWeb.Endpoint\nend";
+        let languages = get_likely_languages_from_content(elixir_content);
+        assert!(languages.contains(&Language::Elixir));
 
         // Unknown content returns default set
         let unknown_content = "hello world";

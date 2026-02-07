@@ -2824,6 +2824,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tree-sitter",
+ "tree-sitter-elixir",
  "tree-sitter-go",
  "tree-sitter-html",
  "tree-sitter-javascript",
@@ -3073,6 +3074,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tree-sitter",
+ "tree-sitter-elixir",
  "tree-sitter-go",
  "tree-sitter-javascript",
  "tree-sitter-python",
@@ -4106,6 +4108,16 @@ checksum = "e747b1f9b7b931ed39a548c1fae149101497de3c1fc8d9e18c62c1a66c683d3d"
 dependencies = [
  "cc",
  "regex",
+]
+
+[[package]]
+name = "tree-sitter-elixir"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc0b1f3e6d9f12ca22ae5171f32fd154e3aea29dff565d05ef785c28931415b"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]

@@ -7,7 +7,11 @@ use std::collections::HashMap;
 use tree_sitter::{Node, Parser};
 
 /// Count import-related AST nodes for a specific language
-pub fn count_import_nodes(node: &Node, language: &Language) -> usize {
+pub fn count_import_nodes(node: &Node, language: &Language, content: &str) -> usize {
+    if *language == Language::Elixir {
+        return count_elixir_import_nodes(node, content.as_bytes());
+    }
+
     let mut count = 0;
     let import_types: &[&str] = match language {
         Language::Python => &["import_statement", "import_from_statement"],
@@ -20,6 +24,32 @@ pub fn count_import_nodes(node: &Node, language: &Language) -> usize {
 
     count_nodes_recursive(node, import_types, &mut count);
     count
+}
+
+fn count_elixir_import_nodes(node: &Node, source: &[u8]) -> usize {
+    let mut count = 0;
+    count_elixir_import_nodes_recursive(node, source, &mut count);
+    count
+}
+
+fn count_elixir_import_nodes_recursive(node: &Node, source: &[u8], count: &mut usize) {
+    if node.kind() == "call" {
+        if let Some(target) = node.child_by_field_name("target") {
+            if target.kind() == "identifier" {
+                if let Ok(name) = target.utf8_text(source) {
+                    if matches!(name, "alias" | "import" | "require" | "use") {
+                        *count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            count_elixir_import_nodes_recursive(&child, source, count);
+        }
+    }
 }
 
 /// Calculate structural score based on AST node patterns
@@ -70,7 +100,7 @@ pub fn analyze_import_patterns(
         if let Some(parser) = ast_parsers.get_mut(&language) {
             if let Some(tree) = parser.parse(content, None) {
                 let root_node = tree.root_node();
-                let import_count = count_import_nodes(&root_node, &language);
+                let import_count = count_import_nodes(&root_node, &language, content);
 
                 if import_count > 0 {
                     let confidence = (import_count as f32 / 10.0).min(0.9);
@@ -149,6 +179,12 @@ mod tests {
         parser
     }
 
+    fn create_elixir_parser() -> Parser {
+        let mut parser = Parser::new();
+        parser.set_language(tree_sitter_elixir::language()).unwrap();
+        parser
+    }
+
     #[test]
     fn test_count_import_nodes_rust() {
         let mut parser = create_rust_parser();
@@ -156,7 +192,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Rust);
+        let count = count_import_nodes(&root, &Language::Rust, content);
         assert_eq!(count, 2);
     }
 
@@ -167,7 +203,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Rust);
+        let count = count_import_nodes(&root, &Language::Rust, content);
         assert_eq!(count, 0);
     }
 
@@ -178,7 +214,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Python);
+        let count = count_import_nodes(&root, &Language::Python, content);
         assert_eq!(count, 2);
     }
 
@@ -189,7 +225,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Python);
+        let count = count_import_nodes(&root, &Language::Python, content);
         assert_eq!(count, 0);
     }
 
@@ -200,7 +236,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::JavaScript);
+        let count = count_import_nodes(&root, &Language::JavaScript, content);
         assert_eq!(count, 2);
     }
 
@@ -212,7 +248,7 @@ mod tests {
         let root = tree.root_node();
 
         // TypeScript uses the same import types as JavaScript
-        let count = count_import_nodes(&root, &Language::TypeScript);
+        let count = count_import_nodes(&root, &Language::TypeScript, content);
         assert_eq!(count, 1);
     }
 
@@ -223,7 +259,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Go);
+        let count = count_import_nodes(&root, &Language::Go, content);
         // Each import statement has import_declaration AND import_spec, so 2 imports = 4 nodes
         assert_eq!(count, 4);
     }
@@ -237,7 +273,7 @@ mod tests {
         let root = tree.root_node();
 
         // Java returns import_declaration types, but with Rust parser won't match
-        let count = count_import_nodes(&root, &Language::Java);
+        let count = count_import_nodes(&root, &Language::Java, content);
         assert_eq!(count, 0);
     }
 
@@ -249,8 +285,40 @@ mod tests {
         let root = tree.root_node();
 
         // Unknown language should return 0
-        let count = count_import_nodes(&root, &Language::Unknown);
+        let count = count_import_nodes(&root, &Language::Unknown, content);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_count_import_nodes_elixir() {
+        let mut parser = create_elixir_parser();
+        let content = r#"
+alias MyApp.Context
+import MyApp.Helpers
+require Logger
+use MyAppWeb, :controller
+"#;
+        let tree = parser.parse(content, None).unwrap();
+        let root = tree.root_node();
+
+        let count = count_import_nodes(&root, &Language::Elixir, content);
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn test_count_import_nodes_elixir_ignores_non_import_calls() {
+        let mut parser = create_elixir_parser();
+        let content = r#"
+foo(1)
+bar(:ok)
+MyModule.run()
+alias Real.Module
+"#;
+        let tree = parser.parse(content, None).unwrap();
+        let root = tree.root_node();
+
+        let count = count_import_nodes(&root, &Language::Elixir, content);
+        assert_eq!(count, 1);
     }
 
     #[test]
@@ -446,7 +514,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Rust);
+        let count = count_import_nodes(&root, &Language::Rust, content);
         assert_eq!(count, 2);
     }
 
@@ -457,7 +525,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Python);
+        let count = count_import_nodes(&root, &Language::Python, content);
         assert_eq!(count, 2);
     }
 
@@ -468,7 +536,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let root = tree.root_node();
 
-        let count = count_import_nodes(&root, &Language::Go);
+        let count = count_import_nodes(&root, &Language::Go, content);
         // Grouped imports are still separate import_spec nodes
         assert!(count >= 2);
     }

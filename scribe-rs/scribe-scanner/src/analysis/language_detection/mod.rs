@@ -44,6 +44,10 @@ static TS_LANGUAGES: Lazy<HashMap<Language, fn() -> TsLanguage>> = Lazy::new(|| 
         tree_sitter_rust::language as fn() -> TsLanguage,
     );
     languages.insert(Language::Go, tree_sitter_go::language as fn() -> TsLanguage);
+    languages.insert(
+        Language::Elixir,
+        tree_sitter_elixir::language as fn() -> TsLanguage,
+    );
     languages
 });
 
@@ -341,6 +345,10 @@ mod tests {
             Language::Cpp
         );
         assert_eq!(detector.detect_language(Path::new("test.c")), Language::C);
+        assert_eq!(
+            detector.detect_language(Path::new("test.ex")),
+            Language::Elixir
+        );
     }
 
     #[test]

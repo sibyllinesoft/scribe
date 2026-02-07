@@ -90,6 +90,8 @@ pub fn initialize_extension_map() -> HashMap<String, Vec<(Language, f32)>> {
         ("vim", vec![(Language::Unknown, 1.0)]),
         ("hs", vec![(Language::Haskell, 1.0)]),
         ("lhs", vec![(Language::Haskell, 1.0)]),
+        ("ex", vec![(Language::Elixir, 1.0)]),
+        ("exs", vec![(Language::Elixir, 1.0)]),
     ];
 
     let mut map = HashMap::new();
